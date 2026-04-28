@@ -1,0 +1,385 @@
+import sharp from "sharp";
+import { promises as fs } from "fs";
+import path from "path";
+import { brand, type FontVariant } from "../../brand.config";
+import type { FitMode, Framing, StyleVariant } from "./types";
+
+export const CANVAS_W = 1080;
+export const CANVAS_H = 1350;
+
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function estWidth(text: string, size: number, charsPerEm: number): number {
+  return (text.length / charsPerEm) * size;
+}
+
+function fitFontSize(text: string, maxWidth: number, baseSize: number, minSize: number, charsPerEm = 1.6): number {
+  let size = baseSize;
+  while (size > minSize && estWidth(text, size, charsPerEm) > maxWidth) size -= 4;
+  return size;
+}
+
+interface HeadlineLayout {
+  lines: string[];
+  size: number;
+}
+
+// Try to fit text on one line; if it can't even at the minimum size, split at the
+// best word boundary and find a size that fits both lines.
+function layoutHeadline(text: string, maxWidth: number, baseSize: number, minSize: number, charsPerEm: number): HeadlineLayout {
+  const oneLine = fitFontSize(text, maxWidth, baseSize, minSize, charsPerEm);
+  if (estWidth(text, oneLine, charsPerEm) <= maxWidth) {
+    return { lines: [text], size: oneLine };
+  }
+  const words = text.split(/\s+/);
+  if (words.length < 2) return { lines: [text], size: minSize };
+
+  let bestSplit: [string, string] | null = null;
+  let bestDelta = Infinity;
+  for (let i = 1; i < words.length; i++) {
+    const a = words.slice(0, i).join(" ");
+    const b = words.slice(i).join(" ");
+    const delta = Math.abs(a.length - b.length);
+    if (delta < bestDelta) {
+      bestDelta = delta;
+      bestSplit = [a, b];
+    }
+  }
+  if (!bestSplit) return { lines: [text], size: minSize };
+
+  let size = baseSize;
+  while (size > minSize && (estWidth(bestSplit[0], size, charsPerEm) > maxWidth || estWidth(bestSplit[1], size, charsPerEm) > maxWidth)) {
+    size -= 4;
+  }
+  return { lines: [bestSplit[0], bestSplit[1]], size };
+}
+
+const fontCssCache = new Map<string, string>();
+
+async function fontFaceCss(variant: FontVariant): Promise<string> {
+  const def = brand.fonts[variant];
+  if (!def.file) return "";
+  if (fontCssCache.has(variant)) return fontCssCache.get(variant)!;
+
+  const fsPath = path.join(process.cwd(), "public", def.file.replace(/^\//, ""));
+  let bytes: Buffer;
+  try {
+    bytes = await fs.readFile(fsPath);
+  } catch {
+    fontCssCache.set(variant, "");
+    return "";
+  }
+  const ext = path.extname(def.file).toLowerCase();
+  const mime = ext === ".otf" ? "font/otf" : ext === ".ttf" ? "font/ttf" : "font/woff2";
+  const format = ext === ".otf" ? "opentype" : ext === ".ttf" ? "truetype" : "woff2";
+  const b64 = bytes.toString("base64");
+  const css = `@font-face { font-family: '${def.family.replace(/'/g, "")}'; src: url(data:${mime};base64,${b64}) format('${format}'); font-weight: ${def.weight}; font-style: normal; }`;
+  fontCssCache.set(variant, css);
+  return css;
+}
+
+interface ComposeArgs {
+  photoBytes: Buffer;
+  headline: string;
+  cta: string;
+  handle?: string;
+  fontVariant?: FontVariant;
+  framing?: Framing;
+  fitMode?: FitMode;
+  style?: StyleVariant;
+}
+
+function computeCrop(scale: number, x: number, y: number, regionW: number, regionH: number) {
+  // 1.0 = exact cover-fit (no extra crop beyond what aspect-ratio mismatch already
+  // forces). Pan room only exists when the user explicitly zooms past 1.0.
+  const eff = Math.max(scale, 1.0);
+  const targetW = Math.round(regionW * eff);
+  const targetH = Math.round(regionH * eff);
+  const extraW = targetW - regionW;
+  const extraH = targetH - regionH;
+  const xClamped = Math.max(-100, Math.min(100, x));
+  const yClamped = Math.max(-100, Math.min(100, y));
+  const left = Math.round(extraW / 2 + (extraW / 2) * (xClamped / 100));
+  const top = Math.round(extraH / 2 + (extraH / 2) * (yClamped / 100));
+  return {
+    targetW,
+    targetH,
+    extractLeft: Math.max(0, Math.min(extraW, left)),
+    extractTop: Math.max(0, Math.min(extraH, top)),
+  };
+}
+
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const m = hex.replace("#", "");
+  const v = m.length === 3 ? m.split("").map((c) => c + c).join("") : m;
+  return {
+    r: parseInt(v.slice(0, 2), 16),
+    g: parseInt(v.slice(2, 4), 16),
+    b: parseInt(v.slice(4, 6), 16),
+  };
+}
+
+export async function composeImage({
+  photoBytes,
+  headline,
+  cta,
+  handle,
+  fontVariant = "sans",
+  framing = { x: 0, y: 0, scale: 1.0 },
+  fitMode = "contain",
+  style = "branded",
+}: ComposeArgs): Promise<Buffer> {
+  const { topHeightPx, bottomHeightPx } = brand.bands;
+  const handleStr = handle ?? brand.handle;
+  const font = brand.fonts[fontVariant];
+  const styleCfg = brand.styles[style];
+
+  // Resolve effective colors. Branded uses brand.colors; other styles override.
+  const bandTopColor = styleCfg.bandTop ?? brand.colors.primary;
+  const bandBottomColor = styleCfg.bandBottom ?? brand.colors.secondary;
+  const textTopColor = styleCfg.textTop ?? brand.colors.text;
+  const textBottomColor = styleCfg.textBottom ?? brand.colors.textSecondary;
+
+  // For cover/contain modes the photo region depends on the style: full-bleed
+  // styles use the whole canvas, otherwise the photo sits between the bands.
+  // For MANUAL mode the photo always uses the full canvas so the editor's frame
+  // matches the final output one-to-one (bands then composite on top of it).
+  const fullBleed = styleCfg.fullBleed;
+  const isManual = fitMode === "manual";
+  const useFullCanvas = isManual || fullBleed;
+  const photoRegionTop = useFullCanvas ? 0 : topHeightPx;
+  const photoRegionH = useFullCanvas ? CANVAS_H : CANVAS_H - topHeightPx - bottomHeightPx;
+  const photoRegionW = CANVAS_W;
+
+  // Background of the full canvas matches the top band so contain-mode side bars
+  // and any uncovered manual-mode area read consistently.
+  const bgRgb = hexToRgb(bandTopColor);
+  let canvas = sharp({
+    create: {
+      width: CANVAS_W,
+      height: CANVAS_H,
+      channels: 3,
+      background: bgRgb,
+    },
+  })
+    .png()
+    .toBuffer();
+  let base = await canvas;
+
+  if (fitMode === "manual") {
+    // Free placement: scale ≥0.3 shrinks, scale ≤1.0 = exact cover, >1.0 zooms in.
+    // x/y are pixel offsets from region center; can push photo partly out of frame.
+    const meta = await sharp(photoBytes).metadata();
+    const sw = meta.width ?? photoRegionW;
+    const sh = meta.height ?? photoRegionH;
+    const baseRatio = Math.max(photoRegionW / sw, photoRegionH / sh);
+    const finalW = Math.max(1, Math.round(sw * baseRatio * framing.scale));
+    const finalH = Math.max(1, Math.round(sh * baseRatio * framing.scale));
+    const resized = await sharp(photoBytes).resize(finalW, finalH, { fit: "fill" }).toBuffer();
+
+    const photoLeft = Math.round(photoRegionW / 2 - finalW / 2 + framing.x);
+    const photoTop = Math.round(photoRegionH / 2 - finalH / 2 + framing.y);
+
+    const visSrcL = Math.max(0, -photoLeft);
+    const visSrcT = Math.max(0, -photoTop);
+    const visDstL = Math.max(0, photoLeft);
+    const visDstT = Math.max(0, photoTop);
+    const visW = Math.min(finalW - visSrcL, photoRegionW - visDstL);
+    const visH = Math.min(finalH - visSrcT, photoRegionH - visDstT);
+
+    let region = await sharp({
+      create: {
+        width: photoRegionW,
+        height: photoRegionH,
+        channels: 3,
+        background: bgRgb,
+      },
+    })
+      .png()
+      .toBuffer();
+
+    if (visW > 0 && visH > 0) {
+      const visiblePhoto = await sharp(resized)
+        .extract({ left: visSrcL, top: visSrcT, width: visW, height: visH })
+        .toBuffer();
+      region = await sharp(region)
+        .composite([{ input: visiblePhoto, top: visDstT, left: visDstL }])
+        .png()
+        .toBuffer();
+    }
+
+    base = await sharp(base)
+      .composite([{ input: region, top: photoRegionTop, left: 0 }])
+      .png()
+      .toBuffer();
+  } else if (fitMode === "cover") {
+    const { targetW, targetH, extractLeft, extractTop } = computeCrop(framing.scale, framing.x, framing.y, photoRegionW, photoRegionH);
+    const resized = await sharp(photoBytes)
+      .resize(targetW, targetH, { fit: "cover", position: "centre" })
+      .toBuffer();
+    const cropped = await sharp(resized)
+      .extract({ left: extractLeft, top: extractTop, width: photoRegionW, height: photoRegionH })
+      .toBuffer();
+    base = await sharp(base)
+      .composite([{ input: cropped, top: photoRegionTop, left: 0 }])
+      .png()
+      .toBuffer();
+  } else {
+    // contain: resize photo to fit fully inside the photo region, center it,
+    // brand-color bars fill any leftover horizontal/vertical space.
+    const fitted = await sharp(photoBytes)
+      .resize(photoRegionW, photoRegionH, { fit: "inside", withoutEnlargement: false })
+      .toBuffer();
+    const meta = await sharp(fitted).metadata();
+    const fitW = meta.width ?? photoRegionW;
+    const fitH = meta.height ?? photoRegionH;
+    const padX = Math.round((photoRegionW - fitW) / 2);
+    const padY = Math.round((photoRegionH - fitH) / 2);
+    base = await sharp(base)
+      .composite([{ input: fitted, top: photoRegionTop + padY, left: padX }])
+      .png()
+      .toBuffer();
+  }
+
+  // Apply style treatment to the photo before bands/text go over the top.
+  if (styleCfg.photoSaturation !== 1 || styleCfg.photoTint) {
+    let pipe = sharp(base);
+    if (styleCfg.photoSaturation !== 1) {
+      pipe = pipe.modulate({ saturation: styleCfg.photoSaturation });
+    }
+    if (styleCfg.photoTint) {
+      pipe = pipe.tint(styleCfg.photoTint);
+    }
+    base = await pipe.png().toBuffer();
+  }
+  if (styleCfg.photoOverlay) {
+    const overlay = await sharp({
+      create: {
+        width: CANVAS_W,
+        height: CANVAS_H,
+        channels: 4,
+        background: styleCfg.photoOverlay,
+      },
+    })
+      .png()
+      .toBuffer();
+    base = await sharp(base).composite([{ input: overlay }]).png().toBuffer();
+  }
+
+  // Plain style: just the photo, no bands/text/logo. Return early.
+  if (style === "plain") {
+    return base;
+  }
+
+  // Build SVG overlay: top + bottom bands + headline + CTA + handle.
+  const isSerif = fontVariant === "serif";
+  const charsPerEm = isSerif ? 1.4 : 1.5;
+  const headlineDisplay = isSerif ? headline : headline.toUpperCase();
+  const headlineLayout = layoutHeadline(headlineDisplay, CANVAS_W - 80, isSerif ? 120 : 110, 56, charsPerEm);
+  const ctaSize = fitFontSize(cta, CANVAS_W - 200, 64, 36, charsPerEm);
+  const handleSize = 28;
+
+  const topY = 0;
+  const bottomY = CANVAS_H - bottomHeightPx;
+  const fontFace = await fontFaceCss(fontVariant);
+
+  const lineHeight = headlineLayout.size * 1.05;
+  const totalHeadlineH = lineHeight * headlineLayout.lines.length;
+  const headlineStartY = topY + topHeightPx / 2 - totalHeadlineH / 2 + lineHeight / 2;
+  const headlineTextEls = headlineLayout.lines
+    .map((ln, i) => `
+      <text x="${CANVAS_W / 2}" y="${headlineStartY + i * lineHeight}"
+            font-family="${font.family}" font-size="${headlineLayout.size}" font-weight="${font.weight}"
+            fill="${textTopColor}" text-anchor="middle" dominant-baseline="middle"
+            ${isSerif ? "" : 'letter-spacing="2"'}>${escapeXml(ln)}</text>`)
+    .join("");
+
+  // Position the CTA in the upper portion of the bottom band so there's room
+  // below it for the logo (or @handle fallback) to sit centered.
+  const ctaCenterY = bottomY + bottomHeightPx * 0.38;
+  const subCenterY = bottomY + bottomHeightPx * 0.72;
+
+  // Try to load the logo. If present, it replaces the @handle text below the CTA.
+  const logoFsPath = path.join(process.cwd(), "public", brand.logo.replace(/^\//, ""));
+  let logoBuf: Buffer | null = null;
+  let logoW = 0;
+  let logoH = 0;
+  try {
+    await fs.access(logoFsPath);
+    const maxH = Math.round(bottomHeightPx * 0.32);
+    const maxW = Math.round(CANVAS_W * 0.55);
+    const sized = await sharp(logoFsPath)
+      .resize({ height: maxH, width: maxW, fit: "inside" })
+      .png()
+      .toBuffer();
+    const meta = await sharp(sized).metadata();
+    const w = meta.width ?? maxH;
+    const h = meta.height ?? maxH;
+
+    if (styleCfg.logoTint) {
+      // Recolor by using the logo's alpha as a mask over a flat-color rectangle.
+      // This produces TRUE color (sharp's `.tint()` preserves luminance and would
+      // leave a white logo near-white even with a dark tint color).
+      const c = hexToRgb(styleCfg.logoTint);
+      const colored = await sharp({
+        create: {
+          width: w,
+          height: h,
+          channels: 4,
+          background: { r: c.r, g: c.g, b: c.b, alpha: 1 },
+        },
+      })
+        .composite([{ input: sized, blend: "dest-in" }])
+        .png()
+        .toBuffer();
+      logoBuf = colored;
+    } else {
+      logoBuf = sized;
+    }
+    logoW = w;
+    logoH = h;
+  } catch {
+    // No logo file — fall back to handle text below.
+  }
+
+  const subEl = logoBuf
+    ? "" // logo composited separately below
+    : `
+  <text x="${CANVAS_W / 2}" y="${subCenterY}"
+        font-family="${font.family}" font-size="${handleSize}" font-weight="${font.weight}"
+        fill="${textBottomColor}" text-anchor="middle" dominant-baseline="middle"
+        opacity="0.85">${escapeXml(handleStr)}</text>`;
+
+  const svg = `
+<svg width="${CANVAS_W}" height="${CANVAS_H}" xmlns="http://www.w3.org/2000/svg">
+  ${fontFace ? `<defs><style type="text/css">${fontFace}</style></defs>` : ""}
+  <rect x="0" y="${topY}" width="${CANVAS_W}" height="${topHeightPx}" fill="${bandTopColor}" fill-opacity="${styleCfg.bandAlpha}"/>
+  <rect x="0" y="${bottomY}" width="${CANVAS_W}" height="${bottomHeightPx}" fill="${bandBottomColor}" fill-opacity="${styleCfg.bandAlpha}"/>
+  ${headlineTextEls}
+  <text x="${CANVAS_W / 2}" y="${ctaCenterY}"
+        font-family="${font.family}" font-size="${ctaSize}" font-weight="${font.weight}"
+        fill="${textBottomColor}" text-anchor="middle" dominant-baseline="middle">${escapeXml(cta)}</text>
+  ${subEl}
+</svg>`;
+
+  const composites: sharp.OverlayOptions[] = [
+    { input: Buffer.from(svg), top: 0, left: 0 },
+  ];
+
+  if (logoBuf) {
+    composites.push({
+      input: logoBuf,
+      top: Math.round(subCenterY - logoH / 2),
+      left: Math.round((CANVAS_W - logoW) / 2),
+    });
+  }
+
+  return sharp(base).composite(composites).png().toBuffer();
+}

@@ -1,0 +1,169 @@
+// 100 short prompts for the AI image generator. Grouped loosely by theme so you
+// can scan/edit them; the runtime treats it as one flat array.
+export const IMAGE_PROMPTS: readonly string[] = [
+  // Real estate agents at work
+  "real estate agent in front of a home",
+  "real estate agent on the phone",
+  "real estate agent showing a couple a house",
+  "real estate agent handing keys to new homeowners",
+  "real estate agent in a modern office",
+  "real estate agent walking through an empty home",
+  "real estate agent with clipboard at a property",
+  "real estate agent shaking hands with a client",
+  "real estate agent reviewing documents at a kitchen table",
+  "real estate agent posting a sold sign in a front yard",
+  "real estate agent leading a home tour",
+  "real estate agent answering questions on the phone",
+  "real estate agent at an open house",
+  "friendly real estate agent welcoming visitors",
+  "real estate agent on a tablet in front of a house",
+
+  // Loan officers and lenders
+  "loan officer reviewing paperwork with a client",
+  "loan officer at a desk with a laptop and calculator",
+  "loan officer explaining mortgage options to a couple",
+  "mortgage banker meeting clients at a coffee shop",
+  "lender shaking hands with new homeowners",
+  "mortgage advisor pointing at numbers on a screen",
+  "loan officer on a video call from a home office",
+  "loan officer signing documents with clients",
+
+  // Families at home
+  "candid photo of a family at home",
+  "family unpacking moving boxes in a new home",
+  "parents and kids in a sunny new living room",
+  "multigenerational family on a front porch",
+  "family having dinner in a new dining room",
+  "family playing in their backyard",
+  "parents cooking together in a new kitchen",
+  "children running through an empty new home",
+  "family on moving day surrounded by boxes",
+  "extended family celebrating a new home",
+  "family taking a selfie outside their new house",
+  "parents reading to kids on the floor of a new home",
+  "family holding the keys to their first home",
+  "family in their new front yard at sunset",
+  "family decorating a child's new bedroom",
+
+  // Young couples
+  "young couple in their new home",
+  "couple holding keys in front of a house",
+  "couple painting a wall in a new home",
+  "couple unpacking in a new bedroom",
+  "couple at the kitchen counter reviewing plans on a tablet",
+  "newlyweds in their first home",
+  "couple having coffee on the porch of their new home",
+  "couple measuring rooms in an empty house",
+  "couple celebrating with sparkling drinks in a new home",
+  "couple looking at house plans together",
+  "couple touring an open house",
+  "couple standing on the front steps of a new house",
+
+  // Solo and first-time buyers
+  "young woman with keys to her first home",
+  "young man on the phone in front of a home",
+  "first-time buyer looking at a sold sign",
+  "solo homeowner unpacking in a new kitchen",
+  "young professional reviewing mortgage documents at home",
+  "confident young woman in front of a new house",
+  "person holding a home sweet home sign",
+  "first-time buyer doing a walkthrough with a notepad",
+
+  // Diverse and multilingual representation
+  "Filipino family at home",
+  "Latino family in front of a new house",
+  "Asian family in a modern living room",
+  "Black family celebrating a new home",
+  "Hispanic couple unpacking moving boxes",
+  "mixed-race family in their kitchen",
+  "multicultural family on moving day",
+  "Asian American couple with house keys",
+  "Latino real estate agent meeting with clients",
+  "Filipino loan officer reviewing documents",
+  "Spanish-speaking agent in front of a home",
+  "Mandarin-speaking real estate professional with clients",
+
+  // House exteriors
+  "modern two-story home with manicured lawn",
+  "cozy suburban home with autumn leaves",
+  "craftsman bungalow with covered porch",
+  "ranch-style home with a long driveway",
+  "colonial home with white columns",
+  "cottage-style home with a flower garden",
+  "modern farmhouse with wraparound porch",
+  "mid-century modern home in afternoon light",
+  "brick townhouse on a tree-lined street",
+  "coastal home with white siding and blue sky",
+  "tudor-style home in autumn",
+  "small starter home with a red front door",
+  "condo building with balconies",
+  "duplex with two front doors and a shared porch",
+  "charming tiny home with curb appeal",
+
+  // Interiors and lifestyle
+  "cozy living room with natural light",
+  "modern open-concept kitchen",
+  "inviting front entryway with a welcome mat",
+  "sun-filled bedroom with neutral decor",
+  "dining room set up for a family meal",
+  "home office with a window view",
+  "empty living room ready to be furnished",
+  "bright kitchen with island seating",
+  "sunlit reading nook by a window",
+  "bathroom with natural wood and stone",
+
+  // Process and transactional moments
+  "signing closing documents at a desk",
+  "hand holding house keys in front of a sold sign",
+  "real estate paperwork spread on a kitchen counter",
+  "moving truck parked in front of a new home",
+  "opening the front door of a new home for the first time",
+] as const;
+
+let lastIndex = -1;
+export function randomPrompt(): string {
+  if (IMAGE_PROMPTS.length <= 1) return IMAGE_PROMPTS[0] ?? "";
+  let idx = Math.floor(Math.random() * IMAGE_PROMPTS.length);
+  // Avoid showing the same prompt twice in a row.
+  if (idx === lastIndex) idx = (idx + 1) % IMAGE_PROMPTS.length;
+  lastIndex = idx;
+  return IMAGE_PROMPTS[idx];
+}
+
+// Hardcoded AI prompts injected into the first two cards of every batch. The
+// language picks an ethnicity hint; English stays unspecified.
+import type { ContentType, Language } from "./types";
+
+const ETHNICITY_BY_LANG: Record<Language, string> = {
+  en: "",
+  es: "hispanic",
+  tl: "filipino",
+  zh: "chinese",
+};
+
+export function batchSeedPrompt(
+  language: Language,
+  contentType: ContentType,
+  index: 0 | 1,
+): string {
+  const eth = ETHNICITY_BY_LANG[language];
+  const ethPart = eth ? `${eth} ` : "";
+
+  if (contentType === "good_agents") {
+    // Slot 0: portrait-style, looking at camera, warm smile.
+    // Slot 1: candid working — phone call or laptop, focused, not posed.
+    if (index === 0) {
+      return `a friendly ${ethPart}real estate agent standing in front of a home, professional editorial portrait, warm natural smile, looking at the camera`;
+    }
+    return `a ${ethPart}real estate agent on a phone call in a bright modern office, candid professional photography, focused on work, not looking at the camera`;
+  }
+
+  // All other content types: candid lifestyle scenes, no posing, no eye contact
+  // with the camera. Still professional quality — editorial/documentary feel.
+  if (index === 0) {
+    return `a candid lifestyle photo of a ${ethPart}family at home together, unposed, not looking at the camera, sharing a natural everyday moment, soft natural light, professional editorial photography`;
+  }
+  return `a candid lifestyle photo of a young ${ethPart}couple in their new home, unposed and natural, looking at each other or off to the side, not looking at the camera, soft natural light, professional editorial photography`;
+}
+
+export const AI_CREDIT_LABEL = "AI (Nano Banana 2)";
