@@ -12,13 +12,13 @@ export const brand = {
     accent: "#EEF4ED",       // optional accent stripe / underline
   },
   fonts: {
-    // The compose pipeline picks one variant per post (sometimes random).
-    // `family` is the SVG font-family. `file` (relative to /public) is loaded and
-    // embedded via @font-face so it renders identically regardless of host fonts.
+    // Both variants embed a real font file via @font-face base64 inside the SVG
+    // so the compose output is identical regardless of what fonts the host
+    // server has installed (Vercel's serverless container is sparse on fonts).
     sans: {
-      family: "Inter, 'Helvetica Neue', Arial, sans-serif",
+      family: "Inter",
       weight: 800,
-      file: null as string | null,        // system stack — no file needed
+      file: "/fonts/Inter-Bold.ttf",
     },
     serif: {
       family: "Prata",
