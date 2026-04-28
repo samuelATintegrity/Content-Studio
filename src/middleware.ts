@@ -1,38 +1,39 @@
 import { NextRequest, NextResponse } from "next/server";
 
-// Lightweight HTTP Basic Auth gate. When APP_PASSWORD is set on the host
-// (Vercel env vars), every request must come with the right credentials before
-// it reaches a route handler. If APP_PASSWORD is unset, no gate is applied —
-// useful for local dev where you don't want to type a password on every reload.
+// Cookie-based password gate. The login page sets `app_auth=<password>` after
+// validating against process.env.APP_PASSWORD; this middleware compares the
+// cookie value against the same env var on every request. If APP_PASSWORD is
+// unset (e.g. local dev without a .env line), no gate runs.
 //
-// Username is ignored; we only check the password. The browser caches the
-// credentials for the session so it's a one-time prompt per browser.
+// Cookie is httpOnly + secure + SameSite=Lax so it can't be read or set by
+// browser JS or cross-site requests.
 export function middleware(req: NextRequest) {
   const expected = process.env.APP_PASSWORD;
   if (!expected) return NextResponse.next();
 
-  const auth = req.headers.get("authorization");
-  if (auth) {
-    const [scheme, encoded] = auth.split(" ");
-    if (scheme === "Basic" && encoded) {
-      try {
-        const decoded = atob(encoded);
-        const sep = decoded.indexOf(":");
-        const provided = sep >= 0 ? decoded.slice(sep + 1) : decoded;
-        if (provided === expected) return NextResponse.next();
-      } catch {
-        // fall through to 401
-      }
-    }
+  const path = req.nextUrl.pathname;
+
+  // Always allow the login page and its submission endpoints through.
+  if (path === "/login" || path === "/api/auth/login" || path === "/api/auth/logout") {
+    return NextResponse.next();
   }
 
-  return new NextResponse("Authentication required.", {
-    status: 401,
-    headers: { "WWW-Authenticate": 'Basic realm="Content Studio"' },
-  });
+  const auth = req.cookies.get("app_auth")?.value;
+  if (auth && auth === expected) return NextResponse.next();
+
+  // For API routes, return 401 instead of redirecting (so client fetches
+  // surface the auth failure cleanly rather than getting an HTML login page).
+  if (path.startsWith("/api/")) {
+    return new NextResponse("Authentication required.", { status: 401 });
+  }
+
+  // Redirect HTML page requests to /login, preserving the originally requested path.
+  const url = req.nextUrl.clone();
+  url.pathname = "/login";
+  if (path !== "/") url.searchParams.set("from", path);
+  return NextResponse.redirect(url);
 }
 
-// Exclude Next.js internals and static assets so they don't trigger the prompt.
 export const config = {
   matcher: ["/((?!_next/static|_next/image|favicon.ico|brand|fonts).*)"],
 };
