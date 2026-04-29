@@ -17,7 +17,7 @@ const SUBTITLE_STYLE: SubtitleStyle = {
   primaryColor: "#FFFFFF",
   highlightColor: "#FFD400",
   fontFamily: "Inter",
-  fontSize: 110,
+  fontSize: 96,
   marginV: 850,
   outlineColor: "#000000",
   outlineWidth: 6,

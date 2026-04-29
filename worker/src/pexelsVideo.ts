@@ -155,6 +155,41 @@ function shuffle<T>(arr: readonly T[]): T[] {
   return a;
 }
 
+// Pexels video URLs include a slug describing the subject, e.g.
+//   https://www.pexels.com/video/aerial-view-of-the-sydney-opera-house-12345/
+// If any token in the slug is a known landmark / non-residential subject,
+// we reject the video. This is a coarse filter — false positives are
+// possible (e.g. "lakeshore-home" → reject because of "lake") — but the
+// list is biased toward unambiguous non-home subjects.
+const REJECT_TOKENS = new Set([
+  // Famous landmarks
+  "opera", "sydney", "eiffel", "louvre", "colosseum", "kremlin", "pyramid",
+  // Civic / religious / institutional
+  "stadium", "monument", "cathedral", "basilica", "church", "temple",
+  "mosque", "synagogue", "shrine", "palace", "castle", "fortress",
+  "library", "museum", "university", "school", "hospital", "courthouse",
+  // City-scale views (not residential)
+  "skyline", "skyscraper", "downtown", "cityscape", "metropolis",
+  // Transport
+  "airport", "airplane", "plane", "helicopter", "train", "subway",
+  "metro", "cruise", "yacht", "ship", "harbor", "harbour", "dock", "port",
+  // Industrial / commercial
+  "factory", "warehouse", "mall", "office", "tower", "industrial",
+  // Nature (not relevant to home content)
+  "volcano", "desert", "jungle", "glacier", "canyon",
+  // Vehicles
+  "car", "truck", "motorcycle",
+]);
+
+function looksLikeReject(v: PexelsVideo): boolean {
+  // Tokenise the URL on slashes and hyphens to extract slug words.
+  const tokens = v.url.toLowerCase().split(/[/\-_]/);
+  for (const t of tokens) {
+    if (REJECT_TOKENS.has(t)) return true;
+  }
+  return false;
+}
+
 // Among a video's encoded files, pick the one closest to but not exceeding
 // 1920px tall — we're cropping to 1080x1920 anyway, so larger is wasted bytes.
 // Falls back to the largest available portrait/landscape mp4 if nothing fits.
@@ -222,6 +257,9 @@ export async function fetchFootage(
   // up with more — that's fine, the caller picks the first `count`.
   // Reject clips shorter than minClipDurationS so the per-clip ffmpeg trim
   // window doesn't undershoot and produce a visual track shorter than audio.
+  // Also reject videos whose URL slug points at landmarks / non-residential
+  // subjects — Pexels' search is fuzzy and "house exterior" sometimes
+  // surfaces things like the Sydney Opera House.
   for (const tier of tiers) {
     for (const query of tier) {
       if (candidates.length >= count) break;
@@ -230,6 +268,7 @@ export async function fetchFootage(
         for (const v of videos) {
           if (usedIds.has(v.id)) continue;
           if (v.duration < minClipDurationS) continue;
+          if (looksLikeReject(v)) continue;
           usedIds.add(v.id);
           candidates.push(v);
           if (candidates.length >= count) break;
@@ -243,7 +282,9 @@ export async function fetchFootage(
   }
 
   // If strict minimum yielded too few, retry with a relaxed minimum so the
-  // pipeline still produces something rather than failing outright.
+  // pipeline still produces something rather than failing outright. The
+  // landmark filter still applies — we'd rather have fewer clips than a
+  // skyscraper in a home-buyer video.
   if (candidates.length < count && minClipDurationS > 3) {
     for (const tier of tiers) {
       for (const query of tier) {
@@ -253,6 +294,7 @@ export async function fetchFootage(
           for (const v of videos) {
             if (usedIds.has(v.id)) continue;
             if (v.duration < 3) continue;
+            if (looksLikeReject(v)) continue;
             usedIds.add(v.id);
             candidates.push(v);
             if (candidates.length >= count) break;

@@ -152,13 +152,15 @@ function buildHeader(style: SubtitleStyle): string {
     "ScriptType: v4.00+",
     `PlayResX: ${PLAY_RES_X}`,
     `PlayResY: ${PLAY_RES_Y}`,
-    "WrapStyle: 2",
+    // WrapStyle 0 = smart balanced wrap. Long phrases break onto 2 lines
+    // instead of overflowing the canvas.
+    "WrapStyle: 0",
     "ScaledBorderAndShadow: yes",
     "YCbCr Matrix: TV.709",
     "",
     "[V4+ Styles]",
     "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-    `Style: Karaoke,${style.fontFamily},${style.fontSize},${primary},${primary},${outline},&H00000000&,1,0,0,0,100,100,2,0,1,${outlineWidth},${shadow},2,60,60,${style.marginV},1`,
+    `Style: Karaoke,${style.fontFamily},${style.fontSize},${primary},${primary},${outline},&H00000000&,1,0,0,0,100,100,0,0,1,${outlineWidth},${shadow},2,80,80,${style.marginV},1`,
     "",
     "[Events]",
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
