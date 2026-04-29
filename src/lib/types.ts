@@ -84,3 +84,44 @@ export interface BatchRequest {
 export interface GenerateBatchResponse {
   posts: Array<Pick<Post, "angle" | "headline" | "cta" | "caption">>;
 }
+
+// ── Video workflow ───────────────────────────────────────────────────
+
+export type VideoJobState =
+  | "queued"
+  | "tts"
+  | "footage"
+  | "rendering"
+  | "uploading"
+  | "ready"
+  | "failed";
+
+export interface VideoPost {
+  id: string;
+  angle: string;
+  script: string;        // narration text sent to ElevenLabs
+  caption: string;       // full IG caption (URL + form line + body)
+  jobId: string | null;  // Railway worker job id, null if not yet enqueued
+  state: VideoJobState;
+  progress: number;      // 0..1
+  videoUrl?: string;     // R2 public URL once ready
+  durationS?: number;
+  error?: string;
+}
+
+export interface VideoStartResponse {
+  jobs: Array<{
+    angle: string;
+    script: string;
+    caption: string;
+    jobId: string;
+  }>;
+}
+
+export interface VideoStatusResponse {
+  state: VideoJobState;
+  progress: number;
+  videoUrl?: string;
+  durationS?: number;
+  error?: string;
+}

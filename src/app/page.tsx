@@ -7,8 +7,10 @@ import { GenerateFAB } from "@/components/GenerateFAB";
 import { useBatchStore } from "@/store/batchStore";
 
 export default function Home() {
-  const { format, posts, loading, error } = useBatchStore();
+  const { format, posts, videoPosts, loading, error } = useBatchStore();
   const isVideo = format === "video";
+  const items = isVideo ? videoPosts : posts;
+  const hasItems = items.length > 0;
 
   return (
     <div className="flex h-screen w-full bg-neutral-100 dark:bg-black text-neutral-900 dark:text-neutral-100">
@@ -20,19 +22,19 @@ export default function Home() {
               {error}
             </div>
           )}
-          {posts.length === 0 && !loading && <EmptyState video={isVideo} />}
-          {loading && posts.length === 0 && <LoadingState video={isVideo} />}
-          {posts.length > 0 && !isVideo && (
+          {!hasItems && !loading && <EmptyState video={isVideo} />}
+          {loading && !hasItems && <LoadingState video={isVideo} />}
+          {hasItems && !isVideo && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6 auto-rows-fr">
               {posts.map((p) => (
                 <PostCard key={p.id} post={p} />
               ))}
             </div>
           )}
-          {posts.length > 0 && isVideo && (
+          {hasItems && isVideo && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-6 auto-rows-fr">
-              {posts.map((_, i) => (
-                <VideoCard key={i} />
+              {videoPosts.map((v) => (
+                <VideoCard key={v.id} post={v} />
               ))}
             </div>
           )}
@@ -61,13 +63,12 @@ function EmptyState({ video }: { video: boolean }) {
           )}
         </div>
         <h2 className="text-base font-semibold tracking-tight mb-2">
-          {video ? "Video pipeline coming soon" : "Ready when you are"}
+          {video ? "Ready to render" : "Ready when you are"}
         </h2>
         <p className="text-sm text-neutral-500 dark:text-neutral-400 leading-relaxed">
           {video ? (
             <>
-              Narration + footage + word-by-word subtitles. The render service is under
-              construction. For now, switch back to <span className="font-medium text-neutral-700 dark:text-neutral-300">Static</span> in the sidebar to keep working.
+              Pick a language and content type, then click <span className="font-medium text-neutral-700 dark:text-neutral-300">Generate videos</span>. Each batch produces 3 narrated 9:16 videos with word-by-word karaoke subtitles. Renders take ~60-90s each.
             </>
           ) : (
             <>

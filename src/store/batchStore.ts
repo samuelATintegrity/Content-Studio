@@ -1,13 +1,21 @@
 "use client";
 
 import { create } from "zustand";
-import { DEFAULT_FORMAT, type ContentType, type Format, type Language, type Post } from "@/lib/types";
+import {
+  DEFAULT_FORMAT,
+  type ContentType,
+  type Format,
+  type Language,
+  type Post,
+  type VideoPost,
+} from "@/lib/types";
 
 interface BatchState {
   format: Format;
   language: Language;
   contentType: ContentType;
   posts: Post[];
+  videoPosts: VideoPost[];
   loading: boolean;
   error: string | null;
   usedPhotoIds: number[];
@@ -19,6 +27,8 @@ interface BatchState {
   setError: (e: string | null) => void;
   setPosts: (p: Post[]) => void;
   updatePost: (id: string, patch: Partial<Post>) => void;
+  setVideoPosts: (p: VideoPost[]) => void;
+  updateVideoPost: (id: string, patch: Partial<VideoPost>) => void;
   addUsedPhotoId: (id: number) => void;
   resetUsedPhotoIds: () => void;
 }
@@ -28,6 +38,7 @@ export const useBatchStore = create<BatchState>((set) => ({
   language: "en",
   contentType: "zero_down_generic",
   posts: [],
+  videoPosts: [],
   loading: false,
   error: null,
   usedPhotoIds: [],
@@ -41,6 +52,11 @@ export const useBatchStore = create<BatchState>((set) => ({
   updatePost: (id, patch) =>
     set((s) => ({
       posts: s.posts.map((p) => (p.id === id ? { ...p, ...patch } : p)),
+    })),
+  setVideoPosts: (videoPosts) => set({ videoPosts }),
+  updateVideoPost: (id, patch) =>
+    set((s) => ({
+      videoPosts: s.videoPosts.map((v) => (v.id === id ? { ...v, ...patch } : v)),
     })),
   addUsedPhotoId: (id) => set((s) => ({ usedPhotoIds: [...s.usedPhotoIds, id] })),
   resetUsedPhotoIds: () => set({ usedPhotoIds: [] }),

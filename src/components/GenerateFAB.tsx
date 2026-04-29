@@ -2,32 +2,32 @@
 
 import { useBatchStore } from "@/store/batchStore";
 import { generateBatch } from "@/lib/generate";
+import { generateVideoBatch } from "@/lib/generateVideo";
 
 export function GenerateFAB() {
   const loading = useBatchStore((s) => s.loading);
   const hasPosts = useBatchStore((s) => s.posts.length > 0);
+  const hasVideos = useBatchStore((s) => s.videoPosts.length > 0);
   const format = useBatchStore((s) => s.format);
   const isVideo = format === "video";
 
-  // Video pipeline isn't wired up yet — keep the button visible but disabled,
-  // with a tooltip telling the user where things stand.
-  const disabled = loading || isVideo;
+  const disabled = loading;
 
   function onClick() {
-    if (loading || isVideo) return;
-    generateBatch();
+    if (loading) return;
+    if (isVideo) generateVideoBatch();
+    else generateBatch();
   }
 
   let label: string;
-  if (loading) label = "Generating";
-  else if (isVideo) label = "Video coming soon";
+  if (loading) label = isVideo ? "Starting renders" : "Generating";
+  else if (isVideo) label = hasVideos ? "Regenerate batch" : "Generate videos";
   else label = hasPosts ? "Regenerate" : "Generate posts";
 
   return (
     <button
       onClick={onClick}
       disabled={disabled}
-      title={isVideo ? "Video render pipeline is under construction" : undefined}
       className="fixed bottom-6 right-6 z-30 px-6 py-3.5 rounded-full bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-900 text-sm font-semibold tracking-tight shadow-[0_8px_24px_-6px_rgba(0,0,0,0.35)] hover:shadow-[0_12px_32px_-8px_rgba(0,0,0,0.45)] transition disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2.5"
     >
       {loading ? (
