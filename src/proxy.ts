@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 
 // Cookie-based password gate. The login page sets `app_auth=<password>` after
-// validating against process.env.APP_PASSWORD; this middleware compares the
-// cookie value against the same env var on every request. If APP_PASSWORD is
-// unset (e.g. local dev without a .env line), no gate runs.
+// validating against process.env.APP_PASSWORD; this proxy compares the cookie
+// value against the same env var on every request. If APP_PASSWORD is unset
+// (e.g. local dev without a .env line), no gate runs.
 //
 // Cookie is httpOnly + secure + SameSite=Lax so it can't be read or set by
 // browser JS or cross-site requests.
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const expected = process.env.APP_PASSWORD;
   if (!expected) return NextResponse.next();
 

@@ -6,6 +6,8 @@ import { uploadVideo } from "./r2.js";
 import { synthesize } from "./elevenlabs.js";
 import { buildAssSubtitles, type SubtitleStyle } from "./subtitles.js";
 import { voiceIdFor } from "./voices.js";
+import { fetchFootage } from "./pexelsVideo.js";
+import { compose } from "./ffmpeg.js";
 import type { RenderRequest } from "./types.js";
 
 // Brand-aligned subtitle defaults. White base text with the same accent
@@ -22,11 +24,15 @@ const SUBTITLE_STYLE: SubtitleStyle = {
   wordsPerPhrase: 3,
 };
 
-// Orchestrates the per-job pipeline. Stages are wired up incrementally:
-//   Phase B: stub.
-//   Phase C (now): ElevenLabs TTS + karaoke ASS subs run for real.
-//   Phase D: Pexels Videos download + ffmpeg compose.
-//   Phase E: connected end-to-end from Vercel.
+// Bundled fonts live under /app/fonts in the Docker runtime image.
+const FONTS_DIR = process.env.FONTS_DIR ?? "/app/fonts";
+
+// Pick a number of clips so each plays for ~6.5s of the narration, bounded
+// to [3, 8] so we don't over-fetch on short scripts or under-cut on long ones.
+function chooseClipCount(durationS: number): number {
+  const ideal = Math.round(durationS / 6.5);
+  return Math.max(3, Math.min(8, ideal));
+}
 
 export async function runPipeline(jobId: string, req: RenderRequest): Promise<void> {
   const job = getJob(jobId);
@@ -38,40 +44,44 @@ export async function runPipeline(jobId: string, req: RenderRequest): Promise<vo
     // ── Stage: TTS ────────────────────────────────────────────────────
     setState(jobId, "tts", 0.1);
     const tts = await synthesize(req.script, voiceIdFor(req.language), workDir);
+    if (tts.durationS <= 0) {
+      throw new Error("ElevenLabs returned zero-duration audio");
+    }
 
-    // Build karaoke subtitles from the per-word timestamps and write to disk
-    // so the ffmpeg stage (Phase D) can burn them in via subtitles=...
     const ass = buildAssSubtitles(tts.words, SUBTITLE_STYLE);
     const assPath = join(workDir, "subs.ass");
     await writeFile(assPath, ass, "utf8");
 
-    // ── Stage: Footage (Phase D placeholder) ─────────────────────────
-    setState(jobId, "footage", 0.4);
-    // const clips = await fetchFootage(req.contentType, tts.durationS, workDir);
+    // ── Stage: Footage ───────────────────────────────────────────────
+    setState(jobId, "footage", 0.35);
+    const clipCount = chooseClipCount(tts.durationS);
+    const clips = await fetchFootage(req.contentType, clipCount, workDir);
+    if (clips.length === 0) {
+      throw new Error("Pexels returned no clips for this content type");
+    }
 
-    // ── Stage: Render (Phase D placeholder) ──────────────────────────
-    setState(jobId, "rendering", 0.7);
-    // await compose({ clips, mp3Path: tts.mp3Path, assPath, durationS: tts.durationS });
+    // ── Stage: Render ────────────────────────────────────────────────
+    setState(jobId, "rendering", 0.6);
+    const finalPath = join(workDir, "final.mp4");
+    await compose({
+      clipPaths: clips.map((c) => c.filePath),
+      audioPath: tts.mp3Path,
+      assPath,
+      fontsDir: FONTS_DIR,
+      outPath: finalPath,
+      audioDurationS: tts.durationS,
+    });
 
-    // ── Stage: Upload (Phase D — wired once final.mp4 exists) ────────
+    // ── Stage: Upload ────────────────────────────────────────────────
     setState(jobId, "uploading", 0.9);
-    // const finalPath = join(workDir, "final.mp4");
-    // const url = await uploadVideo(finalPath, `videos/${jobId}.mp4`);
+    const url = await uploadVideo(finalPath, `videos/${jobId}.mp4`);
 
-    // Phase D not yet implemented — surface a clear pending state to the UI.
-    fail(
-      jobId,
-      `TTS + subtitles ready (${tts.words.length} words, ${tts.durationS.toFixed(1)}s). Footage compose pending Phase D.`,
-    );
-    return;
-
-    // When Phase D lands, replace the above with:
-    // updateJob(jobId, {
-    //   state: "ready",
-    //   progress: 1,
-    //   videoUrl: url,
-    //   durationS: tts.durationS,
-    // });
+    updateJob(jobId, {
+      state: "ready",
+      progress: 1,
+      videoUrl: url,
+      durationS: tts.durationS,
+    });
   } catch (e) {
     const message = e instanceof Error ? e.message : "Unknown pipeline error";
     fail(jobId, message);
@@ -80,7 +90,3 @@ export async function runPipeline(jobId: string, req: RenderRequest): Promise<vo
     await rm(workDir, { recursive: true, force: true }).catch(() => {});
   }
 }
-
-// Suppress unused-import warning for the placeholder branches above.
-void uploadVideo;
-void updateJob;
