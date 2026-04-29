@@ -1,9 +1,10 @@
 "use client";
 
 import { create } from "zustand";
-import type { ContentType, Language, Post } from "@/lib/types";
+import { DEFAULT_FORMAT, type ContentType, type Format, type Language, type Post } from "@/lib/types";
 
 interface BatchState {
+  format: Format;
   language: Language;
   contentType: ContentType;
   posts: Post[];
@@ -11,6 +12,7 @@ interface BatchState {
   error: string | null;
   usedPhotoIds: number[];
 
+  setFormat: (f: Format) => void;
   setLanguage: (l: Language) => void;
   setContentType: (c: ContentType) => void;
   setLoading: (b: boolean) => void;
@@ -22,6 +24,7 @@ interface BatchState {
 }
 
 export const useBatchStore = create<BatchState>((set) => ({
+  format: DEFAULT_FORMAT,
   language: "en",
   contentType: "zero_down_generic",
   posts: [],
@@ -29,6 +32,7 @@ export const useBatchStore = create<BatchState>((set) => ({
   error: null,
   usedPhotoIds: [],
 
+  setFormat: (format) => set({ format }),
   setLanguage: (language) => set({ language }),
   setContentType: (contentType) => set({ contentType }),
   setLoading: (loading) => set({ loading }),

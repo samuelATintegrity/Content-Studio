@@ -4,11 +4,14 @@ import { useEffect } from "react";
 import { useBatchStore } from "@/store/batchStore";
 import {
   CONTENT_TYPE_LABELS,
+  FORMAT_LABELS,
   LANGUAGE_LABELS,
   type ContentType,
+  type Format,
   type Language,
 } from "@/lib/types";
 
+const FORMATS: Format[] = ["static", "video"];
 const LANGS: Language[] = ["en", "tl", "es", "zh"];
 const CONTENT_TYPES: ContentType[] = [
   "zero_down_generic",
@@ -28,7 +31,8 @@ function visibleContentTypes(language: Language): ContentType[] {
 }
 
 export function Sidebar() {
-  const { language, contentType, setLanguage, setContentType } = useBatchStore();
+  const { format, language, contentType, setFormat, setLanguage, setContentType } =
+    useBatchStore();
 
   // If the user picks English while the hidden language_match type was selected,
   // bounce them back to the default so we never have an invisible-but-active
@@ -41,20 +45,42 @@ export function Sidebar() {
   }, [language, contentType, setContentType]);
 
   const contentTypes = visibleContentTypes(language);
+  const aspectBadge = format === "video" ? "9:16" : "4:5";
 
   return (
     <aside className="w-80 shrink-0 border-r border-neutral-200 dark:border-neutral-900 bg-white dark:bg-neutral-950 px-7 py-8 flex flex-col gap-8 h-screen overflow-y-auto">
       <header className="flex items-baseline justify-between">
         <div>
           <h1 className="text-[15px] font-semibold tracking-tight">Content Studio</h1>
-          <p className="text-[11px] text-neutral-500 mt-0.5">Real estate · static posts</p>
+          <p className="text-[11px] text-neutral-500 mt-0.5">
+            Real estate · {format === "video" ? "short-form video" : "static posts"}
+          </p>
         </div>
         <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-400 dark:text-neutral-600 font-semibold">
-          4:5
+          {aspectBadge}
         </span>
       </header>
 
       <div className="h-px bg-neutral-100 dark:bg-neutral-900" />
+
+      <Section title="Format">
+        <div className="grid grid-cols-2 gap-2">
+          {FORMATS.map((f) => (
+            <Pill key={f} selected={format === f} onClick={() => setFormat(f)}>
+              {FORMAT_LABELS[f]}
+            </Pill>
+          ))}
+        </div>
+      </Section>
+
+      {format === "video" && (
+        <Section title="Sub-mode">
+          <div className="flex flex-col gap-2">
+            <Pill selected>Narration · footage</Pill>
+            <Pill muted>Vlogger · split-screen · soon</Pill>
+          </div>
+        </Section>
+      )}
 
       <Section title="Language">
         <div className="grid grid-cols-2 gap-2">
@@ -98,11 +124,13 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Pill({
   children,
   selected,
+  muted,
   align = "center",
   onClick,
 }: {
   children: React.ReactNode;
   selected?: boolean;
+  muted?: boolean;
   align?: "left" | "center";
   onClick?: () => void;
 }) {
@@ -111,9 +139,15 @@ function Pill({
   }`;
   const variant = selected
     ? "bg-neutral-900 text-white border-neutral-900 dark:bg-neutral-100 dark:text-neutral-900 dark:border-neutral-100"
-    : "bg-white dark:bg-neutral-950 text-neutral-800 dark:text-neutral-200 border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-900";
+    : muted
+      ? "bg-neutral-100 dark:bg-neutral-900 text-neutral-400 dark:text-neutral-600 border-transparent cursor-not-allowed"
+      : "bg-white dark:bg-neutral-950 text-neutral-800 dark:text-neutral-200 border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-900";
   return (
-    <button onClick={onClick} className={`${base} ${variant}`}>
+    <button
+      onClick={onClick}
+      disabled={muted}
+      className={`${base} ${variant}`}
+    >
       {children}
     </button>
   );

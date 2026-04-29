@@ -2,11 +2,13 @@
 
 import { Sidebar } from "@/components/Sidebar";
 import { PostCard } from "@/components/PostCard";
+import { VideoCard } from "@/components/VideoCard";
 import { GenerateFAB } from "@/components/GenerateFAB";
 import { useBatchStore } from "@/store/batchStore";
 
 export default function Home() {
-  const { posts, loading, error } = useBatchStore();
+  const { format, posts, loading, error } = useBatchStore();
+  const isVideo = format === "video";
 
   return (
     <div className="flex h-screen w-full bg-neutral-100 dark:bg-black text-neutral-900 dark:text-neutral-100">
@@ -18,12 +20,19 @@ export default function Home() {
               {error}
             </div>
           )}
-          {posts.length === 0 && !loading && <EmptyState />}
-          {loading && posts.length === 0 && <LoadingState />}
-          {posts.length > 0 && (
+          {posts.length === 0 && !loading && <EmptyState video={isVideo} />}
+          {loading && posts.length === 0 && <LoadingState video={isVideo} />}
+          {posts.length > 0 && !isVideo && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6 auto-rows-fr">
               {posts.map((p) => (
                 <PostCard key={p.id} post={p} />
+              ))}
+            </div>
+          )}
+          {posts.length > 0 && isVideo && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-6 auto-rows-fr">
+              {posts.map((_, i) => (
+                <VideoCard key={i} />
               ))}
             </div>
           )}
@@ -34,27 +43,58 @@ export default function Home() {
   );
 }
 
-function EmptyState() {
+function EmptyState({ video }: { video: boolean }) {
   return (
     <div className="h-full min-h-[70vh] flex items-center justify-center">
       <div className="text-center max-w-sm">
         <div className="mx-auto w-14 h-14 rounded-full border border-neutral-300 dark:border-neutral-800 flex items-center justify-center text-neutral-400 dark:text-neutral-600 mb-6">
-          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="3" />
-            <circle cx="9" cy="9" r="1.5" fill="currentColor" stroke="none" />
-            <path d="M21 15l-5-5L5 21" />
-          </svg>
+          {video ? (
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <polygon points="5 3 19 12 5 21 5 3" />
+            </svg>
+          ) : (
+            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="3" />
+              <circle cx="9" cy="9" r="1.5" fill="currentColor" stroke="none" />
+              <path d="M21 15l-5-5L5 21" />
+            </svg>
+          )}
         </div>
-        <h2 className="text-base font-semibold tracking-tight mb-2">Ready when you are</h2>
+        <h2 className="text-base font-semibold tracking-tight mb-2">
+          {video ? "Video pipeline coming soon" : "Ready when you are"}
+        </h2>
         <p className="text-sm text-neutral-500 dark:text-neutral-400 leading-relaxed">
-          Pick a language and content type on the left, then click <span className="font-medium text-neutral-700 dark:text-neutral-300">Generate posts</span>. Hover any image to edit or download it. Hover the caption to copy.
+          {video ? (
+            <>
+              Narration + footage + word-by-word subtitles. The render service is under
+              construction. For now, switch back to <span className="font-medium text-neutral-700 dark:text-neutral-300">Static</span> in the sidebar to keep working.
+            </>
+          ) : (
+            <>
+              Pick a language and content type on the left, then click <span className="font-medium text-neutral-700 dark:text-neutral-300">Generate posts</span>. Hover any image to edit or download it. Hover the caption to copy.
+            </>
+          )}
         </p>
       </div>
     </div>
   );
 }
 
-function LoadingState() {
+function LoadingState({ video }: { video: boolean }) {
+  if (video) {
+    return (
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-6">
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div
+            key={i}
+            className="rounded-3xl overflow-hidden border border-neutral-200 dark:border-neutral-900 bg-white dark:bg-neutral-950"
+          >
+            <div className="aspect-[9/16] bg-neutral-100 dark:bg-neutral-900 animate-pulse" />
+          </div>
+        ))}
+      </div>
+    );
+  }
   return (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6">
       {Array.from({ length: 7 }).map((_, i) => (

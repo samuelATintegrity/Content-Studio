@@ -22,7 +22,14 @@ export const CONTENT_TYPE_LABELS: Record<ContentType, string> = {
   good_agents: "Good Agents (matching mission)",
 };
 
-export type Format = "static" | "short";
+export type Format = "static" | "video";
+
+export const FORMAT_LABELS: Record<Format, string> = {
+  static: "Static · 4:5",
+  video: "Video · 9:16",
+};
+
+export const DEFAULT_FORMAT: Format = "static";
 
 export type FontVariant = "sans" | "serif";
 
