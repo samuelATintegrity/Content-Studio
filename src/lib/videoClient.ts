@@ -3,6 +3,7 @@
 import type {
   ContentType,
   Language,
+  VideoSourcePromptIndex,
   VideoStartResponse,
   VideoStatusResponse,
 } from "./types";
@@ -22,6 +23,49 @@ export async function startVideoBatch(
   return res.json();
 }
 
+export async function generateSourceImage(
+  promptIndex: VideoSourcePromptIndex,
+): Promise<{ url: string }> {
+  const res = await fetch("/api/video/generate-image", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ promptIndex }),
+  });
+  if (!res.ok) {
+    throw new Error((await res.json().catch(() => ({}))).error ?? "generate-image failed");
+  }
+  return res.json();
+}
+
+export async function animateSourceImage(imageUrl: string): Promise<{ url: string }> {
+  const res = await fetch("/api/video/animate-image", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ imageUrl }),
+  });
+  if (!res.ok) {
+    throw new Error((await res.json().catch(() => ({}))).error ?? "animate-image failed");
+  }
+  return res.json();
+}
+
+export async function startVideoRender(args: {
+  script: string;
+  language: Language;
+  contentType: ContentType;
+  clipUrls: string[];
+}): Promise<{ jobId: string }> {
+  const res = await fetch("/api/video/render", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(args),
+  });
+  if (!res.ok) {
+    throw new Error((await res.json().catch(() => ({}))).error ?? "render failed");
+  }
+  return res.json();
+}
+
 export async function getVideoStatus(jobId: string): Promise<VideoStatusResponse> {
   const res = await fetch(`/api/video/status?jobId=${encodeURIComponent(jobId)}`);
   if (!res.ok) {
@@ -30,15 +74,16 @@ export async function getVideoStatus(jobId: string): Promise<VideoStatusResponse
   return res.json();
 }
 
-export async function regenVideo(
-  language: Language,
-  contentType: ContentType,
-  angleKey: string,
-): Promise<{ angle: string; script: string; caption: string; jobId: string }> {
+export async function regenVideo(args: {
+  language: Language;
+  contentType: ContentType;
+  angleKey: string;
+  clipUrls: string[];
+}): Promise<{ angle: string; script: string; caption: string; jobId: string }> {
   const res = await fetch("/api/video/regen", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ language, contentType, angleKey }),
+    body: JSON.stringify(args),
   });
   if (!res.ok) {
     throw new Error((await res.json().catch(() => ({}))).error ?? "regen failed");

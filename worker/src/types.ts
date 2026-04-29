@@ -34,7 +34,8 @@ export interface JobState {
 export interface RenderRequest {
   script: string;          // narration text
   language: Language;      // selects voice + caption styling
-  contentType: ContentType;// influences Pexels query pool
+  contentType: ContentType;// kept for logging / future per-type music selection
+  clipUrls: string[];      // pre-made 9:16 clips (Seedance-animated images), in order
 }
 
 export interface RenderResponse {

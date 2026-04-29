@@ -1,6 +1,7 @@
 // ffmpeg compose: scale + crop each clip to 1080x1920, trim each to its
 // share of the audio duration, concat into a single visual track, mux the
-// narration MP3, burn-in ASS subtitles, and append a 2-4s logo outro card.
+// narration MP3, optionally mix a low-volume background music track,
+// burn-in ASS subtitles, and append a 2-4s logo outro card.
 // Runs as a single process with a complex filtergraph.
 
 import { spawn } from "node:child_process";
@@ -17,10 +18,13 @@ export interface ComposeArgs {
   outroImagePath?: string | null; // optional logo image for outro card
   outroDurationS?: number;        // outro length, defaults to 3s
   outroBgColor?: string;          // hex (#RRGGBB) for outro background, defaults to brand primary
+  musicPath?: string | null;      // optional MP3 to mix at low volume
+  musicVolume?: number;           // 0..1 linear volume for music, defaults to 0.06 (~-25 dB)
 }
 
 const DEFAULT_OUTRO_S = 3;
 const DEFAULT_OUTRO_BG = "#0B2545"; // brand primary
+const DEFAULT_MUSIC_VOLUME = 0.06;
 const ASSETS_DIR = process.env.ASSETS_DIR ?? "/app/assets";
 
 function runFfmpeg(args: string[], cwd: string): Promise<void> {
@@ -48,24 +52,12 @@ async function fileExists(p: string): Promise<boolean> {
   }
 }
 
-// ffmpeg's filter argument parser treats `:` and `\` and `'` specially. For
-// values inside single-quoted strings, escape `\` and `'`. We avoid colons by
-// always passing single-quoted, simple paths.
 function escapeForFilter(p: string): string {
   return p.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
 
-// Convert "#RRGGBB" → ffmpeg-compatible "0xRRGGBB".
 function hexToFfColor(hex: string): string {
   return "0x" + hex.replace("#", "").toUpperCase();
-}
-
-interface FilterPlan {
-  filter: string;
-  videoOutLabel: string;
-  audioOutLabel: string;
-  outroInputIndex: number | null;  // index of -loop 1 -i outro.png if used
-  silenceInputIndex: number;        // index of -f lavfi anullsrc input
 }
 
 function buildFilterComplex(args: {
@@ -79,10 +71,14 @@ function buildFilterComplex(args: {
   outroBgColor: string;
   outroImageInputIndex: number | null;
   silenceInputIndex: number;
+  musicInputIndex: number | null;
+  musicVolume: number;
+  totalDurationS: number;
 }): string {
   const {
     clipCount, perClipS, audioInputIndex, audioDurationS, assRelPath, fontsDir,
     outroDurationS, outroBgColor, outroImageInputIndex, silenceInputIndex,
+    musicInputIndex, musicVolume, totalDurationS,
   } = args;
 
   const trim = perClipS.toFixed(3);
@@ -105,17 +101,14 @@ function buildFilterComplex(args: {
   chains.push(`${concatInputs}concat=n=${clipCount}:v=1:a=0[vcat_raw]`);
 
   // Pad the visual track so it's at least as long as the audio (clones the
-  // last frame). Without this, if clip totals fall short of audio, the
-  // -shortest flag would cut the audio. Belt-and-suspenders alongside the
-  // min-duration filter in pexelsVideo.
+  // last frame). Belt-and-suspenders for the rare case clip totals fall short.
   chains.push(`[vcat_raw]tpad=stop_mode=clone:stop_duration=${audioDurationS.toFixed(3)}[vcat_padded]`);
 
   // Trim padded visual to exactly audio length, then burn subtitles.
   chains.push(`[vcat_padded]trim=duration=${audioDurationS.toFixed(3)},setpts=PTS-STARTPTS[vmain_pre]`);
   chains.push(`[vmain_pre]subtitles=filename='${escapedAss}':fontsdir='${escapedFonts}'[vmain]`);
 
-  // Outro visual. If a logo image is provided, scale-pad it onto a 1080x1920
-  // canvas with the brand background colour. Otherwise generate a solid card.
+  // Outro visual. Logo image scaled onto a brand-color canvas, or solid card.
   if (outroImageInputIndex !== null) {
     chains.push(
       `[${outroImageInputIndex}:v]scale=1080:1920:force_original_aspect_ratio=decrease,` +
@@ -131,14 +124,26 @@ function buildFilterComplex(args: {
   // Concat main + outro into final video stream.
   chains.push(`[vmain][voutro]concat=n=2:v=1:a=0[v_final]`);
 
-  // Audio: trim narration to its real length, then concat with silence.
+  // Audio: trim narration to real length, then concat with silence (covers outro).
   chains.push(
     `[${audioInputIndex}:a]atrim=duration=${audioDurationS.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_rates=44100:channel_layouts=stereo[a_main]`,
   );
   chains.push(
     `[${silenceInputIndex}:a]aformat=sample_rates=44100:channel_layouts=stereo[a_silence]`,
   );
-  chains.push(`[a_main][a_silence]concat=n=2:v=0:a=1[a_final]`);
+  chains.push(`[a_main][a_silence]concat=n=2:v=0:a=1[a_voice]`);
+
+  // Optional background music: trim to total duration, drop volume, mix with
+  // the voice track. amix with duration=first so the output ends with the
+  // voice track and dropout_transition=0 to avoid an end fade.
+  if (musicInputIndex !== null) {
+    chains.push(
+      `[${musicInputIndex}:a]aformat=sample_rates=44100:channel_layouts=stereo,volume=${musicVolume.toFixed(3)},atrim=duration=${totalDurationS.toFixed(3)},asetpts=PTS-STARTPTS[a_music]`,
+    );
+    chains.push(`[a_voice][a_music]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a_final]`);
+  } else {
+    chains.push(`[a_voice]anull[a_final]`);
+  }
 
   return chains.join(";");
 }
@@ -150,6 +155,8 @@ export async function compose(args: ComposeArgs): Promise<void> {
 
   const outroDurationS = args.outroDurationS ?? DEFAULT_OUTRO_S;
   const outroBgColor = args.outroBgColor ?? DEFAULT_OUTRO_BG;
+  const musicVolume = args.musicVolume ?? DEFAULT_MUSIC_VOLUME;
+  const totalDurationS = args.audioDurationS + outroDurationS;
 
   // Default outro image lookup: caller-supplied path → bundled assets dir.
   let outroImagePath: string | null = args.outroImagePath ?? null;
@@ -160,15 +167,21 @@ export async function compose(args: ComposeArgs): Promise<void> {
     outroImagePath = null;
   }
 
+  // Music path is opt-in via caller. If provided but missing on disk, drop it.
+  let musicPath: string | null = args.musicPath ?? null;
+  if (musicPath && !(await fileExists(musicPath))) {
+    musicPath = null;
+  }
+
   // Each clip plays its share of the audio length (with a small tail margin
-  // so the concat overshoots audio rather than undershooting it). The tpad
-  // stage above is the real safety net.
+  // so the concat overshoots audio rather than undershooting it). tpad is
+  // the real safety net.
   const perClipS = Math.max(1, args.audioDurationS / args.clipPaths.length + 0.1);
 
   const cwd = dirname(args.assPath);
   const assRel = basename(args.assPath);
 
-  // Build inputs in this order: clips, audio, [outro image], silence.
+  // Build inputs in this order: clips, audio, [outro image], silence, [music].
   const inputs: string[] = [];
   for (const clip of args.clipPaths) inputs.push("-i", clip);
   inputs.push("-i", args.audioPath);
@@ -180,13 +193,18 @@ export async function compose(args: ComposeArgs): Promise<void> {
     inputs.push("-loop", "1", "-t", outroDurationS.toFixed(3), "-i", outroImagePath);
   }
 
-  // Silence track for outro audio (always last input).
   const silenceInputIndex = (outroImageInputIndex !== null ? outroImageInputIndex : audioInputIndex) + 1;
   inputs.push(
     "-f", "lavfi",
     "-t", outroDurationS.toFixed(3),
     "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
   );
+
+  let musicInputIndex: number | null = null;
+  if (musicPath) {
+    musicInputIndex = silenceInputIndex + 1;
+    inputs.push("-stream_loop", "-1", "-i", musicPath);
+  }
 
   const filter = buildFilterComplex({
     clipCount: args.clipPaths.length,
@@ -199,6 +217,9 @@ export async function compose(args: ComposeArgs): Promise<void> {
     outroBgColor,
     outroImageInputIndex,
     silenceInputIndex,
+    musicInputIndex,
+    musicVolume,
+    totalDurationS,
   });
 
   const ffArgs = [

@@ -6,8 +6,9 @@ import { uploadVideo } from "./r2.js";
 import { synthesize } from "./elevenlabs.js";
 import { buildAssSubtitles, type SubtitleStyle } from "./subtitles.js";
 import { voiceIdFor } from "./voices.js";
-import { fetchFootage } from "./pexelsVideo.js";
+import { downloadClips } from "./clipDownload.js";
 import { compose } from "./ffmpeg.js";
+import { pickMusicTrack } from "./music.js";
 import type { RenderRequest } from "./types.js";
 
 // Subtitle styling. White all-caps with a strong yellow highlight on the
@@ -30,16 +31,14 @@ const SUBTITLE_STYLE: SubtitleStyle = {
 // Bundled fonts and assets live under /app in the Docker runtime image.
 const FONTS_DIR = process.env.FONTS_DIR ?? "/app/fonts";
 
-// Pick a number of clips so each plays for ~6.5s of the narration, bounded
-// to [3, 8] so we don't over-fetch on short scripts or under-cut on long ones.
-function chooseClipCount(durationS: number): number {
-  const ideal = Math.round(durationS / 6.5);
-  return Math.max(3, Math.min(8, ideal));
-}
-
 export async function runPipeline(jobId: string, req: RenderRequest): Promise<void> {
   const job = getJob(jobId);
   if (!job) return;
+
+  if (!Array.isArray(req.clipUrls) || req.clipUrls.length === 0) {
+    fail(jobId, "clipUrls required");
+    return;
+  }
 
   const workDir = await mkdtemp(join(tmpdir(), `cs-${jobId}-`));
 
@@ -55,20 +54,14 @@ export async function runPipeline(jobId: string, req: RenderRequest): Promise<vo
     const assPath = join(workDir, "subs.ass");
     await writeFile(assPath, ass, "utf8");
 
-    // ── Stage: Footage ───────────────────────────────────────────────
+    // ── Stage: Footage download ──────────────────────────────────────
     setState(jobId, "footage", 0.35);
-    const clipCount = chooseClipCount(tts.durationS);
-    // Each clip will be trimmed to ~audio/clipCount seconds; require Pexels
-    // results to be at least that long so the visual track never undershoots.
-    const minClipDurationS = Math.max(3, tts.durationS / clipCount + 0.5);
-    const clips = await fetchFootage(req.contentType, clipCount, workDir, minClipDurationS);
-    if (clips.length === 0) {
-      throw new Error("Pexels returned no clips for this content type");
-    }
+    const clips = await downloadClips(req.clipUrls, workDir);
 
     // ── Stage: Render ────────────────────────────────────────────────
     setState(jobId, "rendering", 0.6);
     const finalPath = join(workDir, "final.mp4");
+    const musicPath = await pickMusicTrack();
     await compose({
       clipPaths: clips.map((c) => c.filePath),
       audioPath: tts.mp3Path,
@@ -76,6 +69,7 @@ export async function runPipeline(jobId: string, req: RenderRequest): Promise<vo
       fontsDir: FONTS_DIR,
       outPath: finalPath,
       audioDurationS: tts.durationS,
+      musicPath,
     });
 
     // ── Stage: Upload ────────────────────────────────────────────────
@@ -92,7 +86,6 @@ export async function runPipeline(jobId: string, req: RenderRequest): Promise<vo
     const message = e instanceof Error ? e.message : "Unknown pipeline error";
     fail(jobId, message);
   } finally {
-    // Clean up the per-job workspace.
     await rm(workDir, { recursive: true, force: true }).catch(() => {});
   }
 }

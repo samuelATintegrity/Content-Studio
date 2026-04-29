@@ -6,9 +6,10 @@ import { useVideoPolling } from "@/lib/useVideoPolling";
 import { regenerateOneVideo } from "@/lib/generateVideo";
 
 const STAGE_LABELS: Record<VideoJobState, string> = {
+  waiting_images: "Waiting for image set",
   queued: "Queued",
   tts: "Voicing narration",
-  footage: "Pulling footage",
+  footage: "Loading clips",
   rendering: "Rendering video",
   uploading: "Uploading",
   ready: "Ready",
@@ -23,6 +24,7 @@ export function VideoCard({ post }: { post: VideoPost }) {
   const [regenBusy, setRegenBusy] = useState(false);
 
   const isWorking =
+    post.state === "waiting_images" ||
     post.state === "queued" ||
     post.state === "tts" ||
     post.state === "footage" ||

@@ -3,14 +3,18 @@
 import { Sidebar } from "@/components/Sidebar";
 import { PostCard } from "@/components/PostCard";
 import { VideoCard } from "@/components/VideoCard";
+import { ImageSetPanel } from "@/components/ImageSetPanel";
 import { GenerateFAB } from "@/components/GenerateFAB";
 import { useBatchStore } from "@/store/batchStore";
 
 export default function Home() {
-  const { format, posts, videoPosts, loading, error } = useBatchStore();
+  const { format, posts, videoPosts, imageSlots, loading, error } = useBatchStore();
   const isVideo = format === "video";
-  const items = isVideo ? videoPosts : posts;
-  const hasItems = items.length > 0;
+  const hasStaticPosts = posts.length > 0;
+  const hasImageSet = imageSlots.length > 0;
+  const hasVideoPosts = videoPosts.length > 0;
+  const showStaticEmpty = !isVideo && !hasStaticPosts && !loading;
+  const showVideoEmpty = isVideo && !hasImageSet && !loading;
 
   return (
     <div className="flex h-screen w-full bg-neutral-100 dark:bg-black text-neutral-900 dark:text-neutral-100">
@@ -22,16 +26,20 @@ export default function Home() {
               {error}
             </div>
           )}
-          {!hasItems && !loading && <EmptyState video={isVideo} />}
-          {loading && !hasItems && <LoadingState video={isVideo} />}
-          {hasItems && !isVideo && (
+          {showStaticEmpty && <EmptyState video={false} />}
+          {showVideoEmpty && <EmptyState video={true} />}
+          {loading && !hasStaticPosts && !hasImageSet && <LoadingState video={isVideo} />}
+
+          {!isVideo && hasStaticPosts && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6 auto-rows-fr">
               {posts.map((p) => (
                 <PostCard key={p.id} post={p} />
               ))}
             </div>
           )}
-          {hasItems && isVideo && (
+
+          {isVideo && hasImageSet && <ImageSetPanel />}
+          {isVideo && hasVideoPosts && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-6 auto-rows-fr">
               {videoPosts.map((v) => (
                 <VideoCard key={v.id} post={v} />

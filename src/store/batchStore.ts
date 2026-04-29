@@ -5,9 +5,11 @@ import {
   DEFAULT_FORMAT,
   type ContentType,
   type Format,
+  type ImageSlot,
   type Language,
   type Post,
   type VideoPost,
+  type VideoSourcePromptIndex,
 } from "@/lib/types";
 
 interface BatchState {
@@ -16,6 +18,7 @@ interface BatchState {
   contentType: ContentType;
   posts: Post[];
   videoPosts: VideoPost[];
+  imageSlots: ImageSlot[];
   loading: boolean;
   error: string | null;
   usedPhotoIds: number[];
@@ -29,6 +32,8 @@ interface BatchState {
   updatePost: (id: string, patch: Partial<Post>) => void;
   setVideoPosts: (p: VideoPost[]) => void;
   updateVideoPost: (id: string, patch: Partial<VideoPost>) => void;
+  setImageSlots: (slots: ImageSlot[]) => void;
+  updateImageSlot: (promptIndex: VideoSourcePromptIndex, patch: Partial<ImageSlot>) => void;
   addUsedPhotoId: (id: number) => void;
   resetUsedPhotoIds: () => void;
 }
@@ -39,6 +44,7 @@ export const useBatchStore = create<BatchState>((set) => ({
   contentType: "zero_down_generic",
   posts: [],
   videoPosts: [],
+  imageSlots: [],
   loading: false,
   error: null,
   usedPhotoIds: [],
@@ -57,6 +63,13 @@ export const useBatchStore = create<BatchState>((set) => ({
   updateVideoPost: (id, patch) =>
     set((s) => ({
       videoPosts: s.videoPosts.map((v) => (v.id === id ? { ...v, ...patch } : v)),
+    })),
+  setImageSlots: (imageSlots) => set({ imageSlots }),
+  updateImageSlot: (promptIndex, patch) =>
+    set((s) => ({
+      imageSlots: s.imageSlots.map((slot) =>
+        slot.promptIndex === promptIndex ? { ...slot, ...patch } : slot,
+      ),
     })),
   addUsedPhotoId: (id) => set((s) => ({ usedPhotoIds: [...s.usedPhotoIds, id] })),
   resetUsedPhotoIds: () => set({ usedPhotoIds: [] }),

@@ -10,8 +10,12 @@ interface RegenBody {
   language: Language;
   contentType: ContentType;
   angleKey: string;
+  clipUrls: string[];
 }
 
+// Regenerate a single card: same image set, fresh Claude script, fresh
+// Railway render. The new render reuses the existing 5 clip URLs so we
+// don't re-pay for image generation + animation.
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as RegenBody;
@@ -20,6 +24,9 @@ export async function POST(req: Request) {
         { error: "language, contentType, angleKey are required" },
         { status: 400 },
       );
+    }
+    if (!Array.isArray(body.clipUrls) || body.clipUrls.length === 0) {
+      return NextResponse.json({ error: "clipUrls is required" }, { status: 400 });
     }
 
     const scripts = await generateVideoScripts(body.language, body.contentType, [body.angleKey]);
@@ -32,6 +39,7 @@ export async function POST(req: Request) {
       script: next.script,
       language: body.language,
       contentType: body.contentType,
+      clipUrls: body.clipUrls,
     });
 
     return NextResponse.json({

@@ -8,19 +8,29 @@ export function GenerateFAB() {
   const loading = useBatchStore((s) => s.loading);
   const hasPosts = useBatchStore((s) => s.posts.length > 0);
   const hasVideos = useBatchStore((s) => s.videoPosts.length > 0);
+  const imageSlots = useBatchStore((s) => s.imageSlots);
   const format = useBatchStore((s) => s.format);
   const isVideo = format === "video";
 
-  const disabled = loading;
+  // Block re-trigger while an image set is mid-flight (any slot not finished
+  // and not in failed state) so we don't lose work to a stray double-click.
+  const imageSetBusy =
+    imageSlots.length > 0 &&
+    imageSlots.some(
+      (s) => s.state !== "video_ready" && s.state !== "failed",
+    );
+
+  const disabled = loading || (isVideo && imageSetBusy);
 
   function onClick() {
-    if (loading) return;
+    if (disabled) return;
     if (isVideo) generateVideoBatch();
     else generateBatch();
   }
 
   let label: string;
-  if (loading) label = isVideo ? "Starting renders" : "Generating";
+  if (loading) label = isVideo ? "Starting batch" : "Generating";
+  else if (isVideo && imageSetBusy) label = "Image set in progress";
   else if (isVideo) label = hasVideos ? "Regenerate batch" : "Generate videos";
   else label = hasPosts ? "Regenerate" : "Generate posts";
 

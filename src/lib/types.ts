@@ -87,7 +87,28 @@ export interface GenerateBatchResponse {
 
 // ── Video workflow ───────────────────────────────────────────────────
 
+// State of a single image slot in the per-batch image set. The pipeline
+// generates → user approves → animates → ready, gated on user approval.
+export type ImageSlotState =
+  | "queued"
+  | "generating"
+  | "awaiting_approval"
+  | "animating"
+  | "video_ready"
+  | "failed";
+
+export type VideoSourcePromptIndex = 0 | 1 | 2 | 3 | 4;
+
+export interface ImageSlot {
+  promptIndex: VideoSourcePromptIndex;
+  state: ImageSlotState;
+  imageUrl?: string;     // last-generated image (Nano Banana 2)
+  videoUrl?: string;     // animated clip (Seedance) once approved
+  error?: string;
+}
+
 export type VideoJobState =
+  | "waiting_images"      // image set still in progress; render hasn't dispatched
   | "queued"
   | "tts"
   | "footage"
@@ -101,7 +122,7 @@ export interface VideoPost {
   angle: string;
   script: string;        // narration text sent to ElevenLabs
   caption: string;       // full IG caption (URL + form line + body)
-  jobId: string | null;  // Railway worker job id, null if not yet enqueued
+  jobId: string | null;  // Railway worker job id, null while waiting for images
   state: VideoJobState;
   progress: number;      // 0..1
   videoUrl?: string;     // R2 public URL once ready
@@ -109,12 +130,13 @@ export interface VideoPost {
   error?: string;
 }
 
+// /api/video/start now only returns the 3 scripts. Render dispatch happens
+// later, once the image set is approved + animated.
 export interface VideoStartResponse {
-  jobs: Array<{
+  scripts: Array<{
     angle: string;
     script: string;
     caption: string;
-    jobId: string;
   }>;
 }
 

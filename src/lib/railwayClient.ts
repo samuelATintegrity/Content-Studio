@@ -30,7 +30,11 @@ export async function enqueueRender(args: {
   script: string;
   language: Language;
   contentType: ContentType;
+  clipUrls: string[];
 }): Promise<string> {
+  if (!Array.isArray(args.clipUrls) || args.clipUrls.length === 0) {
+    throw new Error("enqueueRender: clipUrls is required");
+  }
   const res = await workerFetch("/render", {
     method: "POST",
     body: JSON.stringify(args),
