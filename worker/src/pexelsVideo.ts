@@ -37,100 +37,111 @@ export interface FootageClip {
   durationS: number;
 }
 
-// Video b-roll queries lean on home interiors and lifestyle, since the
-// narration is spoken-over-visuals and viewers expect to see what's being
-// described (homes, families, agents) rather than static exteriors.
+// Video b-roll queries focus on PLACES — interiors, exteriors, neighborhoods,
+// architecture, home tours. People-centric queries are deliberately excluded;
+// the narration carries the human angle, the visuals stay on real estate.
 const VIDEO_QUERIES: Record<ContentType, { primary: string[]; broad: string[] }> = {
   zero_down_generic: {
     primary: [
-      "modern home interior",
-      "family living room",
-      "couple new home",
-      "kitchen home tour",
-      "house keys handover",
+      "modern home exterior",
+      "modern home interior tour",
+      "luxury kitchen interior",
+      "open concept living room",
+      "suburban home tour",
+      "house exterior daytime",
     ],
     broad: [
-      "home tour",
-      "real estate house",
-      "family at home",
-      "couple moving in",
       "home walkthrough",
-      "home interior tour",
+      "modern living room empty",
+      "kitchen home tour",
+      "suburban neighborhood houses",
+      "house front porch",
+      "interior design home",
+      "real estate home tour",
     ],
   },
   edu_zero_down_usda_local: {
     primary: [
-      "rural home",
-      "country house interior",
-      "farmhouse interior",
-      "family rural home",
-      "countryside living room",
+      "rural house exterior",
+      "country house tour",
+      "farmhouse exterior",
+      "countryside home",
+      "rural neighborhood",
+      "ranch house exterior",
     ],
     broad: [
-      "small town home",
-      "ranch house interior",
-      "country kitchen",
-      "rural family home",
-      "farmhouse living room",
+      "small town house",
+      "country kitchen interior",
+      "farmhouse living room empty",
+      "rural landscape home",
+      "ranch style interior",
+      "wooded property home",
     ],
   },
   edu_dpa_local: {
     primary: [
-      "first time homebuyer",
-      "couple new home keys",
-      "family moving in",
-      "couple house tour",
-      "young family home",
+      "starter home exterior",
+      "first home tour",
+      "modest home interior",
+      "townhouse exterior",
+      "small home walkthrough",
+      "new construction home",
     ],
     broad: [
-      "homebuyer signing",
-      "couple unpacking home",
-      "family kitchen breakfast",
-      "couple living room",
-      "happy homeowner",
+      "home keys close up",
+      "front door home",
+      "for sale sign yard",
+      "home interior empty",
+      "real estate house",
+      "moving boxes empty home",
     ],
   },
   language_match: {
     primary: [
-      "diverse family home",
-      "multicultural family living room",
-      "diverse couple home",
-      "family home tour",
-      "agent diverse family",
+      "modern home exterior",
+      "home interior tour",
+      "neighborhood houses",
+      "open kitchen home",
+      "house front entrance",
+      "real estate property",
     ],
     broad: [
-      "family front yard",
-      "family three generations home",
-      "diverse couple kitchen",
-      "multicultural household",
-      "family new home",
+      "suburban home street",
+      "living room interior",
+      "home walkthrough",
+      "modern home design",
+      "property exterior",
     ],
   },
   good_agents: {
     primary: [
-      "real estate agent meeting",
-      "real estate agent handshake",
-      "agent client home tour",
-      "professional real estate agent",
-      "agent showing house",
+      "modern home exterior",
+      "luxury home tour",
+      "real estate property",
+      "home interior walkthrough",
+      "open house empty",
+      "house exterior architecture",
     ],
     broad: [
-      "real estate consultation",
-      "agent meeting family",
-      "real estate office",
-      "agent with couple at home",
-      "open house agent",
+      "home for sale exterior",
+      "modern interior design",
+      "neighborhood homes street",
+      "property tour",
+      "kitchen home interior",
+      "front yard house",
     ],
   },
 };
 
 const FALLBACK = [
-  "home interior",
-  "family at home",
-  "couple at home",
-  "modern living room",
-  "house tour",
-  "real estate home",
+  "modern home exterior",
+  "home interior tour",
+  "kitchen home",
+  "living room interior",
+  "house exterior",
+  "neighborhood houses",
+  "real estate property",
+  "home walkthrough",
 ];
 
 function shuffle<T>(arr: readonly T[]): T[] {
@@ -192,6 +203,7 @@ export async function fetchFootage(
   contentType: ContentType,
   count: number,
   outDir: string,
+  minClipDurationS = 3,
 ): Promise<FootageClip[]> {
   const key = process.env.PEXELS_API_KEY;
   if (!key) throw new Error("PEXELS_API_KEY is not set");
@@ -208,6 +220,8 @@ export async function fetchFootage(
 
   // Walk tiers until we have at least `count` distinct candidates. We may end
   // up with more — that's fine, the caller picks the first `count`.
+  // Reject clips shorter than minClipDurationS so the per-clip ffmpeg trim
+  // window doesn't undershoot and produce a visual track shorter than audio.
   for (const tier of tiers) {
     for (const query of tier) {
       if (candidates.length >= count) break;
@@ -215,7 +229,7 @@ export async function fetchFootage(
         const videos = await searchVideos(query, key);
         for (const v of videos) {
           if (usedIds.has(v.id)) continue;
-          if (v.duration < 3) continue; // too short to be useful for trim
+          if (v.duration < minClipDurationS) continue;
           usedIds.add(v.id);
           candidates.push(v);
           if (candidates.length >= count) break;
@@ -226,6 +240,29 @@ export async function fetchFootage(
       }
     }
     if (candidates.length >= count) break;
+  }
+
+  // If strict minimum yielded too few, retry with a relaxed minimum so the
+  // pipeline still produces something rather than failing outright.
+  if (candidates.length < count && minClipDurationS > 3) {
+    for (const tier of tiers) {
+      for (const query of tier) {
+        if (candidates.length >= count) break;
+        try {
+          const videos = await searchVideos(query, key);
+          for (const v of videos) {
+            if (usedIds.has(v.id)) continue;
+            if (v.duration < 3) continue;
+            usedIds.add(v.id);
+            candidates.push(v);
+            if (candidates.length >= count) break;
+          }
+        } catch {
+          // ignore
+        }
+      }
+      if (candidates.length >= count) break;
+    }
   }
 
   if (candidates.length === 0) {

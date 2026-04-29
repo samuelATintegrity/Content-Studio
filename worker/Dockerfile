@@ -22,6 +22,9 @@ COPY --from=builder /app/dist ./dist
 # Bundle the same fonts the static pipeline uses, so karaoke subtitles match.
 COPY fonts ./fonts
 
+# Bundle outro logo + any other static assets used by ffmpeg.
+COPY assets ./assets
+
 ENV NODE_ENV=production
 EXPOSE 8080
 CMD ["node", "dist/index.js"]

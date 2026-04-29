@@ -10,21 +10,24 @@ import { fetchFootage } from "./pexelsVideo.js";
 import { compose } from "./ffmpeg.js";
 import type { RenderRequest } from "./types.js";
 
-// Brand-aligned subtitle defaults. White base text with the same accent
-// highlight used in the static composer's bands.
+// Subtitle styling. White all-caps with a strong yellow highlight on the
+// currently-spoken word, sitting mid-lower in the 1080x1920 frame and
+// entering with a blur fade + small upward slide.
 const SUBTITLE_STYLE: SubtitleStyle = {
   primaryColor: "#FFFFFF",
-  highlightColor: "#EEF4ED",
+  highlightColor: "#FFD400",
   fontFamily: "Inter",
-  fontSize: 72,
-  marginV: 1700,
+  fontSize: 110,
+  marginV: 850,
   outlineColor: "#000000",
-  outlineWidth: 4,
-  shadowDepth: 2,
+  outlineWidth: 6,
+  shadowDepth: 3,
   wordsPerPhrase: 3,
+  entranceMs: 280,
+  entranceLiftPx: 35,
 };
 
-// Bundled fonts live under /app/fonts in the Docker runtime image.
+// Bundled fonts and assets live under /app in the Docker runtime image.
 const FONTS_DIR = process.env.FONTS_DIR ?? "/app/fonts";
 
 // Pick a number of clips so each plays for ~6.5s of the narration, bounded
@@ -55,7 +58,10 @@ export async function runPipeline(jobId: string, req: RenderRequest): Promise<vo
     // ── Stage: Footage ───────────────────────────────────────────────
     setState(jobId, "footage", 0.35);
     const clipCount = chooseClipCount(tts.durationS);
-    const clips = await fetchFootage(req.contentType, clipCount, workDir);
+    // Each clip will be trimmed to ~audio/clipCount seconds; require Pexels
+    // results to be at least that long so the visual track never undershoots.
+    const minClipDurationS = Math.max(3, tts.durationS / clipCount + 0.5);
+    const clips = await fetchFootage(req.contentType, clipCount, workDir, minClipDurationS);
     if (clips.length === 0) {
       throw new Error("Pexels returned no clips for this content type");
     }

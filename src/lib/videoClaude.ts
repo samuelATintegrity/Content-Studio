@@ -13,9 +13,11 @@ const MODEL = "claude-sonnet-4-6";
 const VIDEO_VOICE_RULES = `
 VIDEO-SPECIFIC RULES (this is for a 9:16 short-form video with voiceover narration):
 - The "script" is read aloud by an AI voice. It MUST sound natural when spoken — short clauses, conversational rhythm.
-- Hook in the FIRST 6 WORDS of the script. The opener must grab attention immediately (a question, a myth-bust, a bold fact).
-- Target 80-100 words for the script (≈ 25-32 seconds at a normal speaking pace).
-- NO URLs, NO hashtags, NO "fill out the form", NO "DM me" in the SCRIPT — the script is voiceover only.
+- Hook in the FIRST 6 WORDS of the script. The opener must grab attention immediately (a question, a myth-bust, a bold fact, a vivid statement).
+- Target 60-75 words for the script (≈ 20-25 seconds at a normal speaking pace). Tight is better than loose.
+- DO NOT use a personal-story or persona opener. Banned phrasings: "Meet [Name]", "[Name] bought…", "When [Name]…", "Let me tell you about…", "I had a client…", "Imagine if you…". The video should explain a topic, not narrate a fictional individual's journey.
+- The script MUST end with this exact closer (in the requested language, translated naturally): "Click the link to get connected." Don't add anything after it.
+- NO URLs, NO hashtags, NO "fill out the form", NO "DM me" anywhere in the SCRIPT — the only CTA is the closer above.
 - NO numbers spelled as digits where it sounds awkward ("two thousand" reads better than "2000" sometimes — use your judgment).
 - NO em dashes anywhere. NO bracketed asides. NO stage directions like "(pause)".
 - The "caption" is the IG body text (3-5 sentences + 3-5 hashtags), exactly as for static posts. Hashtags on a NEW line at the end.
