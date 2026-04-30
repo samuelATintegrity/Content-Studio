@@ -23,6 +23,12 @@ export const VIDEO_IMAGE_PROMPT_LABELS: readonly string[] = [
 
 export const VIDEO_PROMPT_COUNT = VIDEO_IMAGE_PROMPTS.length;
 
+// Library-pick render uses more clips than from-scratch: when the user is
+// stitching from their existing library, longer narrations are more likely,
+// and 7 clips give ~10 extra seconds of visual time before the white-hold
+// outro kicks in. From-scratch stays at 5 to keep generation cost manageable.
+export const PICKED_CLIP_COUNT = 7;
+
 // Style suffix appended to every image prompt so Nano Banana 2 returns
 // photorealistic real-estate-grade frames suitable for animation. We avoid
 // asking for text/watermarks since the captions are burned in later.

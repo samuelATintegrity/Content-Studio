@@ -65,6 +65,20 @@ export async function mirrorClipToR2(args: {
   return json.cachedUrl;
 }
 
+export async function tagClipViaWorker(args: { url: string }): Promise<string[]> {
+  const res = await workerFetch("/tag-clip", {
+    method: "POST",
+    body: JSON.stringify(args),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Worker /tag-clip failed (${res.status}): ${detail.slice(0, 300)}`);
+  }
+  const json = (await res.json()) as { tags?: string[] };
+  if (!Array.isArray(json.tags)) throw new Error("Worker /tag-clip did not return tags");
+  return json.tags;
+}
+
 export async function getRenderStatus(jobId: string): Promise<VideoStatusResponse> {
   const res = await workerFetch(`/status/${encodeURIComponent(jobId)}`, { method: "GET" });
   if (res.status === 404) {

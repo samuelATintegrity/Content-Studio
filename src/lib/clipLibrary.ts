@@ -16,6 +16,9 @@ export interface LibraryClip {
   batchId?: string;
   filename?: string;
   savedAt: number;
+  // Auto-tags from a vision pass on the first frame. Populated async after
+  // add. `undefined` = not yet scanned, `[]` = scanned, no tags inferred.
+  tags?: string[];
 }
 
 interface Stored {
@@ -75,6 +78,17 @@ export function removeLibraryClip(id: string): void {
   write(store);
 }
 
+// Patch a clip in-place. Used by the tag-scan pipeline to attach tags
+// without disturbing the rest of the entry. No-op if the clip has been
+// removed in the meantime.
+export function updateLibraryClip(id: string, patch: Partial<LibraryClip>): void {
+  const store = read();
+  const idx = store.clips.findIndex((c) => c.id === id);
+  if (idx < 0) return;
+  store.clips[idx] = { ...store.clips[idx], ...patch, id: store.clips[idx].id };
+  write(store);
+}
+
 export function subscribeLibrary(cb: () => void): () => void {
   if (typeof window === "undefined") return () => undefined;
   const handler = () => cb();
@@ -104,6 +118,7 @@ export interface MergedClip {
     filename?: string;
     batchId?: string;
   };
+  tags?: string[];
   savedAt: number;
 }
 
@@ -127,6 +142,7 @@ export function listMergedLibrary(): MergedClip[] {
         batchId: c.batchId,
         filename: c.filename,
       },
+      tags: c.tags,
       savedAt: c.savedAt,
     });
   }

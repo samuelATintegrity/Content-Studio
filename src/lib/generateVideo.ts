@@ -19,7 +19,9 @@ function modelForSlot(promptIndex: VideoSourcePromptIndex): AnimationModel {
   return promptIndex === 4 ? "kling" : "seedance";
 }
 import { saveSet, type SavedSet, type SavedSetSlot } from "@/lib/savedSets";
-import { addLibraryClip } from "@/lib/clipLibrary";
+import { addLibraryClip, updateLibraryClip } from "@/lib/clipLibrary";
+import { tagClip } from "@/lib/videoClient";
+import { PICKED_CLIP_COUNT } from "@/lib/videoPrompts";
 import type {
   ImageSlot,
   VideoPost,
@@ -44,13 +46,18 @@ async function archiveAnimatedClip(input: {
             .catch(() => undefined)
         : Promise.resolve<string | undefined>(undefined),
     ]);
-    addLibraryClip({
+    const clip = addLibraryClip({
       url: videoMirror.cachedUrl,
       posterUrl: imageMirror,
       kind: "auto",
       sourcePromptIndex: input.promptIndex,
       batchId: input.batchId,
     });
+    // Fire-and-forget vision tag pass. Failures are silent — clip just
+    // shows up untagged, which the picker UI handles fine.
+    void tagClip(clip.url)
+      .then((tags) => updateLibraryClip(clip.id, { tags }))
+      .catch(() => undefined);
   } catch {
     /* swallow */
   }
@@ -66,6 +73,9 @@ interface PendingBatch {
   contentType: ReturnType<typeof useBatchStore.getState>["contentType"];
   // Set of slot indexes already animated. Render dispatches when size === 5.
   videoUrls: Map<VideoSourcePromptIndex, string>;
+  // Picked-clip flow short-circuit: when set, dispatch uses these URLs as
+  // clipUrls directly (skipping the per-slot Map and the image set panel).
+  pickedClipUrls?: string[];
   scriptsResolved: boolean;
   rendersDispatched: boolean;
 }
@@ -294,24 +304,29 @@ function maybeDispatchRenders(batchId: string): void {
   if (!p || p.batchId !== batchId) return;
   if (p.rendersDispatched) return;
   if (!p.scriptsResolved) return;
-  if (p.videoUrls.size < VIDEO_PROMPT_COUNT) return;
+
+  // Build clipUrls. For picked-clip flow we already have them; for
+  // from-scratch we assemble from the per-slot Map in canonical order.
+  let clipUrls: string[];
+  if (p.pickedClipUrls) {
+    clipUrls = p.pickedClipUrls;
+  } else {
+    if (p.videoUrls.size < VIDEO_PROMPT_COUNT) return;
+    clipUrls = [];
+    for (let i = 0; i < VIDEO_PROMPT_COUNT; i++) {
+      const url = p.videoUrls.get(i as VideoSourcePromptIndex);
+      if (!url) return; // unreachable — size check above guarantees presence
+      clipUrls.push(url);
+    }
+  }
 
   p.rendersDispatched = true;
-
-  // Build clipUrls in canonical prompt-index order.
-  const clipUrls: string[] = [];
-  for (let i = 0; i < VIDEO_PROMPT_COUNT; i++) {
-    const url = p.videoUrls.get(i as VideoSourcePromptIndex);
-    if (!url) {
-      // Should be unreachable — size check above guarantees presence.
-      return;
-    }
-    clipUrls.push(url);
-  }
 
   const store = useBatchStore.getState();
 
   // Seed 3 video posts in waiting_images state, then kick off renders.
+  // For picked-clip flow placeholders may already exist with the same IDs;
+  // setVideoPosts swaps them in place since React keys match.
   const initial: VideoPost[] = p.scripts.map((s, i) => ({
     id: `${batchId}-${i}`,
     angle: s.angle,
@@ -406,12 +421,20 @@ export async function useSavedSet(set: SavedSet): Promise<void> {
   void scriptsPromise;
 }
 
-// User picked their own 5 clips from the library (or uploaded). Skip image +
+// User picked their own clips from the library (or uploaded). Skip image +
 // animation entirely; selection-order maps 1:1 to scene-order. Scripts are
 // auto-generated like the from-scratch path.
+//
+// Differences vs from-scratch / saved-set load:
+//   - Does NOT seed imageSlots, so the ImageSetPanel (with its "Save set"
+//     button) doesn't render. The user goes straight from picking clips to
+//     watching the 3 video cards generate.
+//   - Seeds 3 placeholder VideoPosts in waiting_images state immediately
+//     so the user sees pulsing cards from the moment they click Render
+//     (instead of an empty page until scripts arrive).
 export async function renderWithPickedClips(clipUrls: string[]): Promise<void> {
-  if (clipUrls.length !== VIDEO_PROMPT_COUNT) {
-    throw new Error(`Need ${VIDEO_PROMPT_COUNT} clips, got ${clipUrls.length}`);
+  if (clipUrls.length !== PICKED_CLIP_COUNT) {
+    throw new Error(`Need ${PICKED_CLIP_COUNT} clips, got ${clipUrls.length}`);
   }
 
   const store = useBatchStore.getState();
@@ -419,28 +442,34 @@ export async function renderWithPickedClips(clipUrls: string[]): Promise<void> {
 
   setLoading(true);
   setError(null);
-  setVideoPosts([]);
-
-  const slots: ImageSlot[] = clipUrls.map((url, i) => ({
-    promptIndex: i as VideoSourcePromptIndex,
-    state: "video_ready" as const,
-    videoUrl: url,
-  }));
-  setImageSlots(slots);
+  setImageSlots([]);
 
   const batchId = `${Date.now()}`;
+
+  // Seed 3 placeholder video posts so cards render immediately. IDs match
+  // what maybeDispatchRenders will produce, so the later setVideoPosts
+  // updates these in place via React key reconciliation.
+  const placeholderPosts: VideoPost[] = Array.from({ length: 3 }, (_, i) => ({
+    id: `${batchId}-${i}`,
+    angle: "",
+    script: "",
+    caption: "",
+    jobId: null,
+    state: "waiting_images" as const,
+    progress: 0,
+  }));
+  setVideoPosts(placeholderPosts);
+
   _pending = {
     batchId,
     scripts: [],
     language,
     contentType,
     videoUrls: new Map(),
+    pickedClipUrls: clipUrls,
     scriptsResolved: false,
     rendersDispatched: false,
   };
-  for (let i = 0; i < clipUrls.length; i++) {
-    _pending.videoUrls.set(i as VideoSourcePromptIndex, clipUrls[i]);
-  }
 
   clearClipSelection();
 

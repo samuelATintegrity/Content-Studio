@@ -11,6 +11,7 @@ import {
   type VideoPost,
   type VideoSourcePromptIndex,
 } from "@/lib/types";
+import { PICKED_CLIP_COUNT } from "@/lib/videoPrompts";
 
 interface BatchState {
   format: Format;
@@ -23,8 +24,8 @@ interface BatchState {
   error: string | null;
   usedPhotoIds: number[];
 
-  // Library-pick selection (clip URLs in selection-order = scene-order, max 5).
-  // Parallel keys array drives the numbered selection badges in the UI.
+  // Library-pick selection (clip URLs in selection-order = scene-order,
+  // capped at PICKED_CLIP_COUNT). Parallel keys array drives badges.
   selectedClipUrls: string[];
   selectedClipKeys: string[];
 
@@ -99,7 +100,7 @@ export const useBatchStore = create<BatchState>((set) => ({
           selectedClipUrls: s.selectedClipUrls.filter((_, i) => i !== existingIdx),
         };
       }
-      if (s.selectedClipKeys.length >= 5) return {};
+      if (s.selectedClipKeys.length >= PICKED_CLIP_COUNT) return {};
       return {
         selectedClipKeys: [...s.selectedClipKeys, key],
         selectedClipUrls: [...s.selectedClipUrls, url],

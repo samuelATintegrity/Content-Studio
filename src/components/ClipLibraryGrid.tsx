@@ -7,13 +7,17 @@ import {
   listMergedLibrary,
   removeLibraryClip,
   subscribeMergedLibrary,
+  updateLibraryClip,
   type MergedClip,
 } from "@/lib/clipLibrary";
 import { listSavedSets } from "@/lib/savedSets";
-import { deleteClipFromStorage, uploadClip } from "@/lib/videoClient";
+import { deleteClipFromStorage, tagClip, uploadClip } from "@/lib/videoClient";
+import { PICKED_CLIP_COUNT } from "@/lib/videoPrompts";
 
 export function ClipLibraryGrid() {
   const [clips, setClips] = useState<MergedClip[]>(() => listMergedLibrary());
+  const [filter, setFilter] = useState("");
+  const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
   const selectedKeys = useBatchStore((s) => s.selectedClipKeys);
   const selectClip = useBatchStore((s) => s.selectClip);
   const deselectClip = useBatchStore((s) => s.deselectClip);
@@ -58,7 +62,47 @@ export function ClipLibraryGrid() {
   }, []);
 
   const selectedCount = selectedKeys.length;
-  const atCap = selectedCount >= 5;
+  const atCap = selectedCount >= PICKED_CLIP_COUNT;
+
+  // Build the union of all tags currently in the library, for the filter chips.
+  const allTags: string[] = (() => {
+    const set = new Set<string>();
+    for (const c of clips) {
+      if (c.tags) for (const t of c.tags) set.add(t);
+    }
+    return Array.from(set).sort();
+  })();
+
+  // Apply text + tag filters.
+  const q = filter.trim().toLowerCase();
+  const filteredClips = clips.filter((c) => {
+    if (activeTags.size > 0) {
+      const tags = c.tags ?? [];
+      // AND across selected tag chips: a clip must have ALL selected tags.
+      for (const t of activeTags) if (!tags.includes(t)) return false;
+    }
+    if (q) {
+      const haystack = [
+        ...(c.tags ?? []),
+        c.origin.filename,
+        c.origin.setName,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      if (!haystack.includes(q)) return false;
+    }
+    return true;
+  });
+
+  function toggleTag(tag: string) {
+    setActiveTags((prev) => {
+      const next = new Set(prev);
+      if (next.has(tag)) next.delete(tag);
+      else next.add(tag);
+      return next;
+    });
+  }
 
   return (
     <section className="mt-8">
@@ -67,9 +111,9 @@ export function ClipLibraryGrid() {
           Clip library · {clips.length} {clips.length === 1 ? "clip" : "clips"}
         </h3>
         <div className="flex items-center gap-2">
-          {selectedCount === 5 && (
+          {selectedCount === PICKED_CLIP_COUNT && (
             <span className="text-[11px] font-semibold text-emerald-500 tabular-nums">
-              5 / 5 ready
+              {PICKED_CLIP_COUNT} / {PICKED_CLIP_COUNT} ready
             </span>
           )}
           {selectedCount > 0 && (
@@ -83,9 +127,50 @@ export function ClipLibraryGrid() {
         </div>
       </header>
 
+      {/* Search + tag-chip filter. Only render when there's anything to filter. */}
+      {(clips.length > 0 || filter) && (
+        <div className="mb-3 px-1 flex flex-col gap-2">
+          <input
+            type="text"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Search filenames, tags…"
+            className="w-full sm:max-w-xs px-3 py-1.5 rounded-full text-[12px] bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 focus:outline-none focus:border-neutral-400 dark:focus:border-neutral-600"
+          />
+          {allTags.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {allTags.map((tag) => {
+                const active = activeTags.has(tag);
+                return (
+                  <button
+                    key={tag}
+                    onClick={() => toggleTag(tag)}
+                    className={`text-[10px] px-2.5 py-1 rounded-full border transition tabular-nums ${
+                      active
+                        ? "bg-emerald-500 border-emerald-500 text-white"
+                        : "bg-neutral-50 dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                    }`}
+                  >
+                    {tag.replace(/_/g, " ")}
+                  </button>
+                );
+              })}
+              {activeTags.size > 0 && (
+                <button
+                  onClick={() => setActiveTags(new Set())}
+                  className="text-[10px] px-2.5 py-1 rounded-full text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200 transition"
+                >
+                  Clear tags
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
         <UploadTile />
-        {clips.map((clip) => {
+        {filteredClips.map((clip) => {
           const idx = selectedKeys.indexOf(clip.key);
           const selected = idx >= 0;
           return (
@@ -104,6 +189,11 @@ export function ClipLibraryGrid() {
       {clips.length === 0 && (
         <p className="mt-3 text-[11px] text-neutral-500 px-1">
           Your library will fill up automatically as you generate clips from scratch.
+        </p>
+      )}
+      {clips.length > 0 && filteredClips.length === 0 && (
+        <p className="mt-3 text-[11px] text-neutral-500 px-1">
+          No clips match the current filter.
         </p>
       )}
     </section>
@@ -227,11 +317,26 @@ function ClipTile({
         )}
       </div>
 
-      {/* Origin chip */}
+      {/* Origin chip + tags */}
       <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
         <div className="text-[10px] font-medium text-white/95 truncate">
           {originLabel}
         </div>
+        {clip.tags && clip.tags.length > 0 && (
+          <div className="mt-1 flex flex-wrap gap-1 max-h-8 overflow-hidden">
+            {clip.tags.slice(0, 4).map((t) => (
+              <span
+                key={t}
+                className="text-[8px] px-1.5 py-0.5 rounded-full bg-white/20 text-white/95 backdrop-blur-sm leading-none tabular-nums"
+              >
+                {t.replace(/_/g, " ")}
+              </span>
+            ))}
+            {clip.tags.length > 4 && (
+              <span className="text-[8px] text-white/70 leading-none">+{clip.tags.length - 4}</span>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -267,6 +372,10 @@ function UploadTile() {
       });
       // Auto-select the freshly uploaded clip.
       selectClip(clip.id, cachedUrl);
+      // Fire-and-forget tag scan; tags will appear on the tile a few seconds later.
+      void tagClip(cachedUrl)
+        .then((tags) => updateLibraryClip(clip.id, { tags }))
+        .catch(() => undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : "upload failed");
     } finally {

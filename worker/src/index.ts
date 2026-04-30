@@ -3,6 +3,7 @@ import { createJob, getJob, reapOldJobs } from "./jobs.js";
 import { requireSharedSecret } from "./auth.js";
 import { runPipeline } from "./pipeline.js";
 import { cacheClip } from "./cache.js";
+import { tagClip } from "./tag.js";
 import type { RenderRequest, RenderResponse, StatusResponse } from "./types.js";
 
 const app = Fastify({
@@ -56,6 +57,27 @@ app.post<{
   } catch (e) {
     reply.code(500);
     return { error: e instanceof Error ? e.message : "cache failed" };
+  }
+});
+
+// POST /tag-clip — sample the first frame of a clip and ask Claude vision
+// to pick tags from a fixed taxonomy (room types, subjects, props). Used
+// by the picker UI for filter/search. Best-effort: failures return [].
+app.post<{
+  Body: { url?: string };
+  Reply: { tags: string[] } | { error: string };
+}>("/tag-clip", async (req, reply) => {
+  const url = req.body?.url;
+  if (!url) {
+    reply.code(400);
+    return { error: "url is required" };
+  }
+  try {
+    const tags = await tagClip(url);
+    return { tags };
+  } catch (e) {
+    reply.code(500);
+    return { error: e instanceof Error ? e.message : "tag failed" };
   }
 });
 

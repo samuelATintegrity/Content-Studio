@@ -3,6 +3,7 @@
 import { useBatchStore } from "@/store/batchStore";
 import { generateBatch } from "@/lib/generate";
 import { generateVideoBatch, renderWithPickedClips } from "@/lib/generateVideo";
+import { PICKED_CLIP_COUNT } from "@/lib/videoPrompts";
 
 export function GenerateFAB() {
   const loading = useBatchStore((s) => s.loading);
@@ -23,8 +24,8 @@ export function GenerateFAB() {
     );
 
   const isPicking = isVideo && selectedCount > 0;
-  const canRenderPicked = isVideo && selectedCount === 5;
-  const partialPick = isPicking && selectedCount < 5;
+  const canRenderPicked = isVideo && selectedCount === PICKED_CLIP_COUNT;
+  const partialPick = isPicking && selectedCount < PICKED_CLIP_COUNT;
 
   const disabled = loading || (isVideo && imageSetBusy) || partialPick;
 
@@ -45,7 +46,7 @@ export function GenerateFAB() {
   if (loading) label = isVideo ? "Starting batch" : "Generating";
   else if (isVideo && imageSetBusy) label = "Image set in progress";
   else if (canRenderPicked) label = "Render with selected";
-  else if (partialPick) label = `Pick 5 clips (${selectedCount}/5)`;
+  else if (partialPick) label = `Pick ${PICKED_CLIP_COUNT} clips (${selectedCount}/${PICKED_CLIP_COUNT})`;
   else if (isVideo) label = hasVideos ? "Regenerate batch" : "Generate from scratch";
   else label = hasPosts ? "Regenerate" : "Generate posts";
 
