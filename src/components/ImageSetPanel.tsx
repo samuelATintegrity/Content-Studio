@@ -83,7 +83,11 @@ function Slot({ slot }: { slot: ImageSlot }) {
         )}
 
         {slot.state === "failed" && (
-          <FailedOverlay promptIndex={slot.promptIndex} hasImage={!!slot.imageUrl} />
+          <FailedOverlay
+            promptIndex={slot.promptIndex}
+            hasImage={!!slot.imageUrl}
+            error={slot.error}
+          />
         )}
       </div>
       <div className="p-2.5 text-[11px] flex items-baseline justify-between">
@@ -116,14 +120,24 @@ function ApprovalOverlay({ promptIndex }: { promptIndex: VideoSourcePromptIndex 
 function FailedOverlay({
   promptIndex,
   hasImage,
+  error,
 }: {
   promptIndex: VideoSourcePromptIndex;
   hasImage: boolean;
+  error?: string;
 }) {
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/70 p-3 text-center">
+    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/80 p-3 text-center">
       <div className="text-[11px] font-semibold text-white">Failed</div>
-      <div className="flex gap-2">
+      {error && (
+        <div
+          className="text-[9px] leading-snug text-white/85 max-h-24 overflow-auto select-text"
+          title={error}
+        >
+          {error.slice(0, 240)}
+        </div>
+      )}
+      <div className="flex gap-2 mt-1">
         <button
           onClick={() => rejectImage(promptIndex)}
           className="px-2.5 py-1 rounded-full text-[10px] font-semibold bg-white/90 hover:bg-white text-neutral-900"
