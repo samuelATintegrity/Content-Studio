@@ -27,6 +27,13 @@ const DEFAULT_OUTRO_BG = "#0B2545"; // brand primary
 const DEFAULT_MUSIC_VOLUME = 0.06;
 const ASSETS_DIR = process.env.ASSETS_DIR ?? "/app/assets";
 
+// Outro transition timing.
+const FADE_TO_WHITE_S = 0.6;        // last X s of main fades to white
+const OUTRO_BLUR_FADE_S = 0.8;      // outro logo de-blurs over X s
+const OUTRO_FADE_IN_S = 0.6;        // outro emerges from white over X s
+const OUTRO_BLUR_RADIUS = 40;       // px boxblur on the blurry copy
+const MUSIC_FADE_OUT_S = 0.8;       // music tail fade so audio doesn't cut
+
 function runFfmpeg(args: string[], cwd: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const proc = spawn("ffmpeg", args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
@@ -104,24 +111,42 @@ function buildFilterComplex(args: {
   // last frame). Belt-and-suspenders for the rare case clip totals fall short.
   chains.push(`[vcat_raw]tpad=stop_mode=clone:stop_duration=${audioDurationS.toFixed(3)}[vcat_padded]`);
 
-  // Trim padded visual to exactly audio length, then burn subtitles.
+  // Trim padded visual to exactly audio length, burn subtitles, then fade
+  // the very end to white so the outro card emerges from a clean canvas.
   chains.push(`[vcat_padded]trim=duration=${audioDurationS.toFixed(3)},setpts=PTS-STARTPTS[vmain_pre]`);
-  chains.push(`[vmain_pre]subtitles=filename='${escapedAss}':fontsdir='${escapedFonts}'[vmain]`);
+  chains.push(`[vmain_pre]subtitles=filename='${escapedAss}':fontsdir='${escapedFonts}'[vmain_subbed]`);
+  const fadeOutStart = Math.max(0, audioDurationS - FADE_TO_WHITE_S);
+  chains.push(
+    `[vmain_subbed]fade=type=out:start_time=${fadeOutStart.toFixed(3)}:duration=${FADE_TO_WHITE_S}:color=white[vmain]`,
+  );
 
-  // Outro visual. Logo image scaled onto a brand-color canvas, or solid card.
+  // Outro visual. With a logo image, build a "blur fading to sharp"
+  // entrance via split + xfade between a blurred and a clean copy of the
+  // same composition. Then add a fade-in from white on top so the logo
+  // emerges out of the white left behind by vmain's fade-out.
   if (outroImageInputIndex !== null) {
     chains.push(
       `[${outroImageInputIndex}:v]scale=1080:1920:force_original_aspect_ratio=decrease,` +
         `pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=${ffBg},setsar=1,fps=30,` +
-        `trim=duration=${outroDurationS},setpts=PTS-STARTPTS,format=yuv420p[voutro]`,
+        `trim=duration=${outroDurationS},setpts=PTS-STARTPTS,format=yuv420p[voutro_base]`,
+    );
+    chains.push(`[voutro_base]split=2[voutro_a][voutro_b]`);
+    chains.push(`[voutro_a]boxblur=luma_radius=${OUTRO_BLUR_RADIUS}:luma_power=1[voutro_blur]`);
+    // xfade from blurry → sharp over OUTRO_BLUR_FADE_S, starting at t=0.
+    chains.push(
+      `[voutro_blur][voutro_b]xfade=transition=fade:duration=${OUTRO_BLUR_FADE_S}:offset=0[voutro_xf]`,
+    );
+    chains.push(
+      `[voutro_xf]fade=type=in:duration=${OUTRO_FADE_IN_S}:color=white[voutro]`,
     );
   } else {
     chains.push(
-      `color=c=${ffBg}:s=1080x1920:d=${outroDurationS}:r=30,format=yuv420p,fps=30[voutro]`,
+      `color=c=${ffBg}:s=1080x1920:d=${outroDurationS}:r=30,format=yuv420p,fps=30,` +
+        `fade=type=in:duration=${OUTRO_FADE_IN_S}:color=white[voutro]`,
     );
   }
 
-  // Concat main + outro into final video stream.
+  // Concat main + outro. Equal lengths preserved (audioDur + outroDur).
   chains.push(`[vmain][voutro]concat=n=2:v=1:a=0[v_final]`);
 
   // Audio: trim narration to real length, then concat with silence (covers outro).
@@ -133,12 +158,17 @@ function buildFilterComplex(args: {
   );
   chains.push(`[a_main][a_silence]concat=n=2:v=0:a=1[a_voice]`);
 
-  // Optional background music: trim to total duration, drop volume, mix with
-  // the voice track. amix with duration=first so the output ends with the
-  // voice track and dropout_transition=0 to avoid an end fade.
+  // Optional background music: trim to total duration, drop volume, fade
+  // the tail so audio doesn't cut at the end of the video, then mix with
+  // the voice track. amix uses duration=first so the output ends when the
+  // voice (= total) ends; normalize=0 so we keep the relative volumes set.
   if (musicInputIndex !== null) {
+    const musicFadeStart = Math.max(0, totalDurationS - MUSIC_FADE_OUT_S);
     chains.push(
-      `[${musicInputIndex}:a]aformat=sample_rates=44100:channel_layouts=stereo,volume=${musicVolume.toFixed(3)},atrim=duration=${totalDurationS.toFixed(3)},asetpts=PTS-STARTPTS[a_music]`,
+      `[${musicInputIndex}:a]aformat=sample_rates=44100:channel_layouts=stereo,` +
+        `volume=${musicVolume.toFixed(3)},` +
+        `atrim=duration=${totalDurationS.toFixed(3)},asetpts=PTS-STARTPTS,` +
+        `afade=type=out:start_time=${musicFadeStart.toFixed(3)}:duration=${MUSIC_FADE_OUT_S}[a_music]`,
     );
     chains.push(`[a_voice][a_music]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a_final]`);
   } else {
