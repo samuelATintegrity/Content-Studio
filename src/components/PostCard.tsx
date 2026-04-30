@@ -372,6 +372,12 @@ export function PostCard({ post }: { post: Post }) {
 const REGION_CANVAS_W = 1080;
 const SNAP_CANVAS = 25;
 
+function clamp01(n: number): number {
+  if (n < 0) return 0;
+  if (n > 1) return 1;
+  return n;
+}
+
 function PhotoEditor({
   photoUrl,
   initialFraming,
@@ -433,6 +439,38 @@ function PhotoEditor({
     photoDomH = imgDims.h * baseRatio * framing.scale;
     photoDomLeft = (regionDomW - photoDomW) / 2 + framing.x * canvasToDom;
     photoDomTop = (regionDomH - photoDomH) / 2 + framing.y * canvasToDom;
+  }
+
+  // Minimap geometry: a small thumbnail of the whole photo, with a viewport
+  // rectangle showing exactly what's currently inside the 4:5 crop. Helps
+  // the user see how much of the image they're cropping at higher zooms.
+  const MINIMAP_MAX = 90; // px — fits comfortably top-left without crowding
+  let minimapW = 0;
+  let minimapH = 0;
+  let viewportLeftPct = 0;
+  let viewportTopPct = 0;
+  let viewportWPct = 0;
+  let viewportHPct = 0;
+  if (imgDims && photoDomW > 0 && photoDomH > 0) {
+    const imgRatio = imgDims.w / imgDims.h;
+    if (imgRatio > 1) {
+      minimapW = MINIMAP_MAX;
+      minimapH = MINIMAP_MAX / imgRatio;
+    } else {
+      minimapH = MINIMAP_MAX;
+      minimapW = MINIMAP_MAX * imgRatio;
+    }
+    // Viewport (region) position relative to the photo, expressed as percentages.
+    // photoDomLeft is where the photo starts in the region; the region itself is
+    // at (0,0) → (regionDomW, regionDomH). So the visible window in photo-space:
+    //   left = -photoDomLeft, top = -photoDomTop, w = regionDomW, h = regionDomH.
+    viewportLeftPct = clamp01((-photoDomLeft) / photoDomW) * 100;
+    viewportTopPct = clamp01((-photoDomTop) / photoDomH) * 100;
+    viewportWPct = clamp01(regionDomW / photoDomW) * 100;
+    viewportHPct = clamp01(regionDomH / photoDomH) * 100;
+    // Clip width/height so the rectangle doesn't extend past the minimap edge.
+    if (viewportLeftPct + viewportWPct > 100) viewportWPct = 100 - viewportLeftPct;
+    if (viewportTopPct + viewportHPct > 100) viewportHPct = 100 - viewportTopPct;
   }
 
   function onMouseDown(e: React.MouseEvent) {
@@ -515,6 +553,33 @@ function PhotoEditor({
           }}
         />
 
+        {/* Minimap: thumbnail of the full photo with a viewport rectangle
+            showing what's currently in the 4:5 crop. Top-left so it doesn't
+            collide with the controls panel along the bottom. */}
+        {imgDims && minimapW > 0 && (
+          <div
+            className="absolute top-2 left-2 pointer-events-none rounded overflow-hidden border border-white/40 shadow-[0_2px_8px_-2px_rgba(0,0,0,0.5)]"
+            style={{ width: minimapW, height: minimapH, opacity: 0.85 }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={photoUrl}
+              alt=""
+              className="w-full h-full object-fill"
+              draggable={false}
+            />
+            <div
+              className="absolute border-2 border-emerald-400 bg-emerald-400/15"
+              style={{
+                left: `${viewportLeftPct}%`,
+                top: `${viewportTopPct}%`,
+                width: `${viewportWPct}%`,
+                height: `${viewportHPct}%`,
+              }}
+            />
+          </div>
+        )}
+
         {/* Center crosshair: visible while a snap is active */}
         {snapHint && (
           <div className="absolute inset-0 pointer-events-none">
@@ -532,17 +597,27 @@ function PhotoEditor({
       <div className="absolute inset-x-0 bottom-0 z-20 p-2.5 bg-black/85 backdrop-blur-sm flex flex-col gap-1.5">
         <div className="flex items-center gap-2">
           <span className="text-[10px] uppercase tracking-wider text-white/60 w-9">Zoom</span>
-          <input
-            type="range"
-            min={0.3}
-            max={3.0}
-            step={0.05}
-            value={framing.scale}
-            onChange={(e) =>
-              setFraming((f) => ({ ...f, scale: parseFloat(e.target.value) }))
-            }
-            className="flex-1 accent-white"
-          />
+          {/* Slider with a tick at 1.0× (cover-fit) so the user can see the
+              reference point for "no crop beyond what aspect-ratio mismatch
+              already forces". (1.0 - 0.3) / (3.0 - 0.3) = 25.93%. */}
+          <div className="relative flex-1 flex items-center">
+            <div
+              className="absolute top-1/2 w-px h-3 bg-white/60 -translate-y-1/2 pointer-events-none"
+              style={{ left: "25.93%" }}
+              title="1.0× (cover-fit)"
+            />
+            <input
+              type="range"
+              min={0.3}
+              max={3.0}
+              step={0.05}
+              value={framing.scale}
+              onChange={(e) =>
+                setFraming((f) => ({ ...f, scale: parseFloat(e.target.value) }))
+              }
+              className="w-full accent-white"
+            />
+          </div>
           <span className="text-[10px] text-white tabular-nums w-12 text-right">
             {framing.scale.toFixed(2)}×
           </span>
