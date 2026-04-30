@@ -28,30 +28,38 @@ const CONTENT_TYPES: ContentType[] = [
   "good_agents",
 ];
 
-// Content types that don't make sense in certain languages.
-function visibleContentTypes(language: Language): ContentType[] {
+// Content types that don't make sense in certain (language, format)
+// combinations. English skips language_match (the audience already
+// speaks the agents' language). Video skips zero_down_generic — those
+// generic narrations end up educating about the same programs that the
+// USDA / DPA content types cover more crisply.
+function visibleContentTypes(language: Language, format: Format): ContentType[] {
+  let allowed = CONTENT_TYPES.slice();
   if (language === "en") {
-    // Native English audience doesn't need a "match an agent who speaks your language" pitch.
-    return CONTENT_TYPES.filter((c) => c !== "language_match");
+    allowed = allowed.filter((c) => c !== "language_match");
   }
-  return CONTENT_TYPES;
+  if (format === "video") {
+    allowed = allowed.filter((c) => c !== "zero_down_generic");
+  }
+  return allowed;
 }
 
 export function Sidebar() {
   const { format, language, contentType, setFormat, setLanguage, setContentType } =
     useBatchStore();
 
-  // If the user picks English while the hidden language_match type was selected,
-  // bounce them back to the default so we never have an invisible-but-active
-  // content type.
+  // If the user's current content type becomes invisible after a language
+  // or format swap (e.g. switching to video when zero_down_generic was
+  // selected), bounce them to the first allowed option so we never have
+  // an invisible-but-active content type.
   useEffect(() => {
-    const allowed = visibleContentTypes(language);
+    const allowed = visibleContentTypes(language, format);
     if (!allowed.includes(contentType)) {
       setContentType(allowed[0]);
     }
-  }, [language, contentType, setContentType]);
+  }, [language, format, contentType, setContentType]);
 
-  const contentTypes = visibleContentTypes(language);
+  const contentTypes = visibleContentTypes(language, format);
   const aspectBadge = format === "video" ? "9:16" : "4:5";
 
   return (

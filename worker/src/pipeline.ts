@@ -31,6 +31,15 @@ const SUBTITLE_STYLE: SubtitleStyle = {
 // Bundled fonts and assets live under /app in the Docker runtime image.
 const FONTS_DIR = process.env.FONTS_DIR ?? "/app/fonts";
 
+// When the picked-clip flow sends 8 clips, drop the last one if the
+// narration is shorter than this many seconds — keeps clip cuts from
+// feeling too rapid on shorter videos. 8 stays for 40s+ narrations so
+// the audio doesn't outrun the visual track. Mirrors
+// PICKED_CLIP_DROP_THRESHOLD_S in src/lib/videoPrompts.ts (kept in
+// sync manually since the worker doesn't import from src/).
+const PICKED_CLIP_DROP_THRESHOLD_S = 40;
+const PICKED_CLIP_DROPPED_COUNT = 7;
+
 export async function runPipeline(jobId: string, req: RenderRequest): Promise<void> {
   const job = getJob(jobId);
   if (!job) return;
@@ -55,8 +64,19 @@ export async function runPipeline(jobId: string, req: RenderRequest): Promise<vo
     await writeFile(assPath, ass, "utf8");
 
     // ── Stage: Footage download ──────────────────────────────────────
+    // For the picked-clip flow the user selects 8 up-front; if the narration
+    // came in shorter than the threshold, drop the trailing clip(s) so each
+    // remaining clip plays a bit longer. No-op for from-scratch renders
+    // (which always send exactly 5 clips).
+    let clipUrlsForRender = req.clipUrls;
+    if (
+      req.clipUrls.length > PICKED_CLIP_DROPPED_COUNT &&
+      tts.durationS < PICKED_CLIP_DROP_THRESHOLD_S
+    ) {
+      clipUrlsForRender = req.clipUrls.slice(0, PICKED_CLIP_DROPPED_COUNT);
+    }
     setState(jobId, "footage", 0.35);
-    const clips = await downloadClips(req.clipUrls, workDir);
+    const clips = await downloadClips(clipUrlsForRender, workDir);
 
     // ── Stage: Render ────────────────────────────────────────────────
     setState(jobId, "rendering", 0.6);
