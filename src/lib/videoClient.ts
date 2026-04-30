@@ -94,6 +94,16 @@ export async function mirrorClip(args: {
   return res.json();
 }
 
+export async function uploadClip(file: File): Promise<{ cachedUrl: string; filename: string }> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch("/api/video/upload-clip", { method: "POST", body: form });
+  if (!res.ok) {
+    throw new Error((await res.json().catch(() => ({}))).error ?? "upload failed");
+  }
+  return res.json();
+}
+
 export async function regenVideo(args: {
   language: Language;
   contentType: ContentType;

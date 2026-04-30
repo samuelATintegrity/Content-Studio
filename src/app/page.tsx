@@ -5,6 +5,7 @@ import { PostCard } from "@/components/PostCard";
 import { VideoCard } from "@/components/VideoCard";
 import { ImageSetPanel } from "@/components/ImageSetPanel";
 import { GenerateFAB } from "@/components/GenerateFAB";
+import { ClipLibraryGrid } from "@/components/ClipLibraryGrid";
 import { useBatchStore } from "@/store/batchStore";
 
 export default function Home() {
@@ -54,37 +55,40 @@ export default function Home() {
 }
 
 function EmptyState({ video }: { video: boolean }) {
-  return (
-    <div className="h-full min-h-[70vh] flex items-center justify-center">
-      <div className="text-center max-w-sm">
-        <div className="mx-auto w-14 h-14 rounded-full border border-neutral-300 dark:border-neutral-800 flex items-center justify-center text-neutral-400 dark:text-neutral-600 mb-6">
-          {video ? (
-            <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <polygon points="5 3 19 12 5 21 5 3" />
-            </svg>
-          ) : (
+  if (!video) {
+    return (
+      <div className="h-full min-h-[70vh] flex items-center justify-center">
+        <div className="text-center max-w-sm">
+          <div className="mx-auto w-14 h-14 rounded-full border border-neutral-300 dark:border-neutral-800 flex items-center justify-center text-neutral-400 dark:text-neutral-600 mb-6">
             <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <rect x="3" y="3" width="18" height="18" rx="3" />
               <circle cx="9" cy="9" r="1.5" fill="currentColor" stroke="none" />
               <path d="M21 15l-5-5L5 21" />
             </svg>
-          )}
+          </div>
+          <h2 className="text-base font-semibold tracking-tight mb-2">Ready when you are</h2>
+          <p className="text-sm text-neutral-500 dark:text-neutral-400 leading-relaxed">
+            Pick a language and content type on the left, then click <span className="font-medium text-neutral-700 dark:text-neutral-300">Generate posts</span>. Hover any image to edit or download it. Hover the caption to copy.
+          </p>
         </div>
-        <h2 className="text-base font-semibold tracking-tight mb-2">
-          {video ? "Ready to render" : "Ready when you are"}
-        </h2>
+      </div>
+    );
+  }
+
+  return (
+    <div className="pt-10">
+      <div className="text-center max-w-2xl mx-auto">
+        <div className="mx-auto w-14 h-14 rounded-full border border-neutral-300 dark:border-neutral-800 flex items-center justify-center text-neutral-400 dark:text-neutral-600 mb-6">
+          <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <polygon points="5 3 19 12 5 21 5 3" />
+          </svg>
+        </div>
+        <h2 className="text-base font-semibold tracking-tight mb-2">Ready to render</h2>
         <p className="text-sm text-neutral-500 dark:text-neutral-400 leading-relaxed">
-          {video ? (
-            <>
-              Pick a language and content type, then click <span className="font-medium text-neutral-700 dark:text-neutral-300">Generate videos</span>. Each batch produces 3 narrated 9:16 videos with word-by-word karaoke subtitles. Renders take ~60-90s each.
-            </>
-          ) : (
-            <>
-              Pick a language and content type on the left, then click <span className="font-medium text-neutral-700 dark:text-neutral-300">Generate posts</span>. Hover any image to edit or download it. Hover the caption to copy.
-            </>
-          )}
+          Click <span className="font-medium text-neutral-700 dark:text-neutral-300">Generate from scratch</span> for fresh AI clips, or pick 5 clips from your library below (selection-order = scene-order). Each batch produces 3 narrated 9:16 videos with karaoke subtitles.
         </p>
       </div>
+      <ClipLibraryGrid />
     </div>
   );
 }

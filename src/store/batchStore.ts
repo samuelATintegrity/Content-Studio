@@ -23,6 +23,11 @@ interface BatchState {
   error: string | null;
   usedPhotoIds: number[];
 
+  // Library-pick selection (clip URLs in selection-order = scene-order, max 5).
+  // Parallel keys array drives the numbered selection badges in the UI.
+  selectedClipUrls: string[];
+  selectedClipKeys: string[];
+
   setFormat: (f: Format) => void;
   setLanguage: (l: Language) => void;
   setContentType: (c: ContentType) => void;
@@ -36,6 +41,9 @@ interface BatchState {
   updateImageSlot: (promptIndex: VideoSourcePromptIndex, patch: Partial<ImageSlot>) => void;
   addUsedPhotoId: (id: number) => void;
   resetUsedPhotoIds: () => void;
+  selectClip: (key: string, url: string) => void;
+  deselectClip: (key: string) => void;
+  clearClipSelection: () => void;
 }
 
 export const useBatchStore = create<BatchState>((set) => ({
@@ -48,8 +56,16 @@ export const useBatchStore = create<BatchState>((set) => ({
   loading: false,
   error: null,
   usedPhotoIds: [],
+  selectedClipUrls: [],
+  selectedClipKeys: [],
 
-  setFormat: (format) => set({ format }),
+  setFormat: (format) =>
+    set((s) => ({
+      format,
+      // Leaving video clears any pending picks so they don't bleed into static.
+      selectedClipUrls: format === "video" ? s.selectedClipUrls : [],
+      selectedClipKeys: format === "video" ? s.selectedClipKeys : [],
+    })),
   setLanguage: (language) => set({ language }),
   setContentType: (contentType) => set({ contentType }),
   setLoading: (loading) => set({ loading }),
@@ -73,4 +89,30 @@ export const useBatchStore = create<BatchState>((set) => ({
     })),
   addUsedPhotoId: (id) => set((s) => ({ usedPhotoIds: [...s.usedPhotoIds, id] })),
   resetUsedPhotoIds: () => set({ usedPhotoIds: [] }),
+  selectClip: (key, url) =>
+    set((s) => {
+      const existingIdx = s.selectedClipKeys.indexOf(key);
+      if (existingIdx >= 0) {
+        // Toggle off; later picks renumber by virtue of array index.
+        return {
+          selectedClipKeys: s.selectedClipKeys.filter((_, i) => i !== existingIdx),
+          selectedClipUrls: s.selectedClipUrls.filter((_, i) => i !== existingIdx),
+        };
+      }
+      if (s.selectedClipKeys.length >= 5) return {};
+      return {
+        selectedClipKeys: [...s.selectedClipKeys, key],
+        selectedClipUrls: [...s.selectedClipUrls, url],
+      };
+    }),
+  deselectClip: (key) =>
+    set((s) => {
+      const idx = s.selectedClipKeys.indexOf(key);
+      if (idx < 0) return {};
+      return {
+        selectedClipKeys: s.selectedClipKeys.filter((_, i) => i !== idx),
+        selectedClipUrls: s.selectedClipUrls.filter((_, i) => i !== idx),
+      };
+    }),
+  clearClipSelection: () => set({ selectedClipKeys: [], selectedClipUrls: [] }),
 }));

@@ -2,7 +2,7 @@
 
 import { useBatchStore } from "@/store/batchStore";
 import { generateBatch } from "@/lib/generate";
-import { generateVideoBatch } from "@/lib/generateVideo";
+import { generateVideoBatch, renderWithPickedClips } from "@/lib/generateVideo";
 
 export function GenerateFAB() {
   const loading = useBatchStore((s) => s.loading);
@@ -10,7 +10,9 @@ export function GenerateFAB() {
   const hasVideos = useBatchStore((s) => s.videoPosts.length > 0);
   const imageSlots = useBatchStore((s) => s.imageSlots);
   const format = useBatchStore((s) => s.format);
+  const selectedClipUrls = useBatchStore((s) => s.selectedClipUrls);
   const isVideo = format === "video";
+  const selectedCount = selectedClipUrls.length;
 
   // Block re-trigger while an image set is mid-flight (any slot not finished
   // and not in failed state) so we don't lose work to a stray double-click.
@@ -20,18 +22,31 @@ export function GenerateFAB() {
       (s) => s.state !== "video_ready" && s.state !== "failed",
     );
 
-  const disabled = loading || (isVideo && imageSetBusy);
+  const isPicking = isVideo && selectedCount > 0;
+  const canRenderPicked = isVideo && selectedCount === 5;
+  const partialPick = isPicking && selectedCount < 5;
+
+  const disabled = loading || (isVideo && imageSetBusy) || partialPick;
 
   function onClick() {
     if (disabled) return;
-    if (isVideo) generateVideoBatch();
-    else generateBatch();
+    if (isVideo) {
+      if (canRenderPicked) {
+        void renderWithPickedClips(selectedClipUrls);
+        return;
+      }
+      void generateVideoBatch();
+      return;
+    }
+    void generateBatch();
   }
 
   let label: string;
   if (loading) label = isVideo ? "Starting batch" : "Generating";
   else if (isVideo && imageSetBusy) label = "Image set in progress";
-  else if (isVideo) label = hasVideos ? "Regenerate batch" : "Generate videos";
+  else if (canRenderPicked) label = "Render with selected";
+  else if (partialPick) label = `Pick 5 clips (${selectedCount}/5)`;
+  else if (isVideo) label = hasVideos ? "Regenerate batch" : "Generate from scratch";
   else label = hasPosts ? "Regenerate" : "Generate posts";
 
   return (

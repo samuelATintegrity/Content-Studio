@@ -19,11 +19,42 @@ function modelForSlot(promptIndex: VideoSourcePromptIndex): AnimationModel {
   return promptIndex === 4 ? "kling" : "seedance";
 }
 import { saveSet, type SavedSet, type SavedSetSlot } from "@/lib/savedSets";
+import { addLibraryClip } from "@/lib/clipLibrary";
 import type {
   ImageSlot,
   VideoPost,
   VideoSourcePromptIndex,
 } from "@/lib/types";
+
+// Best-effort: mirror an animated clip (and its source image, when present)
+// to R2 and add it to the flat clip library. Failures are swallowed — the
+// live batch must never be blocked on archival.
+async function archiveAnimatedClip(input: {
+  videoUrl: string;
+  imageUrl?: string;
+  promptIndex: VideoSourcePromptIndex;
+  batchId: string;
+}): Promise<void> {
+  try {
+    const [videoMirror, imageMirror] = await Promise.all([
+      mirrorClip({ url: input.videoUrl, kind: "video" }),
+      input.imageUrl
+        ? mirrorClip({ url: input.imageUrl, kind: "image" })
+            .then((r) => r.cachedUrl)
+            .catch(() => undefined)
+        : Promise.resolve<string | undefined>(undefined),
+    ]);
+    addLibraryClip({
+      url: videoMirror.cachedUrl,
+      posterUrl: imageMirror,
+      kind: "auto",
+      sourcePromptIndex: input.promptIndex,
+      batchId: input.batchId,
+    });
+  } catch {
+    /* swallow */
+  }
+}
 
 // Hold the in-flight scripts so the approve callback can dispatch the 3
 // renders once all 5 clips are ready, without round-tripping through the
@@ -153,6 +184,7 @@ export async function approveImage(promptIndex: VideoSourcePromptIndex): Promise
     if (!p || p.batchId !== batchId) return;
     p.videoUrls.set(promptIndex, url);
     updateImageSlot(promptIndex, { state: "video_ready", videoUrl: url });
+    void archiveAnimatedClip({ videoUrl: url, imageUrl: slot.imageUrl, promptIndex, batchId });
     maybeDispatchRenders(batchId);
   } catch (e) {
     updateImageSlot(promptIndex, {
@@ -186,6 +218,7 @@ export async function retryAnimation(promptIndex: VideoSourcePromptIndex): Promi
     if (!p || p.batchId !== batchId) return;
     p.videoUrls.set(promptIndex, url);
     updateImageSlot(promptIndex, { state: "video_ready", videoUrl: url });
+    void archiveAnimatedClip({ videoUrl: url, imageUrl: slot.imageUrl, promptIndex, batchId });
     maybeDispatchRenders(batchId);
   } catch (e) {
     updateImageSlot(promptIndex, {
@@ -297,6 +330,61 @@ export async function useSavedSet(set: SavedSet): Promise<void> {
       _pending.videoUrls.set(slot.promptIndex, slot.videoUrl);
     }
   }
+
+  const scriptsPromise = startVideoBatch(language, contentType)
+    .then((res) => {
+      const p = _pending;
+      if (!p || p.batchId !== batchId) return;
+      p.scripts = res.scripts;
+      p.scriptsResolved = true;
+      maybeDispatchRenders(batchId);
+    })
+    .catch((e) => {
+      setError(e instanceof Error ? e.message : "scripts failed");
+      _pending = null;
+    });
+
+  setLoading(false);
+  void scriptsPromise;
+}
+
+// User picked their own 5 clips from the library (or uploaded). Skip image +
+// animation entirely; selection-order maps 1:1 to scene-order. Scripts are
+// auto-generated like the from-scratch path.
+export async function renderWithPickedClips(clipUrls: string[]): Promise<void> {
+  if (clipUrls.length !== VIDEO_PROMPT_COUNT) {
+    throw new Error(`Need ${VIDEO_PROMPT_COUNT} clips, got ${clipUrls.length}`);
+  }
+
+  const store = useBatchStore.getState();
+  const { language, contentType, setLoading, setError, setVideoPosts, setImageSlots, clearClipSelection } = store;
+
+  setLoading(true);
+  setError(null);
+  setVideoPosts([]);
+
+  const slots: ImageSlot[] = clipUrls.map((url, i) => ({
+    promptIndex: i as VideoSourcePromptIndex,
+    state: "video_ready" as const,
+    videoUrl: url,
+  }));
+  setImageSlots(slots);
+
+  const batchId = `${Date.now()}`;
+  _pending = {
+    batchId,
+    scripts: [],
+    language,
+    contentType,
+    videoUrls: new Map(),
+    scriptsResolved: false,
+    rendersDispatched: false,
+  };
+  for (let i = 0; i < clipUrls.length; i++) {
+    _pending.videoUrls.set(i as VideoSourcePromptIndex, clipUrls[i]);
+  }
+
+  clearClipSelection();
 
   const scriptsPromise = startVideoBatch(language, contentType)
     .then((res) => {
