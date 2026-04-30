@@ -33,6 +33,10 @@ const OUTRO_BLUR_FADE_S = 0.8;      // outro logo de-blurs over X s
 const OUTRO_FADE_IN_S = 0.6;        // outro emerges from white over X s
 const OUTRO_BLUR_RADIUS = 40;       // px boxblur on the blurry copy
 const MUSIC_FADE_OUT_S = 0.8;       // music tail fade so audio doesn't cut
+// Hold a blank white card after narration ends, before the logo fades in.
+// This gives the last subtitle word room to clear so captions never overlap
+// the logo. Only applies when audio outlasts the clip track.
+const WHITE_HOLD_BUFFER_S = 0.4;
 
 // Source clip handling.
 const SOURCE_CLIP_DURATION_S = 5;   // duration we ask Seedance / Kling for
@@ -76,7 +80,8 @@ function buildFilterComplex(args: {
   perClipS: number;
   clipHeadTrimS: number;
   clipsLengthS: number;
-  outroLengthS: number;
+  whiteHoldS: number;
+  outroDurationS: number;
   audioInputIndex: number;
   audioDurationS: number;
   assRelPath: string;
@@ -89,7 +94,7 @@ function buildFilterComplex(args: {
   totalDurationS: number;
 }): string {
   const {
-    clipCount, perClipS, clipHeadTrimS, clipsLengthS, outroLengthS,
+    clipCount, perClipS, clipHeadTrimS, clipsLengthS, whiteHoldS, outroDurationS,
     audioInputIndex, audioDurationS, assRelPath, fontsDir,
     outroBgColor, outroImageInputIndex, silenceInputIndex,
     musicInputIndex, musicVolume, totalDurationS,
@@ -125,14 +130,25 @@ function buildFilterComplex(args: {
     `[vcat]fade=type=out:start_time=${fadeOutStart.toFixed(3)}:duration=${FADE_TO_WHITE_S}:color=white[vmain]`,
   );
 
-  // Outro visual at outroLengthS (dynamic — absorbs whatever gap exists
-  // between clipsLength and audioDuration + buffer). Blur-to-sharp xfade
-  // plus a fade-in from white that picks up where vmain left off.
+  // White hold segment: a plain white card that fills the gap between when
+  // the clips end (faded to white) and when narration + subtitles wrap up.
+  // Subtitles continue burning over this segment, so the last few words of
+  // the script clear cleanly on white instead of stamping over the logo.
+  // Only emitted when needed (whiteHoldS > 0).
+  if (whiteHoldS > 0) {
+    chains.push(
+      `color=c=white:s=1080x1920:d=${whiteHoldS.toFixed(3)}:r=30,format=yuv420p,setsar=1[vwhite]`,
+    );
+  }
+
+  // Outro visual: full outroDurationS of logo card, blur-to-sharp, fading in
+  // from white. Subtitles do NOT continue across this segment — we burn them
+  // before this concat.
   if (outroImageInputIndex !== null) {
     chains.push(
       `[${outroImageInputIndex}:v]scale=1080:1920:force_original_aspect_ratio=decrease,` +
         `pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=${ffBg},setsar=1,fps=30,` +
-        `trim=duration=${outroLengthS.toFixed(3)},setpts=PTS-STARTPTS,format=yuv420p[voutro_base]`,
+        `trim=duration=${outroDurationS.toFixed(3)},setpts=PTS-STARTPTS,format=yuv420p[voutro_base]`,
     );
     chains.push(`[voutro_base]split=2[voutro_a][voutro_b]`);
     chains.push(`[voutro_a]boxblur=luma_radius=${OUTRO_BLUR_RADIUS}:luma_power=1[voutro_blur]`);
@@ -144,16 +160,19 @@ function buildFilterComplex(args: {
     );
   } else {
     chains.push(
-      `color=c=${ffBg}:s=1080x1920:d=${outroLengthS.toFixed(3)}:r=30,format=yuv420p,fps=30,` +
+      `color=c=${ffBg}:s=1080x1920:d=${outroDurationS.toFixed(3)}:r=30,format=yuv420p,fps=30,setsar=1,` +
         `fade=type=in:duration=${OUTRO_FADE_IN_S}:color=white[voutro]`,
     );
   }
 
-  // Concat main + outro, then burn subtitles over the result. Burning after
-  // concat means subs can render during the outro card if the narration
-  // outlasts the clip track — important now that clips can end before audio.
-  chains.push(`[vmain][voutro]concat=n=2:v=1:a=0[v_concat]`);
-  chains.push(`[v_concat]subtitles=filename='${escapedAss}':fontsdir='${escapedFonts}'[v_final]`);
+  // Burn subtitles over clips + white-hold (subtitles end with the audio,
+  // so they naturally stop before the logo). Then concat with the logo.
+  const captionedLabel = whiteHoldS > 0 ? "v_captioned" : "vmain";
+  if (whiteHoldS > 0) {
+    chains.push(`[vmain][vwhite]concat=n=2:v=1:a=0[v_captioned]`);
+  }
+  chains.push(`[${captionedLabel}]subtitles=filename='${escapedAss}':fontsdir='${escapedFonts}'[v_subbed]`);
+  chains.push(`[v_subbed][voutro]concat=n=2:v=1:a=0[v_final]`);
 
   // Audio: trim narration to real length, then concat with silence (covers outro).
   chains.push(
@@ -216,12 +235,18 @@ export async function compose(args: ComposeArgs): Promise<void> {
   const perClipS = Math.max(0.5, Math.min(maxAvailablePerClip, audioShare));
   const clipsLengthS = perClipS * args.clipPaths.length;
 
-  // Total render length always equals audioDur + base outro duration; the
-  // outro card stretches to fill whatever the clips don't. This eliminates
-  // the freeze-frame artifact that used to appear when audio was longer
-  // than the clip total.
-  const totalDurationS = args.audioDurationS + outroDurationS;
-  const outroLengthS = Math.max(0.5, totalDurationS - clipsLengthS);
+  // Hold a blank white card after clips end if narration is still running.
+  // This is the buffer where remaining captions clear before the logo fades
+  // in, so subtitles never overlap the logo.
+  const whiteHoldS = Math.max(
+    0,
+    args.audioDurationS + WHITE_HOLD_BUFFER_S - clipsLengthS,
+  );
+
+  // Total render length: clips + white hold + logo card. Eliminates the
+  // freeze-frame artifact that used to appear when audio was longer than
+  // the clip total, and gives the logo its own clean window.
+  const totalDurationS = clipsLengthS + whiteHoldS + outroDurationS;
 
   const cwd = dirname(args.assPath);
   const assRel = basename(args.assPath);
@@ -235,16 +260,17 @@ export async function compose(args: ComposeArgs): Promise<void> {
   let outroImageInputIndex: number | null = null;
   if (outroImagePath) {
     outroImageInputIndex = audioInputIndex + 1;
-    // -loop the still image and let it play for outroLengthS (filter trim
-    // bounds it again, but giving -t enough is harmless and avoids relying
-    // on the filter to cut a long-running source).
-    inputs.push("-loop", "1", "-t", outroLengthS.toFixed(3), "-i", outroImagePath);
+    // -loop the still image; filter trim bounds it again. Long enough is
+    // harmless, but match outroDurationS now that the logo is its own slot.
+    inputs.push("-loop", "1", "-t", outroDurationS.toFixed(3), "-i", outroImagePath);
   }
 
+  // Silence covers the white hold + logo segment (everything after audio ends).
+  const silenceLengthS = Math.max(0.1, totalDurationS - args.audioDurationS);
   const silenceInputIndex = (outroImageInputIndex !== null ? outroImageInputIndex : audioInputIndex) + 1;
   inputs.push(
     "-f", "lavfi",
-    "-t", outroDurationS.toFixed(3),
+    "-t", silenceLengthS.toFixed(3),
     "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
   );
 
@@ -259,7 +285,8 @@ export async function compose(args: ComposeArgs): Promise<void> {
     perClipS,
     clipHeadTrimS: CLIP_HEAD_TRIM_S,
     clipsLengthS,
-    outroLengthS,
+    whiteHoldS,
+    outroDurationS,
     audioInputIndex,
     audioDurationS: args.audioDurationS,
     assRelPath: assRel,
