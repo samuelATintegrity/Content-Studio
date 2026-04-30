@@ -18,9 +18,9 @@ function configure() {
 // Nano Banana 2 on fal.ai = Google Gemini 3.1 Flash Image.
 const IMAGE_MODEL = "fal-ai/nano-banana-2";
 
-// Seedance 2.0 image-to-video. The SDK's TS types lag the live model list,
-// so we cast at the call site — the endpoint string is what matters.
-const VIDEO_MODEL = "fal-ai/bytedance/seedance-2.0/image-to-video";
+// Seedance 2.0 image-to-video. Note: bytedance models on fal.ai live under
+// the "bytedance/" namespace, not "fal-ai/" like Nano Banana.
+const VIDEO_MODEL = "bytedance/seedance-2.0/image-to-video";
 
 const STATIC_STYLE_SUFFIX =
   ". Vertical 4:5 portrait orientation, taller than wide. Center the main subject with comfortable space above and below; the very top and bottom may be covered by text bars in some layouts, so do not place key subject matter in the top 16% or bottom 16% of the frame. Professional real estate photography style, photorealistic, natural daylight, sharp detail. No text, signs, or watermarks.";
@@ -87,13 +87,13 @@ export async function animateImage(imageUrl: string): Promise<{ url: string }> {
     image_url: imageUrl,
     prompt: VIDEO_ANIMATION_PROMPT,
     aspect_ratio: "9:16",
-    duration: "5",
+    duration: 5,            // seedance 2.0 takes a number 4-15
     resolution: "1080p",
-    camera_fixed: false,
+    generate_audio: false,  // we mux our own narration; skip TTS to save cost
   };
 
   const result = await fal.subscribe(VIDEO_MODEL, {
-    // The SDK's typings don't yet include the seedance-2.0 endpoint shape.
+    // The SDK's typings don't yet cover the seedance-2.0 input shape.
     input: input as never,
     logs: false,
   });
