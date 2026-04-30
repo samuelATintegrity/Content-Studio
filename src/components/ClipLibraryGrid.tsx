@@ -5,6 +5,7 @@ import { useBatchStore } from "@/store/batchStore";
 import {
   addLibraryClip,
   listMergedLibrary,
+  removeLibraryClip,
   subscribeMergedLibrary,
   type MergedClip,
 } from "@/lib/clipLibrary";
@@ -14,7 +15,19 @@ export function ClipLibraryGrid() {
   const [clips, setClips] = useState<MergedClip[]>(() => listMergedLibrary());
   const selectedKeys = useBatchStore((s) => s.selectedClipKeys);
   const selectClip = useBatchStore((s) => s.selectClip);
+  const deselectClip = useBatchStore((s) => s.deselectClip);
   const clearClipSelection = useBatchStore((s) => s.clearClipSelection);
+
+  function onDelete(clip: MergedClip) {
+    if (clip.kind === "saved") return; // saved-set clips are governed by sidebar
+    const id = clip.origin.libraryClipId;
+    if (!id) return;
+    const label =
+      clip.kind === "upload" ? clip.origin.filename ?? "this upload" : "this clip";
+    if (!window.confirm(`Remove ${label} from your library? The file stays in storage; this only removes it from the picker.`)) return;
+    if (selectedKeys.includes(clip.key)) deselectClip(clip.key);
+    removeLibraryClip(id);
+  }
 
   useEffect(() => {
     return subscribeMergedLibrary(() => setClips(listMergedLibrary()));
@@ -58,6 +71,7 @@ export function ClipLibraryGrid() {
               selectionNumber={selected ? idx + 1 : null}
               dim={!selected && atCap}
               onClick={() => selectClip(clip.key, clip.videoUrl)}
+              onDelete={clip.kind === "saved" ? undefined : () => onDelete(clip)}
             />
           );
         })}
@@ -77,11 +91,13 @@ function ClipTile({
   selectionNumber,
   dim,
   onClick,
+  onDelete,
 }: {
   clip: MergedClip;
   selectionNumber: number | null;
   dim: boolean;
   onClick: () => void;
+  onDelete?: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -116,9 +132,16 @@ function ClipTile({
   })();
 
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
       className={`group relative aspect-[9/16] rounded-2xl overflow-hidden border bg-neutral-100 dark:bg-neutral-900 transition ${
@@ -149,6 +172,24 @@ function ClipTile({
         />
       )}
 
+      {/* Delete button (auto + upload only; saved-set clips are managed in sidebar) */}
+      {onDelete && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          className="absolute top-2 left-2 w-7 h-7 rounded-full bg-black/60 hover:bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
+          title="Remove from library"
+        >
+          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      )}
+
       {/* Selection badge */}
       <div className="absolute top-2 right-2">
         {selectionNumber !== null ? (
@@ -168,7 +209,7 @@ function ClipTile({
           {originLabel}
         </div>
       </div>
-    </button>
+    </div>
   );
 }
 
