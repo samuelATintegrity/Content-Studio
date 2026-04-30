@@ -7,11 +7,10 @@ export const VIDEO_IMAGE_PROMPTS: readonly string[] = [
   "a photo of a new white master bedroom",
   "a photo of a new white bathroom",
   "a photo of a new white home exterior",
-  // Slot 4 used to be "a real estate agent speaking with a young couple" but
-  // Seedance's safety filter rejects most face-forward couple shots ("422
-  // Unprocessable Entity"). Keys + paperwork conveys the same "your agent
-  // helping you close" beat without humans in frame.
-  "a photo of two house keys with a small brass house keychain resting on a stack of crisp real estate documents on a clean white kitchen counter, soft natural daylight, no people",
+  // Slot 4 contains people. Seedance 2.0 safety-rejects most face-forward
+  // couple shots, so the orchestrator routes only this slot through Kling
+  // v3 Pro (which has no documented face restriction).
+  "a photo of a real estate agent speaking with a young couple in a bright modern home, professional and warm",
 ] as const;
 
 export const VIDEO_IMAGE_PROMPT_LABELS: readonly string[] = [
@@ -19,7 +18,7 @@ export const VIDEO_IMAGE_PROMPT_LABELS: readonly string[] = [
   "Bedroom",
   "Bathroom",
   "Exterior",
-  "Keys",
+  "Agent",
 ] as const;
 
 export const VIDEO_PROMPT_COUNT = VIDEO_IMAGE_PROMPTS.length;

@@ -8,8 +8,16 @@ import {
   regenVideo,
   startVideoBatch,
   startVideoRender,
+  type AnimationModel,
 } from "@/lib/videoClient";
 import { VIDEO_PROMPT_COUNT } from "@/lib/videoPrompts";
+
+// Slot-specific animation model. Seedance is sharper and supports 1080p,
+// but its safety filter rejects face-forward people shots. Kling is more
+// permissive with faces, so we route the agent slot through it.
+function modelForSlot(promptIndex: VideoSourcePromptIndex): AnimationModel {
+  return promptIndex === 4 ? "kling" : "seedance";
+}
 import { saveSet, type SavedSet, type SavedSetSlot } from "@/lib/savedSets";
 import type {
   ImageSlot,
@@ -140,7 +148,7 @@ export async function approveImage(promptIndex: VideoSourcePromptIndex): Promise
   updateImageSlot(promptIndex, { state: "animating", error: undefined });
 
   try {
-    const { url } = await animateSourceImage(slot.imageUrl);
+    const { url } = await animateSourceImage(slot.imageUrl, modelForSlot(promptIndex));
     const p = _pending;
     if (!p || p.batchId !== batchId) return;
     p.videoUrls.set(promptIndex, url);
@@ -173,7 +181,7 @@ export async function retryAnimation(promptIndex: VideoSourcePromptIndex): Promi
   const batchId = _pending.batchId;
   updateImageSlot(promptIndex, { state: "animating", error: undefined });
   try {
-    const { url } = await animateSourceImage(slot.imageUrl);
+    const { url } = await animateSourceImage(slot.imageUrl, modelForSlot(promptIndex));
     const p = _pending;
     if (!p || p.batchId !== batchId) return;
     p.videoUrls.set(promptIndex, url);

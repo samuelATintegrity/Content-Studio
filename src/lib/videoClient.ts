@@ -37,11 +37,16 @@ export async function generateSourceImage(
   return res.json();
 }
 
-export async function animateSourceImage(imageUrl: string): Promise<{ url: string }> {
+export type AnimationModel = "seedance" | "kling";
+
+export async function animateSourceImage(
+  imageUrl: string,
+  model: AnimationModel = "seedance",
+): Promise<{ url: string }> {
   const res = await fetch("/api/video/animate-image", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ imageUrl }),
+    body: JSON.stringify({ imageUrl, model }),
   });
   if (!res.ok) {
     throw new Error((await res.json().catch(() => ({}))).error ?? "animate-image failed");
