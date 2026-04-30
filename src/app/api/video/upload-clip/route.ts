@@ -4,46 +4,44 @@ import { putBytes } from "@/lib/r2Server";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
-// Bump this string on every meaningful change to confirm the deployed
-// build is actually running the latest code. Surfaced in x-deploy-marker.
-const DEPLOY_MARKER = "raw-body-v3";
+const DEPLOY_MARKER = "raw-body-v4";
 
 const MAX_BYTES = 100 * 1024 * 1024;
 
-// Trivial GET so you can hit /api/video/upload-clip in a browser to see
-// which build is live (returns the deploy marker, no auth needed).
+// Some intermediary (likely Vercel's edge) was compressing the response
+// to this route without forwarding the Content-Encoding header, so the
+// browser saw raw compressed bytes. Cache-Control: no-transform is the
+// standard signal to proxies/CDNs to leave the body alone.
+const NO_TRANSFORM_HEADERS = {
+  "cache-control": "no-store, no-transform",
+  "content-encoding": "identity",
+  "x-deploy-marker": DEPLOY_MARKER,
+};
+
 export async function GET() {
-  return NextResponse.json({ marker: DEPLOY_MARKER, accepts: "POST raw body, x-filename header" });
+  return NextResponse.json(
+    { marker: DEPLOY_MARKER, accepts: "POST raw body, x-filename header" },
+    { headers: NO_TRANSFORM_HEADERS },
+  );
 }
 
-// Test handler — short-circuits before any work if x-test header is set.
-// Lets us confirm whether the issue is upload logic vs response routing.
-async function maybeShortCircuit(req: Request): Promise<Response | null> {
-  if (req.headers.get("x-test") === "1") {
-    return NextResponse.json({ ok: true, marker: DEPLOY_MARKER, contentType: req.headers.get("content-type") });
-  }
-  return null;
-}
-
-// Body is the raw file bytes. Filename + content-type travel in headers
-// (x-filename, content-type) — multipart parsing was producing a mangled
-// response in Next 16 dev mode, so we sidestep it.
 export async function POST(req: Request) {
   try {
-    const sc = await maybeShortCircuit(req);
-    if (sc) return sc;
     const filename = req.headers.get("x-filename") ?? "upload.mp4";
     const contentType = req.headers.get("content-type") ?? "video/mp4";
     if (!contentType.startsWith("video/")) {
-      return NextResponse.json({ error: "content-type must be video/*" }, { status: 400 });
+      return NextResponse.json(
+        { error: "content-type must be video/*" },
+        { status: 400, headers: NO_TRANSFORM_HEADERS },
+      );
     }
 
     const buf = new Uint8Array(await req.arrayBuffer());
     if (buf.byteLength === 0) {
-      return NextResponse.json({ error: "empty body" }, { status: 400 });
+      return NextResponse.json({ error: "empty body" }, { status: 400, headers: NO_TRANSFORM_HEADERS });
     }
     if (buf.byteLength > MAX_BYTES) {
-      return NextResponse.json({ error: "file too large (>100MB)" }, { status: 413 });
+      return NextResponse.json({ error: "file too large (>100MB)" }, { status: 413, headers: NO_TRANSFORM_HEADERS });
     }
 
     const hash = createHash("sha256").update(buf).digest("hex").slice(0, 32);
@@ -51,15 +49,12 @@ export async function POST(req: Request) {
 
     const cachedUrl = await putBytes({ key, body: buf, contentType });
 
-    return NextResponse.json(
-      { cachedUrl, filename, marker: DEPLOY_MARKER },
-      { headers: { "x-deploy-marker": DEPLOY_MARKER } },
-    );
+    return NextResponse.json({ cachedUrl, filename }, { headers: NO_TRANSFORM_HEADERS });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "unknown error";
     return NextResponse.json(
       { error: msg, marker: DEPLOY_MARKER },
-      { status: 500, headers: { "x-deploy-marker": DEPLOY_MARKER } },
+      { status: 500, headers: NO_TRANSFORM_HEADERS },
     );
   }
 }
