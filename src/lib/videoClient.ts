@@ -100,18 +100,25 @@ export async function uploadClip(file: File): Promise<{ cachedUrl: string; filen
   const res = await fetch("/api/video/upload-clip", { method: "POST", body: form });
   const text = await res.text();
   let body: { cachedUrl?: string; filename?: string; error?: string } = {};
+  let parsed = false;
   try {
     body = text ? JSON.parse(text) : {};
+    parsed = true;
   } catch {
-    // Non-JSON response (e.g. Next dev error page). Surface a snippet so
-    // future failures are readable instead of "Unexpected token...".
-    if (!res.ok) {
-      throw new Error(`upload failed (${res.status}): ${text.slice(0, 200)}`);
-    }
-    throw new Error(`upload returned non-JSON body: ${text.slice(0, 200)}`);
+    /* fall through */
   }
-  if (!res.ok) throw new Error(body.error ?? `upload failed (${res.status})`);
-  if (!body.cachedUrl || !body.filename) throw new Error("upload returned malformed body");
+  if (!parsed) {
+    console.error("[uploadClip] non-JSON response", { status: res.status, headers: Object.fromEntries(res.headers), body: text });
+    throw new Error(`upload returned non-JSON (${res.status}): ${text.slice(0, 200)}`);
+  }
+  if (!res.ok) {
+    console.error("[uploadClip] error response", { status: res.status, body });
+    throw new Error(body.error ?? `upload failed (${res.status})`);
+  }
+  if (!body.cachedUrl || !body.filename) {
+    console.error("[uploadClip] malformed body", body);
+    throw new Error("upload returned malformed body");
+  }
   return { cachedUrl: body.cachedUrl, filename: body.filename };
 }
 
