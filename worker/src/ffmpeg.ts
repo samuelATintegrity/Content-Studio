@@ -34,6 +34,10 @@ const OUTRO_FADE_IN_S = 0.6;        // outro emerges from white over X s
 const OUTRO_BLUR_RADIUS = 40;       // px boxblur on the blurry copy
 const MUSIC_FADE_OUT_S = 0.8;       // music tail fade so audio doesn't cut
 
+// Source clip handling.
+const SOURCE_CLIP_DURATION_S = 5;   // duration we ask Seedance / Kling for
+const CLIP_HEAD_TRIM_S = 0.15;      // skip the warmup wobble in the first frame
+
 function runFfmpeg(args: string[], cwd: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const proc = spawn("ffmpeg", args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
@@ -70,11 +74,13 @@ function hexToFfColor(hex: string): string {
 function buildFilterComplex(args: {
   clipCount: number;
   perClipS: number;
+  clipHeadTrimS: number;
+  clipsLengthS: number;
+  outroLengthS: number;
   audioInputIndex: number;
   audioDurationS: number;
   assRelPath: string;
   fontsDir: string;
-  outroDurationS: number;
   outroBgColor: string;
   outroImageInputIndex: number | null;
   silenceInputIndex: number;
@@ -83,56 +89,53 @@ function buildFilterComplex(args: {
   totalDurationS: number;
 }): string {
   const {
-    clipCount, perClipS, audioInputIndex, audioDurationS, assRelPath, fontsDir,
-    outroDurationS, outroBgColor, outroImageInputIndex, silenceInputIndex,
+    clipCount, perClipS, clipHeadTrimS, clipsLengthS, outroLengthS,
+    audioInputIndex, audioDurationS, assRelPath, fontsDir,
+    outroBgColor, outroImageInputIndex, silenceInputIndex,
     musicInputIndex, musicVolume, totalDurationS,
   } = args;
 
-  const trim = perClipS.toFixed(3);
   const escapedAss = escapeForFilter(assRelPath);
   const escapedFonts = escapeForFilter(fontsDir);
   const ffBg = hexToFfColor(outroBgColor);
 
   const chains: string[] = [];
 
-  // Per-clip scale + crop + trim. Output [v0]..[vN-1].
+  // Per-clip: skip the first CLIP_HEAD_TRIM_S to drop Seedance/Kling's
+  // warmup-frame wobble, then take perClipS seconds from there. Reset PTS
+  // so concat can stitch streams without timestamp gaps.
   for (let i = 0; i < clipCount; i++) {
     chains.push(
-      `[${i}:v]scale=1080:1920:force_original_aspect_ratio=increase,` +
-        `crop=1080:1920,setsar=1,fps=30,trim=duration=${trim},setpts=PTS-STARTPTS[v${i}]`,
+      `[${i}:v]trim=start=${clipHeadTrimS.toFixed(3)}:duration=${perClipS.toFixed(3)},setpts=PTS-STARTPTS,` +
+        `scale=1080:1920:force_original_aspect_ratio=increase,` +
+        `crop=1080:1920,setsar=1,fps=30[v${i}]`,
     );
   }
 
-  // Concat the per-clip streams.
+  // Concat the per-clip streams. No tpad — if clips are shorter than audio
+  // we let the outro card take over instead of freezing the last frame.
   const concatInputs = Array.from({ length: clipCount }, (_, i) => `[v${i}]`).join("");
-  chains.push(`${concatInputs}concat=n=${clipCount}:v=1:a=0[vcat_raw]`);
+  chains.push(`${concatInputs}concat=n=${clipCount}:v=1:a=0[vcat]`);
 
-  // Pad the visual track so it's at least as long as the audio (clones the
-  // last frame). Belt-and-suspenders for the rare case clip totals fall short.
-  chains.push(`[vcat_raw]tpad=stop_mode=clone:stop_duration=${audioDurationS.toFixed(3)}[vcat_padded]`);
-
-  // Trim padded visual to exactly audio length, burn subtitles, then fade
-  // the very end to white so the outro card emerges from a clean canvas.
-  chains.push(`[vcat_padded]trim=duration=${audioDurationS.toFixed(3)},setpts=PTS-STARTPTS[vmain_pre]`);
-  chains.push(`[vmain_pre]subtitles=filename='${escapedAss}':fontsdir='${escapedFonts}'[vmain_subbed]`);
-  const fadeOutStart = Math.max(0, audioDurationS - FADE_TO_WHITE_S);
+  // Fade the very end of the clip track to white so the logo card emerges
+  // from a clean canvas. Subtitles are burned AFTER concat (below) so they
+  // can keep showing during the outro if narration extends that long.
+  const fadeOutStart = Math.max(0, clipsLengthS - FADE_TO_WHITE_S);
   chains.push(
-    `[vmain_subbed]fade=type=out:start_time=${fadeOutStart.toFixed(3)}:duration=${FADE_TO_WHITE_S}:color=white[vmain]`,
+    `[vcat]fade=type=out:start_time=${fadeOutStart.toFixed(3)}:duration=${FADE_TO_WHITE_S}:color=white[vmain]`,
   );
 
-  // Outro visual. With a logo image, build a "blur fading to sharp"
-  // entrance via split + xfade between a blurred and a clean copy of the
-  // same composition. Then add a fade-in from white on top so the logo
-  // emerges out of the white left behind by vmain's fade-out.
+  // Outro visual at outroLengthS (dynamic — absorbs whatever gap exists
+  // between clipsLength and audioDuration + buffer). Blur-to-sharp xfade
+  // plus a fade-in from white that picks up where vmain left off.
   if (outroImageInputIndex !== null) {
     chains.push(
       `[${outroImageInputIndex}:v]scale=1080:1920:force_original_aspect_ratio=decrease,` +
         `pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=${ffBg},setsar=1,fps=30,` +
-        `trim=duration=${outroDurationS},setpts=PTS-STARTPTS,format=yuv420p[voutro_base]`,
+        `trim=duration=${outroLengthS.toFixed(3)},setpts=PTS-STARTPTS,format=yuv420p[voutro_base]`,
     );
     chains.push(`[voutro_base]split=2[voutro_a][voutro_b]`);
     chains.push(`[voutro_a]boxblur=luma_radius=${OUTRO_BLUR_RADIUS}:luma_power=1[voutro_blur]`);
-    // xfade from blurry → sharp over OUTRO_BLUR_FADE_S, starting at t=0.
     chains.push(
       `[voutro_blur][voutro_b]xfade=transition=fade:duration=${OUTRO_BLUR_FADE_S}:offset=0[voutro_xf]`,
     );
@@ -141,13 +144,16 @@ function buildFilterComplex(args: {
     );
   } else {
     chains.push(
-      `color=c=${ffBg}:s=1080x1920:d=${outroDurationS}:r=30,format=yuv420p,fps=30,` +
+      `color=c=${ffBg}:s=1080x1920:d=${outroLengthS.toFixed(3)}:r=30,format=yuv420p,fps=30,` +
         `fade=type=in:duration=${OUTRO_FADE_IN_S}:color=white[voutro]`,
     );
   }
 
-  // Concat main + outro. Equal lengths preserved (audioDur + outroDur).
-  chains.push(`[vmain][voutro]concat=n=2:v=1:a=0[v_final]`);
+  // Concat main + outro, then burn subtitles over the result. Burning after
+  // concat means subs can render during the outro card if the narration
+  // outlasts the clip track — important now that clips can end before audio.
+  chains.push(`[vmain][voutro]concat=n=2:v=1:a=0[v_concat]`);
+  chains.push(`[v_concat]subtitles=filename='${escapedAss}':fontsdir='${escapedFonts}'[v_final]`);
 
   // Audio: trim narration to real length, then concat with silence (covers outro).
   chains.push(
@@ -186,7 +192,6 @@ export async function compose(args: ComposeArgs): Promise<void> {
   const outroDurationS = args.outroDurationS ?? DEFAULT_OUTRO_S;
   const outroBgColor = args.outroBgColor ?? DEFAULT_OUTRO_BG;
   const musicVolume = args.musicVolume ?? DEFAULT_MUSIC_VOLUME;
-  const totalDurationS = args.audioDurationS + outroDurationS;
 
   // Default outro image lookup: caller-supplied path → bundled assets dir.
   let outroImagePath: string | null = args.outroImagePath ?? null;
@@ -203,10 +208,20 @@ export async function compose(args: ComposeArgs): Promise<void> {
     musicPath = null;
   }
 
-  // Each clip plays its share of the audio length (with a small tail margin
-  // so the concat overshoots audio rather than undershooting it). tpad is
-  // the real safety net.
-  const perClipS = Math.max(1, args.audioDurationS / args.clipPaths.length + 0.1);
+  // Per-clip duration: bounded above by what the source actually has after
+  // head-trim, below by the audio share. Both ends prevent over- or under-
+  // shooting the natural clip length.
+  const maxAvailablePerClip = SOURCE_CLIP_DURATION_S - CLIP_HEAD_TRIM_S;
+  const audioShare = args.audioDurationS / args.clipPaths.length;
+  const perClipS = Math.max(0.5, Math.min(maxAvailablePerClip, audioShare));
+  const clipsLengthS = perClipS * args.clipPaths.length;
+
+  // Total render length always equals audioDur + base outro duration; the
+  // outro card stretches to fill whatever the clips don't. This eliminates
+  // the freeze-frame artifact that used to appear when audio was longer
+  // than the clip total.
+  const totalDurationS = args.audioDurationS + outroDurationS;
+  const outroLengthS = Math.max(0.5, totalDurationS - clipsLengthS);
 
   const cwd = dirname(args.assPath);
   const assRel = basename(args.assPath);
@@ -220,7 +235,10 @@ export async function compose(args: ComposeArgs): Promise<void> {
   let outroImageInputIndex: number | null = null;
   if (outroImagePath) {
     outroImageInputIndex = audioInputIndex + 1;
-    inputs.push("-loop", "1", "-t", outroDurationS.toFixed(3), "-i", outroImagePath);
+    // -loop the still image and let it play for outroLengthS (filter trim
+    // bounds it again, but giving -t enough is harmless and avoids relying
+    // on the filter to cut a long-running source).
+    inputs.push("-loop", "1", "-t", outroLengthS.toFixed(3), "-i", outroImagePath);
   }
 
   const silenceInputIndex = (outroImageInputIndex !== null ? outroImageInputIndex : audioInputIndex) + 1;
@@ -239,11 +257,13 @@ export async function compose(args: ComposeArgs): Promise<void> {
   const filter = buildFilterComplex({
     clipCount: args.clipPaths.length,
     perClipS,
+    clipHeadTrimS: CLIP_HEAD_TRIM_S,
+    clipsLengthS,
+    outroLengthS,
     audioInputIndex,
     audioDurationS: args.audioDurationS,
     assRelPath: assRel,
     fontsDir: args.fontsDir,
-    outroDurationS,
     outroBgColor,
     outroImageInputIndex,
     silenceInputIndex,
