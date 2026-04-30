@@ -94,18 +94,7 @@ function extractVideoUrl(result: unknown): string {
   return url;
 }
 
-// Animate a still image with subtle camera movement. 5s duration is fixed
-// by product decision. Routes to Seedance by default (sharper for places /
-// architecture and supports 1080p) or Kling when the source image contains
-// human faces (Seedance's safety filter rejects most face-forward people
-// shots with 422; Kling has no documented face restriction).
-export async function animateImage(
-  imageUrl: string,
-  model: AnimationModel = "seedance",
-): Promise<{ url: string }> {
-  configure();
-  if (!imageUrl) throw new Error("animateImage: imageUrl required");
-
+async function callAnimationModel(model: AnimationModel, imageUrl: string): Promise<string> {
   if (model === "kling") {
     const klingInput = {
       start_image_url: imageUrl,
@@ -117,22 +106,64 @@ export async function animateImage(
       input: klingInput as never,
       logs: false,
     });
-    return { url: extractVideoUrl(result) };
+    return extractVideoUrl(result);
   }
-
-  // Seedance 2.0 (default)
   const seedanceInput = {
     image_url: imageUrl,
     prompt: VIDEO_ANIMATION_PROMPT,
     aspect_ratio: "9:16",
-    duration: 5,            // seedance 2.0 takes a number 4-15
+    duration: 5,
     resolution: "1080p",
-    generate_audio: false,  // we mux our own narration; skip TTS to save cost
+    generate_audio: false,
   };
   const result = await fal.subscribe(SEEDANCE_MODEL, {
-    // The SDK's typings don't yet cover the seedance-2.0 input shape.
     input: seedanceInput as never,
     logs: false,
   });
-  return { url: extractVideoUrl(result) };
+  return extractVideoUrl(result);
+}
+
+// Heuristic: did Seedance refuse the input on content / safety grounds?
+// fal SDK errors surface in a few shapes (status, message, body.detail);
+// we check all of them to be robust.
+function looksLikeSafetyOr422(e: unknown): boolean {
+  if (!e) return false;
+  const obj = e as { status?: number; message?: string; body?: { detail?: unknown } };
+  if (obj.status === 422) return true;
+  const msg = (obj.message ?? "").toLowerCase();
+  if (msg.includes("422") || msg.includes("unprocessable")) return true;
+  const detailRaw = obj.body?.detail;
+  const detail = typeof detailRaw === "string" ? detailRaw : JSON.stringify(detailRaw ?? "");
+  const d = detail.toLowerCase();
+  if (d.includes("safety") || d.includes("content") || d.includes("likeness")) return true;
+  return false;
+}
+
+// Animate a still image with subtle camera movement. 5s duration fixed.
+// Routes to Seedance by default (sharper, supports 1080p) and to Kling for
+// caller-marked people slots. As a safety net, if Seedance rejects with a
+// 422 / safety error we automatically retry once via Kling — Kling has no
+// documented face restriction, so this catches both forgotten routings and
+// stale client builds that didn't pass the model field.
+export async function animateImage(
+  imageUrl: string,
+  model: AnimationModel = "seedance",
+): Promise<{ url: string }> {
+  configure();
+  if (!imageUrl) throw new Error("animateImage: imageUrl required");
+
+  try {
+    const url = await callAnimationModel(model, imageUrl);
+    return { url };
+  } catch (e) {
+    if (model === "seedance" && looksLikeSafetyOr422(e)) {
+      console.warn(
+        "[animateImage] Seedance refused with safety/422 — retrying with Kling.",
+        e instanceof Error ? e.message : String(e),
+      );
+      const url = await callAnimationModel("kling", imageUrl);
+      return { url };
+    }
+    throw e;
+  }
 }
