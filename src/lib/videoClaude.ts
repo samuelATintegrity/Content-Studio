@@ -16,10 +16,11 @@ VIDEO-SPECIFIC RULES (this is for a 9:16 short-form video with voiceover narrati
 - Hook in the FIRST 6 WORDS of the script. The opener must grab attention immediately (a question, a myth-bust, a bold fact, a vivid statement).
 - Target 60-75 words for the script (≈ 20-25 seconds at a normal speaking pace). Tight is better than loose.
 - DO NOT use a personal-story or persona opener. Banned phrasings: "Meet [Name]", "[Name] bought…", "When [Name]…", "Let me tell you about…", "I had a client…", "Imagine if you…". The video should explain a topic, not narrate a fictional individual's journey.
-- The script MUST end with this exact closer (in the requested language, translated naturally): "Click the link to get connected." Don't add anything after it.
+- The script MUST end with this exact closer (in the requested language, translated naturally): "Click the link to get connected today." Don't add anything after it.
 - NO URLs, NO hashtags, NO "fill out the form", NO "DM me" anywhere in the SCRIPT — the only CTA is the closer above.
 - NO numbers spelled as digits where it sounds awkward ("two thousand" reads better than "2000" sometimes — use your judgment).
 - NO em dashes anywhere. NO bracketed asides. NO stage directions like "(pause)".
+- DECLARATIVE TONE: every sentence in the script must end with a period (or exclamation mark for emphasis) — NEVER a question mark. Statements only. The TTS engine drifts into rising question intonation on short imperatives, so keep clauses confident and grounded. If you want to pose a thought, phrase it as a statement ("Most buyers don't know this." NOT "Did you know?"). The closer especially must read flat and final.
 - The "caption" is the IG body text (3-5 sentences + 3-5 hashtags), exactly as for static posts. Hashtags on a NEW line at the end.
 - Do not repeat the script verbatim in the caption — the caption complements the video, it doesn't transcribe it.
 `.trim();

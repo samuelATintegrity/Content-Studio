@@ -82,7 +82,16 @@ export async function synthesize(text: string, voiceId: string, outDir: string):
       text,
       model_id: "eleven_multilingual_v2",
       output_format: "mp3_44100_128",
-      voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+      // Multilingual v2 with style=0 drifts into rising/questioning intonation
+      // on short imperative sentences (e.g. our closer). Bumping style to 0.4
+      // and enabling speaker_boost gives a more confident, declarative cadence.
+      // Slightly higher stability damps the random prosody jumps.
+      voice_settings: {
+        stability: 0.6,
+        similarity_boost: 0.8,
+        style: 0.4,
+        use_speaker_boost: true,
+      },
     }),
   });
 
