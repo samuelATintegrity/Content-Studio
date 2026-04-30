@@ -546,10 +546,14 @@ function PhotoEditor({
             top: photoDomTop,
             width: photoDomW,
             height: photoDomH,
+            // Tailwind's preflight applies max-width: 100% to all <img>; without
+            // overriding, photoDomW > regionDomW gets clamped to region width
+            // while photoDomH stays unclamped, breaking aspect ratio when zoomed
+            // past 1.0×. The parent has overflow-hidden so any overflow is
+            // already correctly clipped to the editing region.
+            maxWidth: "none",
+            maxHeight: "none",
             opacity: imgDims ? 1 : 0,
-            transition: dragRef.current.active
-              ? "none"
-              : "left 0.08s linear, top 0.08s linear, width 0.08s linear, height 0.08s linear",
           }}
         />
 

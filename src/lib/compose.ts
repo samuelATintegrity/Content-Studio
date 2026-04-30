@@ -1,6 +1,7 @@
 import sharp from "sharp";
 import { promises as fs } from "fs";
 import path from "path";
+import * as opentype from "opentype.js";
 import { brand, type FontVariant } from "../../brand.config";
 import type { FitMode, Framing, StyleVariant } from "./types";
 
@@ -61,31 +62,89 @@ function layoutHeadline(text: string, maxWidth: number, baseSize: number, minSiz
   return { lines: [bestSplit[0], bestSplit[1]], size };
 }
 
-const fontCssCache = new Map<string, string>();
+// Per-variant cache of parsed opentype.Font instances. We render text by
+// converting strings to SVG <path> elements rather than relying on librsvg
+// to honor an @font-face data URI (which it does NOT do reliably when SVG
+// is composited as an overlay onto a raster via sharp).
+const fontCache = new Map<FontVariant, opentype.Font>();
 
-async function fontFaceCss(variant: FontVariant): Promise<string> {
+async function loadFont(variant: FontVariant): Promise<opentype.Font | null> {
   const def = brand.fonts[variant];
-  if (!def.file) return "";
-  if (fontCssCache.has(variant)) return fontCssCache.get(variant)!;
+  if (!def.file) return null;
+  const cached = fontCache.get(variant);
+  if (cached) return cached;
 
   const fsPath = path.join(process.cwd(), "public", def.file.replace(/^\//, ""));
   let bytes: Buffer;
   try {
     bytes = await fs.readFile(fsPath);
   } catch (e) {
-    // Loud failure: without the @font-face the SVG renders every glyph as
-    // tofu. Surfaces in Vercel function logs so this isn't silent again.
     console.error(`[compose] font file unreadable for variant "${variant}" at ${fsPath}: ${e instanceof Error ? e.message : "unknown"}`);
-    fontCssCache.set(variant, "");
-    return "";
+    return null;
   }
-  const ext = path.extname(def.file).toLowerCase();
-  const mime = ext === ".otf" ? "font/otf" : ext === ".ttf" ? "font/ttf" : "font/woff2";
-  const format = ext === ".otf" ? "opentype" : ext === ".ttf" ? "truetype" : "woff2";
-  const b64 = bytes.toString("base64");
-  const css = `@font-face { font-family: '${def.family.replace(/'/g, "")}'; src: url(data:${mime};base64,${b64}) format('${format}'); font-weight: ${def.weight}; font-style: normal; }`;
-  fontCssCache.set(variant, css);
-  return css;
+  try {
+    // opentype.parse expects an ArrayBuffer
+    const ab = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    const font = opentype.parse(ab);
+    fontCache.set(variant, font);
+    return font;
+  } catch (e) {
+    console.error(`[compose] opentype.parse failed for "${variant}": ${e instanceof Error ? e.message : "unknown"}`);
+    return null;
+  }
+}
+
+// Render a string to an SVG <path d="..."> centered horizontally on `centerX`,
+// vertically positioned so the visual middle of the cap-line sits at `centerY`.
+// Honors `letterSpacing` (extra advance between glyphs, in font units of px).
+function textToSvgPath(args: {
+  text: string;
+  font: opentype.Font;
+  fontSize: number;
+  centerX: number;
+  centerY: number;
+  fill: string;
+  letterSpacing?: number;
+}): string {
+  const { text, font, fontSize, centerX, centerY, fill, letterSpacing = 0 } = args;
+  if (!text) return "";
+
+  // We walk characters via `charToGlyph` instead of `stringToGlyphs` because
+  // Inter Bold uses a GSUB substitution feature (substFormat: 2) that
+  // opentype.js doesn't support — stringToGlyphs throws. charToGlyph skips
+  // the substitution layer entirely. For our use (ALL-CAPS headlines + short
+  // CTAs) we don't need ligatures.
+  const scale = fontSize / font.unitsPerEm;
+  const chars = Array.from(text);
+  const glyphs = chars.map((ch) => font.charToGlyph(ch));
+
+  // Measure: total advance width with letter-spacing between glyphs.
+  let width = 0;
+  for (let i = 0; i < glyphs.length; i++) {
+    width += (glyphs[i].advanceWidth ?? 0) * scale;
+    if (i < glyphs.length - 1) width += letterSpacing;
+  }
+
+  // Vertical center: position baseline so the visual midpoint of the cap-line
+  // sits on centerY. ascender + descender (signed) gives the font's vertical
+  // extent; halving and shifting moves the baseline accordingly.
+  const ascender = font.ascender * scale;
+  const descender = font.descender * scale; // negative
+  const visualMid = (ascender + descender) / 2;
+  const baselineY = centerY + visualMid;
+
+  const startX = centerX - width / 2;
+
+  let d = "";
+  let x = startX;
+  for (let i = 0; i < glyphs.length; i++) {
+    const g = glyphs[i];
+    const gp = g.getPath(x, baselineY, fontSize);
+    d += (d ? " " : "") + gp.toPathData(2);
+    x += (g.advanceWidth ?? 0) * scale + letterSpacing;
+  }
+
+  return `<path d="${d}" fill="${fill}"/>`;
 }
 
 interface ComposeArgs {
@@ -291,17 +350,32 @@ export async function composeImage({
 
   const topY = 0;
   const bottomY = CANVAS_H - bottomHeightPx;
-  const fontFace = await fontFaceCss(fontVariant);
+
+  // Load the font for path-based rendering. If the load fails we fall back
+  // to <text> (which librsvg may render as tofu) but at least keep the box
+  // structure intact instead of crashing.
+  const otFont = await loadFont(fontVariant);
 
   const lineHeight = headlineLayout.size * 1.05;
   const totalHeadlineH = lineHeight * headlineLayout.lines.length;
   const headlineStartY = topY + topHeightPx / 2 - totalHeadlineH / 2 + lineHeight / 2;
+  const headlineLetterSpacing = isSerif ? 0 : 2;
   const headlineTextEls = headlineLayout.lines
-    .map((ln, i) => `
-      <text x="${CANVAS_W / 2}" y="${headlineStartY + i * lineHeight}"
-            font-family="${font.family}" font-size="${headlineLayout.size}" font-weight="${font.weight}"
-            fill="${textTopColor}" text-anchor="middle" dominant-baseline="middle"
-            ${isSerif ? "" : 'letter-spacing="2"'}>${escapeXml(ln)}</text>`)
+    .map((ln, i) => {
+      const cy = headlineStartY + i * lineHeight;
+      if (otFont) {
+        return textToSvgPath({
+          text: ln,
+          font: otFont,
+          fontSize: headlineLayout.size,
+          centerX: CANVAS_W / 2,
+          centerY: cy,
+          fill: textTopColor,
+          letterSpacing: headlineLetterSpacing,
+        });
+      }
+      return `<text x="${CANVAS_W / 2}" y="${cy}" font-family="${font.family}" font-size="${headlineLayout.size}" font-weight="${font.weight}" fill="${textTopColor}" text-anchor="middle" dominant-baseline="middle" ${isSerif ? "" : 'letter-spacing="2"'}>${escapeXml(ln)}</text>`;
+    })
     .join("");
 
   // Position the CTA in the upper portion of the bottom band so there's room
@@ -354,21 +428,35 @@ export async function composeImage({
 
   const subEl = logoBuf
     ? "" // logo composited separately below
-    : `
-  <text x="${CANVAS_W / 2}" y="${subCenterY}"
-        font-family="${font.family}" font-size="${handleSize}" font-weight="${font.weight}"
-        fill="${textBottomColor}" text-anchor="middle" dominant-baseline="middle"
-        opacity="0.85">${escapeXml(handleStr)}</text>`;
+    : otFont
+      ? `<g opacity="0.85">${textToSvgPath({
+          text: handleStr,
+          font: otFont,
+          fontSize: handleSize,
+          centerX: CANVAS_W / 2,
+          centerY: subCenterY,
+          fill: textBottomColor,
+        })}</g>`
+      : `<text x="${CANVAS_W / 2}" y="${subCenterY}" font-family="${font.family}" font-size="${handleSize}" font-weight="${font.weight}" fill="${textBottomColor}" text-anchor="middle" dominant-baseline="middle" opacity="0.85">${escapeXml(handleStr)}</text>`;
+
+  const ctaEl = otFont
+    ? textToSvgPath({
+        text: cta,
+        font: otFont,
+        fontSize: ctaSize,
+        centerX: CANVAS_W / 2,
+        centerY: ctaCenterY,
+        fill: textBottomColor,
+        letterSpacing: isSerif ? 0 : 2,
+      })
+    : `<text x="${CANVAS_W / 2}" y="${ctaCenterY}" font-family="${font.family}" font-size="${ctaSize}" font-weight="${font.weight}" fill="${textBottomColor}" text-anchor="middle" dominant-baseline="middle">${escapeXml(cta)}</text>`;
 
   const svg = `
 <svg width="${CANVAS_W}" height="${CANVAS_H}" xmlns="http://www.w3.org/2000/svg">
-  ${fontFace ? `<defs><style type="text/css">${fontFace}</style></defs>` : ""}
   <rect x="0" y="${topY}" width="${CANVAS_W}" height="${topHeightPx}" fill="${bandTopColor}" fill-opacity="${styleCfg.bandAlpha}"/>
   <rect x="0" y="${bottomY}" width="${CANVAS_W}" height="${bottomHeightPx}" fill="${bandBottomColor}" fill-opacity="${styleCfg.bandAlpha}"/>
   ${headlineTextEls}
-  <text x="${CANVAS_W / 2}" y="${ctaCenterY}"
-        font-family="${font.family}" font-size="${ctaSize}" font-weight="${font.weight}"
-        fill="${textBottomColor}" text-anchor="middle" dominant-baseline="middle">${escapeXml(cta)}</text>
+  ${ctaEl}
   ${subEl}
 </svg>`;
 
