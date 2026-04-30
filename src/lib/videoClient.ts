@@ -74,6 +74,21 @@ export async function getVideoStatus(jobId: string): Promise<VideoStatusResponse
   return res.json();
 }
 
+export async function mirrorClip(args: {
+  url: string;
+  kind: "image" | "video";
+}): Promise<{ cachedUrl: string }> {
+  const res = await fetch("/api/video/mirror", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(args),
+  });
+  if (!res.ok) {
+    throw new Error((await res.json().catch(() => ({}))).error ?? "mirror failed");
+  }
+  return res.json();
+}
+
 export async function regenVideo(args: {
   language: Language;
   contentType: ContentType;

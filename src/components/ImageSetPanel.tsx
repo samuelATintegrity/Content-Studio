@@ -1,10 +1,12 @@
 "use client";
 
+import { useState } from "react";
 import { useBatchStore } from "@/store/batchStore";
 import {
   approveImage,
   rejectImage,
   retryAnimation,
+  saveCurrentSet,
 } from "@/lib/generateVideo";
 import {
   VIDEO_IMAGE_PROMPT_LABELS,
@@ -23,18 +25,49 @@ const STATE_LABELS: Record<ImageSlotState, string> = {
 
 export function ImageSetPanel() {
   const imageSlots = useBatchStore((s) => s.imageSlots);
+  const [saving, setSaving] = useState(false);
+  const [savedFlash, setSavedFlash] = useState<string | null>(null);
 
   if (imageSlots.length === 0) return null;
 
   const readyCount = imageSlots.filter((s) => s.state === "video_ready").length;
+  const allReady = readyCount === VIDEO_PROMPT_COUNT;
+
+  async function onSave() {
+    if (saving || !allReady) return;
+    const proposed = `Set ${new Date().toLocaleString()}`;
+    const name = window.prompt("Name this image set so you can reuse it later:", proposed);
+    if (!name) return;
+    setSaving(true);
+    try {
+      const set = await saveCurrentSet(name);
+      setSavedFlash(`Saved "${set.name}"`);
+      setTimeout(() => setSavedFlash(null), 2500);
+    } catch (e) {
+      window.alert(`Save failed: ${e instanceof Error ? e.message : "unknown"}`);
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <section className="mb-8 rounded-3xl border border-neutral-200 dark:border-neutral-900 bg-white dark:bg-neutral-950 p-5">
-      <header className="flex items-baseline justify-between mb-4">
+      <header className="flex items-baseline justify-between mb-4 gap-3">
         <h2 className="text-sm font-semibold tracking-tight">Image set</h2>
-        <span className="text-[11px] text-neutral-500 tabular-nums">
-          {readyCount} / {VIDEO_PROMPT_COUNT} ready
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-[11px] text-neutral-500 tabular-nums">
+            {readyCount} / {VIDEO_PROMPT_COUNT} ready
+          </span>
+          {allReady && (
+            <button
+              onClick={onSave}
+              disabled={saving}
+              className="px-3 py-1 rounded-full text-[11px] font-semibold tracking-tight bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-900 disabled:opacity-60 transition"
+            >
+              {saving ? "Saving…" : savedFlash ?? "Save set"}
+            </button>
+          )}
+        </div>
       </header>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         {imageSlots.map((slot) => (

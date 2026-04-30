@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useBatchStore } from "@/store/batchStore";
 import {
   CONTENT_TYPE_LABELS,
@@ -10,6 +10,13 @@ import {
   type Format,
   type Language,
 } from "@/lib/types";
+import {
+  deleteSavedSet,
+  listSavedSets,
+  subscribeSavedSets,
+  type SavedSet,
+} from "@/lib/savedSets";
+import { useSavedSet } from "@/lib/generateVideo";
 
 const FORMATS: Format[] = ["static", "video"];
 const LANGS: Language[] = ["en", "tl", "es", "zh"];
@@ -82,6 +89,8 @@ export function Sidebar() {
         </Section>
       )}
 
+      {format === "video" && <SavedSetsSection />}
+
       <Section title="Language">
         <div className="grid grid-cols-2 gap-2">
           {LANGS.map((l) => (
@@ -107,6 +116,74 @@ export function Sidebar() {
         </div>
       </Section>
     </aside>
+  );
+}
+
+function SavedSetsSection() {
+  const [sets, setSets] = useState<SavedSet[]>(() => listSavedSets());
+  const [loadingId, setLoadingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    return subscribeSavedSets(() => setSets(listSavedSets()));
+  }, []);
+
+  if (sets.length === 0) {
+    return (
+      <Section title="Saved sets">
+        <p className="text-[11px] text-neutral-500 leading-snug">
+          Save an image set after a batch finishes to reuse it later without paying for another round of image + video generation.
+        </p>
+      </Section>
+    );
+  }
+
+  async function onLoad(set: SavedSet) {
+    if (loadingId) return;
+    setLoadingId(set.id);
+    try {
+      await useSavedSet(set);
+    } finally {
+      setLoadingId(null);
+    }
+  }
+
+  function onDelete(set: SavedSet) {
+    if (!window.confirm(`Delete saved set "${set.name}"?`)) return;
+    deleteSavedSet(set.id);
+  }
+
+  return (
+    <Section title="Saved sets">
+      <div className="flex flex-col gap-1.5">
+        {sets.map((set) => (
+          <div
+            key={set.id}
+            className="group flex items-center gap-2 px-3 py-2 rounded-2xl border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition"
+          >
+            <button
+              onClick={() => onLoad(set)}
+              disabled={loadingId !== null}
+              className="flex-1 text-left min-w-0 disabled:opacity-60"
+            >
+              <div className="text-[12px] font-medium truncate">{set.name}</div>
+              <div className="text-[10px] text-neutral-500 truncate">
+                {new Date(set.savedAt).toLocaleDateString()} · {set.slots.length} clips
+              </div>
+            </button>
+            <button
+              onClick={() => onDelete(set)}
+              className="opacity-0 group-hover:opacity-100 transition text-neutral-400 hover:text-red-500"
+              title="Delete"
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+        ))}
+      </div>
+    </Section>
   );
 }
 

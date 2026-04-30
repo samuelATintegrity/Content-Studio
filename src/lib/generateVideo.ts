@@ -4,11 +4,13 @@ import { useBatchStore } from "@/store/batchStore";
 import {
   animateSourceImage,
   generateSourceImage,
+  mirrorClip,
   regenVideo,
   startVideoBatch,
   startVideoRender,
 } from "@/lib/videoClient";
 import { VIDEO_PROMPT_COUNT } from "@/lib/videoPrompts";
+import { saveSet, type SavedSet, type SavedSetSlot } from "@/lib/savedSets";
 import type {
   ImageSlot,
   VideoPost,
@@ -242,6 +244,94 @@ function maybeDispatchRenders(batchId: string): void {
         });
       });
   }
+}
+
+// Load a previously saved (R2-mirrored) image set: skip Nano Banana and
+// Seedance entirely, reuse the cached URLs, and proceed straight to script
+// + render dispatch. Costs only Claude + ElevenLabs + Railway compute.
+export async function useSavedSet(set: SavedSet): Promise<void> {
+  const store = useBatchStore.getState();
+  const { language, contentType, setLoading, setError, setVideoPosts, setImageSlots } = store;
+
+  setLoading(true);
+  setError(null);
+  setVideoPosts([]);
+
+  // Seed the slots in video_ready state directly from the saved set.
+  const slots: ImageSlot[] = Array.from({ length: VIDEO_PROMPT_COUNT }, (_, i) => {
+    const cached = set.slots.find((s) => s.promptIndex === i);
+    if (cached) {
+      return {
+        promptIndex: i as VideoSourcePromptIndex,
+        state: "video_ready" as const,
+        imageUrl: cached.imageUrl,
+        videoUrl: cached.videoUrl,
+      };
+    }
+    return { promptIndex: i as VideoSourcePromptIndex, state: "queued" as const };
+  });
+  setImageSlots(slots);
+
+  const batchId = `${Date.now()}`;
+  _pending = {
+    batchId,
+    scripts: [],
+    language,
+    contentType,
+    videoUrls: new Map(),
+    scriptsResolved: false,
+    rendersDispatched: false,
+  };
+  // Pre-populate _pending.videoUrls so maybeDispatchRenders can fire as soon
+  // as the scripts resolve.
+  for (const slot of slots) {
+    if (slot.state === "video_ready" && slot.videoUrl) {
+      _pending.videoUrls.set(slot.promptIndex, slot.videoUrl);
+    }
+  }
+
+  const scriptsPromise = startVideoBatch(language, contentType)
+    .then((res) => {
+      const p = _pending;
+      if (!p || p.batchId !== batchId) return;
+      p.scripts = res.scripts;
+      p.scriptsResolved = true;
+      maybeDispatchRenders(batchId);
+    })
+    .catch((e) => {
+      setError(e instanceof Error ? e.message : "scripts failed");
+      _pending = null;
+    });
+
+  setLoading(false);
+  void scriptsPromise;
+}
+
+// Mirror the current (live) image set's image+video URLs to R2 and write
+// the resulting stable URLs into localStorage as a named set.
+export async function saveCurrentSet(name: string): Promise<SavedSet> {
+  const slots = useBatchStore.getState().imageSlots;
+  const ready = slots.filter((s) => s.state === "video_ready" && s.imageUrl && s.videoUrl);
+  if (ready.length !== VIDEO_PROMPT_COUNT) {
+    throw new Error(`Image set is incomplete (${ready.length} of ${VIDEO_PROMPT_COUNT} slots ready)`);
+  }
+
+  // Mirror in parallel — image and video for each slot. Each slot is a pair.
+  const mirrored: SavedSetSlot[] = await Promise.all(
+    ready.map(async (slot) => {
+      const [{ cachedUrl: imageUrl }, { cachedUrl: videoUrl }] = await Promise.all([
+        mirrorClip({ url: slot.imageUrl!, kind: "image" }),
+        mirrorClip({ url: slot.videoUrl!, kind: "video" }),
+      ]);
+      return {
+        promptIndex: slot.promptIndex,
+        imageUrl,
+        videoUrl,
+      } satisfies SavedSetSlot;
+    }),
+  );
+
+  return saveSet(name, mirrored);
 }
 
 // Per-card regeneration. Reuses the existing clipUrls from the live image

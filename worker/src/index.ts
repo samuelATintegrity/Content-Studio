@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import { createJob, getJob, reapOldJobs } from "./jobs.js";
 import { requireSharedSecret } from "./auth.js";
 import { runPipeline } from "./pipeline.js";
+import { cacheClip } from "./cache.js";
 import type { RenderRequest, RenderResponse, StatusResponse } from "./types.js";
 
 const app = Fastify({
@@ -36,6 +37,27 @@ app.post<{ Body: RenderRequest; Reply: RenderResponse | { error: string } }>(
     return { jobId: job.id };
   },
 );
+
+// POST /cache-clip — mirror a fal.ai URL into R2. Used by the app to save
+// approved image+clip pairs that the user can reuse on later batches.
+app.post<{
+  Body: { url?: string; kind?: "image" | "video" };
+  Reply: { cachedUrl: string } | { error: string };
+}>("/cache-clip", async (req, reply) => {
+  const url = req.body?.url;
+  const kind = req.body?.kind;
+  if (!url || (kind !== "image" && kind !== "video")) {
+    reply.code(400);
+    return { error: "url and kind ('image' | 'video') are required" };
+  }
+  try {
+    const cachedUrl = await cacheClip(url, kind);
+    return { cachedUrl };
+  } catch (e) {
+    reply.code(500);
+    return { error: e instanceof Error ? e.message : "cache failed" };
+  }
+});
 
 // GET /status/:id — poll job state.
 app.get<{ Params: { id: string }; Reply: StatusResponse | { error: string } }>(

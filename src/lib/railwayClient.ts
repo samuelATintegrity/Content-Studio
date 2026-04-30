@@ -48,6 +48,23 @@ export async function enqueueRender(args: {
   return json.jobId;
 }
 
+export async function mirrorClipToR2(args: {
+  url: string;
+  kind: "image" | "video";
+}): Promise<string> {
+  const res = await workerFetch("/cache-clip", {
+    method: "POST",
+    body: JSON.stringify(args),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Worker /cache-clip failed (${res.status}): ${detail.slice(0, 300)}`);
+  }
+  const json = (await res.json()) as { cachedUrl?: string };
+  if (!json.cachedUrl) throw new Error("Worker /cache-clip did not return a cachedUrl");
+  return json.cachedUrl;
+}
+
 export async function getRenderStatus(jobId: string): Promise<VideoStatusResponse> {
   const res = await workerFetch(`/status/${encodeURIComponent(jobId)}`, { method: "GET" });
   if (res.status === 404) {
