@@ -228,6 +228,67 @@ export async function retryAnimation(promptIndex: VideoSourcePromptIndex): Promi
   }
 }
 
+// Render queues — one per active batch. Renders fire serially: only one
+// post is in flight at a time, the next is dispatched when the current
+// reaches a terminal state. This avoids two ffmpeg processes competing
+// on the same Railway worker.
+interface RenderQueueEntry {
+  postId: string;
+  script: string;
+  dispatched: boolean;
+}
+interface RenderQueue {
+  batchId: string;
+  language: ReturnType<typeof useBatchStore.getState>["language"];
+  contentType: ReturnType<typeof useBatchStore.getState>["contentType"];
+  clipUrls: string[];
+  entries: RenderQueueEntry[];
+}
+const _renderQueues = new Map<string, RenderQueue>();
+
+function dispatchEntry(queue: RenderQueue, entry: RenderQueueEntry): void {
+  entry.dispatched = true;
+  startVideoRender({
+    script: entry.script,
+    language: queue.language,
+    contentType: queue.contentType,
+    clipUrls: queue.clipUrls,
+  })
+    .then(({ jobId }) => {
+      useBatchStore.getState().updateVideoPost(entry.postId, {
+        jobId,
+        state: "queued",
+        progress: 0,
+      });
+    })
+    .catch((e) => {
+      useBatchStore.getState().updateVideoPost(entry.postId, {
+        state: "failed",
+        error: e instanceof Error ? e.message : "render dispatch failed",
+      });
+      // Even on dispatch failure, advance the queue so the next render
+      // gets a shot rather than stalling everything behind a bad sibling.
+      advanceRenderQueue(entry.postId);
+    });
+}
+
+// Called from the polling layer when a post hits a terminal state. Finds
+// the queue this post belongs to and dispatches the next undispatched
+// entry, if any. Cleans up the queue once the last entry is in flight.
+export function advanceRenderQueue(completedPostId: string): void {
+  for (const queue of _renderQueues.values()) {
+    const idx = queue.entries.findIndex((e) => e.postId === completedPostId);
+    if (idx < 0) continue;
+    const next = queue.entries.find((e) => !e.dispatched);
+    if (next) {
+      dispatchEntry(queue, next);
+    } else if (queue.entries.every((e) => e.dispatched)) {
+      _renderQueues.delete(queue.batchId);
+    }
+    return;
+  }
+}
+
 function maybeDispatchRenders(batchId: string): void {
   const p = _pending;
   if (!p || p.batchId !== batchId) return;
@@ -262,28 +323,25 @@ function maybeDispatchRenders(batchId: string): void {
   }));
   store.setVideoPosts(initial);
 
-  // Dispatch each render in parallel; on success, transition the post to
-  // queued with its jobId so useVideoPolling takes over.
-  for (const post of initial) {
-    startVideoRender({
+  // Build the queue and dispatch only the first entry. The rest fire as
+  // each in-flight render reaches a terminal state — see advanceRenderQueue.
+  const queue: RenderQueue = {
+    batchId,
+    language: p.language,
+    contentType: p.contentType,
+    clipUrls,
+    entries: initial.map((post) => ({
+      postId: post.id,
       script: post.script,
-      language: p.language,
-      contentType: p.contentType,
-      clipUrls,
-    })
-      .then(({ jobId }) => {
-        useBatchStore.getState().updateVideoPost(post.id, {
-          jobId,
-          state: "queued",
-          progress: 0,
-        });
-      })
-      .catch((e) => {
-        useBatchStore.getState().updateVideoPost(post.id, {
-          state: "failed",
-          error: e instanceof Error ? e.message : "render dispatch failed",
-        });
-      });
+      dispatched: false,
+    })),
+  };
+  // Drop any queues from prior batches so they can't dispatch ghost renders
+  // if their posts somehow tick over after the user starts a new batch.
+  _renderQueues.clear();
+  _renderQueues.set(batchId, queue);
+  if (queue.entries.length > 0) {
+    dispatchEntry(queue, queue.entries[0]);
   }
 }
 

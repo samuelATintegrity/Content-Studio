@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useBatchStore } from "@/store/batchStore";
 import { getVideoStatus } from "@/lib/videoClient";
+import { advanceRenderQueue } from "@/lib/generateVideo";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -37,7 +38,12 @@ export function useVideoPolling(postId: string): void {
           ...(status.durationS !== undefined ? { durationS: status.durationS } : {}),
           ...(status.error !== undefined ? { error: status.error } : {}),
         });
-        if (TERMINAL.has(status.state)) return;
+        if (TERMINAL.has(status.state)) {
+          // Sequential dispatch: kick off the next render in this batch's
+          // queue (no-op if this post wasn't part of a queue or all are done).
+          advanceRenderQueue(postId);
+          return;
+        }
       } catch (e) {
         if (cancelled) return;
         // Keep polling on transient errors; surface only after several misses

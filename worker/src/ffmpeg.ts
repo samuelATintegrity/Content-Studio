@@ -125,9 +125,11 @@ function buildFilterComplex(args: {
   // Fade the very end of the clip track to white so the logo card emerges
   // from a clean canvas. Subtitles are burned AFTER concat (below) so they
   // can keep showing during the outro if narration extends that long.
+  // format=yuv420p forces explicit pixel-format normalization so the later
+  // concat with [vwhite] / [voutro] doesn't fail in auto_scale negotiation.
   const fadeOutStart = Math.max(0, clipsLengthS - FADE_TO_WHITE_S);
   chains.push(
-    `[vcat]fade=type=out:start_time=${fadeOutStart.toFixed(3)}:duration=${FADE_TO_WHITE_S}:color=white[vmain]`,
+    `[vcat]fade=type=out:start_time=${fadeOutStart.toFixed(3)}:duration=${FADE_TO_WHITE_S}:color=white,format=yuv420p,setsar=1[vmain]`,
   );
 
   // White hold segment: a plain white card that fills the gap between when
@@ -171,7 +173,7 @@ function buildFilterComplex(args: {
   if (whiteHoldS > 0) {
     chains.push(`[vmain][vwhite]concat=n=2:v=1:a=0[v_captioned]`);
   }
-  chains.push(`[${captionedLabel}]subtitles=filename='${escapedAss}':fontsdir='${escapedFonts}'[v_subbed]`);
+  chains.push(`[${captionedLabel}]subtitles=filename='${escapedAss}':fontsdir='${escapedFonts}',format=yuv420p,setsar=1[v_subbed]`);
   chains.push(`[v_subbed][voutro]concat=n=2:v=1:a=0[v_final]`);
 
   // Audio: trim narration to real length, then concat with silence (covers outro).
