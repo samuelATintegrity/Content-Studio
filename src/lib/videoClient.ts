@@ -95,9 +95,16 @@ export async function mirrorClip(args: {
 }
 
 export async function uploadClip(file: File): Promise<{ cachedUrl: string; filename: string }> {
-  const form = new FormData();
-  form.append("file", file);
-  const res = await fetch("/api/video/upload-clip", { method: "POST", body: form });
+  // Stream the file as the raw body (NOT multipart) — Next 16 dev was
+  // returning a mangled response for multipart POSTs. See server route.
+  const res = await fetch("/api/video/upload-clip", {
+    method: "POST",
+    headers: {
+      "content-type": file.type || "video/mp4",
+      "x-filename": file.name,
+    },
+    body: file,
+  });
   const text = await res.text();
   let body: { cachedUrl?: string; filename?: string; error?: string } = {};
   let parsed = false;
