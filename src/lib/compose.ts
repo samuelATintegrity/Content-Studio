@@ -72,7 +72,10 @@ async function fontFaceCss(variant: FontVariant): Promise<string> {
   let bytes: Buffer;
   try {
     bytes = await fs.readFile(fsPath);
-  } catch {
+  } catch (e) {
+    // Loud failure: without the @font-face the SVG renders every glyph as
+    // tofu. Surfaces in Vercel function logs so this isn't silent again.
+    console.error(`[compose] font file unreadable for variant "${variant}" at ${fsPath}: ${e instanceof Error ? e.message : "unknown"}`);
     fontCssCache.set(variant, "");
     return "";
   }
