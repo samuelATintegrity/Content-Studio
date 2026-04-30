@@ -70,6 +70,12 @@ export async function synthesize(text: string, voiceId: string, outDir: string):
   const apiKey = process.env.ELEVENLABS_API_KEY;
   if (!apiKey) throw new Error("ELEVENLABS_API_KEY is not set");
 
+  // Model is env-configurable so we can flip between v2 and v3 without
+  // redeploying the worker. v3 is more expressive (less rising-question
+  // intonation on imperatives) but if it ever stops returning per-character
+  // alignment we'd need to fall back to v2.
+  const modelId = process.env.ELEVENLABS_MODEL_ID ?? "eleven_v3";
+
   const url = `https://api.elevenlabs.io/v1/text-to-speech/${voiceId}/with-timestamps`;
   const res = await fetch(url, {
     method: "POST",
@@ -80,12 +86,11 @@ export async function synthesize(text: string, voiceId: string, outDir: string):
     },
     body: JSON.stringify({
       text,
-      model_id: "eleven_multilingual_v2",
+      model_id: modelId,
       output_format: "mp3_44100_128",
-      // Multilingual v2 with style=0 drifts into rising/questioning intonation
-      // on short imperative sentences (e.g. our closer). Bumping style to 0.4
-      // and enabling speaker_boost gives a more confident, declarative cadence.
-      // Slightly higher stability damps the random prosody jumps.
+      // Bumping style to 0.4 and enabling speaker_boost gives a more
+      // confident, declarative cadence. Slightly higher stability damps
+      // random prosody jumps. (v3 honors these via voice_settings too.)
       voice_settings: {
         stability: 0.6,
         similarity_boost: 0.8,
@@ -97,12 +102,18 @@ export async function synthesize(text: string, voiceId: string, outDir: string):
 
   if (!res.ok) {
     const detail = await res.text().catch(() => "");
-    throw new Error(`ElevenLabs TTS failed (${res.status}): ${detail.slice(0, 500)}`);
+    throw new Error(`ElevenLabs TTS failed (${res.status}) on model "${modelId}": ${detail.slice(0, 500)}`);
   }
 
   const json = (await res.json()) as ElevenLabsResponse;
-  if (!json.audio_base64 || !json.alignment) {
-    throw new Error("ElevenLabs response missing audio_base64 or alignment");
+  if (!json.audio_base64) {
+    throw new Error(`ElevenLabs response missing audio_base64 (model: ${modelId})`);
+  }
+  if (!json.alignment) {
+    throw new Error(
+      `ElevenLabs model "${modelId}" did not return alignment timestamps. ` +
+      `Set ELEVENLABS_MODEL_ID=eleven_multilingual_v2 in the worker env to use the v2 model with per-word timestamps.`,
+    );
   }
 
   const audio = Buffer.from(json.audio_base64, "base64");
