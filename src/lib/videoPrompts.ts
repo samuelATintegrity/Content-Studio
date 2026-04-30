@@ -7,7 +7,11 @@ export const VIDEO_IMAGE_PROMPTS: readonly string[] = [
   "a photo of a new white master bedroom",
   "a photo of a new white bathroom",
   "a photo of a new white home exterior",
-  "a photo of a real estate agent speaking with a young couple",
+  // Slot 4 used to be "a real estate agent speaking with a young couple" but
+  // Seedance's safety filter rejects most face-forward couple shots ("422
+  // Unprocessable Entity"). Keys + paperwork conveys the same "your agent
+  // helping you close" beat without humans in frame.
+  "a photo of two house keys with a small brass house keychain resting on a stack of crisp real estate documents on a clean white kitchen counter, soft natural daylight, no people",
 ] as const;
 
 export const VIDEO_IMAGE_PROMPT_LABELS: readonly string[] = [
@@ -15,7 +19,7 @@ export const VIDEO_IMAGE_PROMPT_LABELS: readonly string[] = [
   "Bedroom",
   "Bathroom",
   "Exterior",
-  "Agent",
+  "Keys",
 ] as const;
 
 export const VIDEO_PROMPT_COUNT = VIDEO_IMAGE_PROMPTS.length;
