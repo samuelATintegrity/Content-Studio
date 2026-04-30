@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 
 let _client: S3Client | null = null;
 
@@ -16,6 +16,22 @@ function client(): S3Client {
     credentials: { accessKeyId, secretAccessKey },
   });
   return _client;
+}
+
+// Convert a public R2 URL back into the S3 key it lives at, by stripping
+// the R2_PUBLIC_URL prefix. Returns null if the URL isn't from this bucket.
+export function keyFromPublicUrl(url: string): string | null {
+  const publicUrl = process.env.R2_PUBLIC_URL;
+  if (!publicUrl) return null;
+  const prefix = publicUrl.replace(/\/$/, "") + "/";
+  if (!url.startsWith(prefix)) return null;
+  return url.slice(prefix.length);
+}
+
+export async function deleteKey(key: string): Promise<void> {
+  const bucket = process.env.R2_BUCKET;
+  if (!bucket) throw new Error("R2_BUCKET must be set");
+  await client().send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
 }
 
 export async function putBytes(args: {

@@ -129,6 +129,18 @@ export async function uploadClip(file: File): Promise<{ cachedUrl: string; filen
   return { cachedUrl: body.cachedUrl, filename: body.filename };
 }
 
+export async function deleteClipFromStorage(urls: string[]): Promise<{ deleted: string[]; skipped: { url: string; reason: string }[] }> {
+  const res = await fetch("/api/video/delete-clip", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ urls }),
+  });
+  if (!res.ok) {
+    throw new Error((await res.json().catch(() => ({}))).error ?? "delete failed");
+  }
+  return res.json();
+}
+
 export async function regenVideo(args: {
   language: Language;
   contentType: ContentType;

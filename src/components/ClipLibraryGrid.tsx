@@ -9,7 +9,8 @@ import {
   subscribeMergedLibrary,
   type MergedClip,
 } from "@/lib/clipLibrary";
-import { uploadClip } from "@/lib/videoClient";
+import { listSavedSets } from "@/lib/savedSets";
+import { deleteClipFromStorage, uploadClip } from "@/lib/videoClient";
 
 export function ClipLibraryGrid() {
   const [clips, setClips] = useState<MergedClip[]>(() => listMergedLibrary());
@@ -18,15 +19,38 @@ export function ClipLibraryGrid() {
   const deselectClip = useBatchStore((s) => s.deselectClip);
   const clearClipSelection = useBatchStore((s) => s.clearClipSelection);
 
-  function onDelete(clip: MergedClip) {
+  async function onDelete(clip: MergedClip) {
     if (clip.kind === "saved") return; // saved-set clips are governed by sidebar
     const id = clip.origin.libraryClipId;
     if (!id) return;
-    const label =
-      clip.kind === "upload" ? clip.origin.filename ?? "this upload" : "this clip";
-    if (!window.confirm(`Remove ${label} from your library? The file stays in storage; this only removes it from the picker.`)) return;
+    const label = clip.kind === "upload" ? clip.origin.filename ?? "this upload" : "this clip";
+
+    // Check if any saved set references this video URL — deleting the file
+    // from R2 would break those sets. The poster image is set-internal and
+    // safe to delete (saved sets carry their own image URLs from R2 too,
+    // but clip URL is the load-bearing one for selection).
+    const conflictingSets = listSavedSets().filter((s) =>
+      s.slots.some((slot) => slot.videoUrl === clip.videoUrl || slot.imageUrl === clip.posterUrl),
+    );
+
+    let warning = `Permanently delete ${label}?\n\nThis removes it from your library AND deletes the file from R2 storage.`;
+    if (conflictingSets.length > 0) {
+      const names = conflictingSets.map((s) => `"${s.name}"`).join(", ");
+      warning += `\n\n⚠️ This file is also used by saved set${conflictingSets.length > 1 ? "s" : ""} ${names}. Deleting it will break ${conflictingSets.length > 1 ? "them" : "that set"}.`;
+    }
+    if (!window.confirm(warning)) return;
+
     if (selectedKeys.includes(clip.key)) deselectClip(clip.key);
     removeLibraryClip(id);
+
+    const urls = [clip.videoUrl];
+    if (clip.posterUrl) urls.push(clip.posterUrl);
+    try {
+      await deleteClipFromStorage(urls);
+    } catch (err) {
+      console.error("[clipLibrary] R2 delete failed", err);
+      window.alert(`Removed from library, but storage delete failed: ${err instanceof Error ? err.message : "unknown"}`);
+    }
   }
 
   useEffect(() => {
