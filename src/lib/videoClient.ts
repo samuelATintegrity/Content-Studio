@@ -97,6 +97,21 @@ export async function mirrorClip(args: {
 export async function uploadClip(file: File): Promise<{ cachedUrl: string; filename: string }> {
   // Stream the file as the raw body (NOT multipart) — Next 16 dev was
   // returning a mangled response for multipart POSTs. See server route.
+  // First, send a tiny test POST to check whether large-body POST responses
+  // are being mangled. If even this tiny POST comes back as non-JSON, we
+  // know the platform is the issue; otherwise the upload itself is fine.
+  try {
+    const probe = await fetch("/api/video/upload-clip", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-test": "1" },
+      body: "{}",
+    });
+    const probeText = await probe.text();
+    console.log("[uploadClip] probe POST", { status: probe.status, body: probeText.slice(0, 300) });
+  } catch (err) {
+    console.error("[uploadClip] probe failed", err);
+  }
+
   const res = await fetch("/api/video/upload-clip", {
     method: "POST",
     headers: {

@@ -16,11 +16,22 @@ export async function GET() {
   return NextResponse.json({ marker: DEPLOY_MARKER, accepts: "POST raw body, x-filename header" });
 }
 
+// Test handler — short-circuits before any work if x-test header is set.
+// Lets us confirm whether the issue is upload logic vs response routing.
+async function maybeShortCircuit(req: Request): Promise<Response | null> {
+  if (req.headers.get("x-test") === "1") {
+    return NextResponse.json({ ok: true, marker: DEPLOY_MARKER, contentType: req.headers.get("content-type") });
+  }
+  return null;
+}
+
 // Body is the raw file bytes. Filename + content-type travel in headers
 // (x-filename, content-type) — multipart parsing was producing a mangled
 // response in Next 16 dev mode, so we sidestep it.
 export async function POST(req: Request) {
   try {
+    const sc = await maybeShortCircuit(req);
+    if (sc) return sc;
     const filename = req.headers.get("x-filename") ?? "upload.mp4";
     const contentType = req.headers.get("content-type") ?? "video/mp4";
     if (!contentType.startsWith("video/")) {
