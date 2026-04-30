@@ -3,18 +3,30 @@
 import { useBatchStore } from "@/store/batchStore";
 import {
   composeImageDataUrl,
-  fetchAiImage,
+  fetchAndCacheAiImage,
   fetchBatchCopy,
   fetchPhotoFor,
 } from "@/lib/client";
-import { batchSeedPrompt, AI_CREDIT_LABEL } from "@/lib/imagePrompts";
+import { batchSeedPrompt, categoryFor, AI_CREDIT_LABEL, type BatchSeedIndex } from "@/lib/imagePrompts";
+import { pickRandomLibraryImages } from "@/lib/imageLibrary";
 import { DEFAULT_FIT_MODE, DEFAULT_FRAMING, DEFAULT_STYLE, type FontVariant } from "@/lib/types";
 import { brand } from "../../brand.config";
 
-// Kick off a new batch: copy from Claude, then per-post photo + compose in
-// parallel. First two posts get AI images (family + couple, or two agents for
-// good_agents content) with an ethnicity hint based on language; the rest pull
-// from Pexels. AI failures fall back silently to Pexels.
+// Per-post image-source assignment for the 10-post static batch:
+//   slots 0..3  → fresh AI (family / couple / exterior / interior)
+//   slots 4..7  → previously generated AI from the local image library
+//                 (mirrored to R2, persistent across sessions)
+//   slots 8..9  → Pexels stock photos
+// If the library doesn't have enough cached images, the leftover slots
+// fall through to Pexels stock as a graceful degradation.
+const FRESH_AI_COUNT = 4;
+const CACHED_AI_COUNT = 4;
+// const STOCK_COUNT = 2;  // implicit: total - fresh - cached
+
+// Kick off a new batch: copy from Claude (always 10 posts), then per-post
+// photo + compose in parallel. AI failures on the fresh-AI slots fall back
+// to Pexels. Mid-flight failures are isolated per-post and don't kill the
+// batch; the caption gets an [image error: ...] tail so it's visible.
 export async function generateBatch(): Promise<void> {
   const store = useBatchStore.getState();
   const { language, contentType, setLoading, setError, setPosts, resetUsedPhotoIds, addUsedPhotoId } = store;
@@ -42,6 +54,10 @@ export async function generateBatch(): Promise<void> {
     }));
     setPosts(initial);
 
+    // Pre-pick the cached library images up-front so multiple cached slots
+    // don't race for the same image and accidentally collide.
+    const cachedPicks = pickRandomLibraryImages(CACHED_AI_COUNT);
+
     const used = new Set<number>();
     await Promise.all(
       initial.map(async (post, idx) => {
@@ -49,22 +65,42 @@ export async function generateBatch(): Promise<void> {
           let photoUrl: string;
           let credit: { photographer: string; sourceUrl: string };
 
-          const useAi = idx < 2;
-          let aiSucceeded = false;
-
-          if (useAi) {
+          // Slot 0..3: fresh AI generation (mirrored + cached automatically).
+          if (idx < FRESH_AI_COUNT) {
             try {
-              const prompt = batchSeedPrompt(language, contentType, idx as 0 | 1);
-              const ai = await fetchAiImage(prompt);
+              const seedIdx = idx as BatchSeedIndex;
+              const prompt = batchSeedPrompt(language, contentType, seedIdx);
+              const ai = await fetchAndCacheAiImage(prompt, categoryFor(seedIdx));
               photoUrl = ai.url;
               credit = { photographer: AI_CREDIT_LABEL, sourceUrl: "" };
-              aiSucceeded = true;
             } catch {
-              // fall through to Pexels
+              // Fresh AI failed (rate limit, safety, etc.) → Pexels fallback.
+              const photo = await fetchPhotoFor(contentType, [...used]);
+              used.add(photo.id);
+              addUsedPhotoId(photo.id);
+              photoUrl = photo.url;
+              credit = { photographer: photo.photographer, sourceUrl: photo.sourceUrl };
             }
           }
-
-          if (!aiSucceeded) {
+          // Slot 4..7: pull from the cached library (oldest-first sampling
+          // is fine; pre-shuffled in pickRandomLibraryImages).
+          else if (idx < FRESH_AI_COUNT + CACHED_AI_COUNT) {
+            const cachedSlot = idx - FRESH_AI_COUNT;
+            const pick = cachedPicks[cachedSlot];
+            if (pick) {
+              photoUrl = pick.url;
+              credit = { photographer: AI_CREDIT_LABEL, sourceUrl: "" };
+            } else {
+              // Library not yet full enough — fall through to Pexels.
+              const photo = await fetchPhotoFor(contentType, [...used]);
+              used.add(photo.id);
+              addUsedPhotoId(photo.id);
+              photoUrl = photo.url;
+              credit = { photographer: photo.photographer, sourceUrl: photo.sourceUrl };
+            }
+          }
+          // Slot 8..9: stock photos.
+          else {
             const photo = await fetchPhotoFor(contentType, [...used]);
             used.add(photo.id);
             addUsedPhotoId(photo.id);
@@ -73,7 +109,7 @@ export async function generateBatch(): Promise<void> {
           }
 
           const imageDataUrl = await composeImageDataUrl({
-            photoUrl: photoUrl!,
+            photoUrl,
             headline: post.headline,
             cta: post.cta,
             fontVariant: post.fontVariant,
@@ -82,8 +118,8 @@ export async function generateBatch(): Promise<void> {
             style: post.style,
           });
           useBatchStore.getState().updatePost(post.id, {
-            photoUrl: photoUrl!,
-            photoCredit: credit!,
+            photoUrl,
+            photoCredit: credit,
             imageDataUrl,
           });
         } catch (e) {

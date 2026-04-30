@@ -73,15 +73,30 @@ const POST_TOOL = {
   },
 };
 
+// Static batches always produce exactly this many posts (4 fresh AI + 4
+// previously generated + 2 stock = 10 image slots). Exposed so the UI
+// can keep the slot math in sync.
+export const STATIC_BATCH_POSTS = 10;
+
 function buildUserPrompt(language: Language, contentType: ContentType, anglesOverride?: string[]): string {
   const spec = CONTENT_TYPE_SPECS[contentType];
-  const angles = anglesOverride
+  const baseAngles = anglesOverride
     ? spec.angles.filter((a) => anglesOverride.includes(a.key))
     : spec.angles;
+
+  // Cycle the angle list out to STATIC_BATCH_POSTS so Claude returns exactly
+  // that many posts. If the content type already has 10+ angles, take the
+  // first 10. If fewer, repeat angles (Claude will produce different
+  // headlines for each repeat — the prompt below tells it to vary openers).
+  const angles =
+    baseAngles.length === 0
+      ? []
+      : Array.from({ length: STATIC_BATCH_POSTS }, (_, i) => baseAngles[i % baseAngles.length]);
+
   const angleList = angles
     .map(
       (a, i) =>
-        `${i + 1}. angle="${a.key}"\n   brief: ${a.brief}\n   headline_hint: "${a.headlineHint}" (use this phrasing or a close natural variant. Stay tight to the hint's meaning and topic anchor; only swap synonyms that fit the angle. Across the batch, vary openers slightly so the 10 headlines don't all start with the same word — but only use synonyms that read naturally for this specific topic.)`,
+        `${i + 1}. angle="${a.key}"\n   brief: ${a.brief}\n   headline_hint: "${a.headlineHint}" (use this phrasing or a close natural variant. Stay tight to the hint's meaning and topic anchor; only swap synonyms that fit the angle. Across the batch, vary openers slightly so the 10 headlines don't all start with the same word — but only use synonyms that read naturally for this specific topic. If the SAME angle appears more than once in this list, write a DIFFERENT headline + body for each occurrence — same angle, different wording.)`,
     )
     .join("\n");
 

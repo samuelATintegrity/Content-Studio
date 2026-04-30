@@ -8,7 +8,6 @@ import { brand } from "../../brand.config";
 import {
   composeImageDataUrl,
   dataUrlToBlob,
-  fetchAiImage,
   fetchOneCopy,
   fetchPhotoFor,
 } from "@/lib/client";
@@ -46,13 +45,36 @@ export function PostCard({ post }: { post: Post }) {
     });
   }
 
+  // "New image" shuffle. With the image library, this is a 50/50 mix:
+  //   - Half the time pull a random cached AI image (skipping the post's
+  //     current photoUrl so we always get a different one).
+  //   - The other half (or fallback when cache is empty) pull a fresh
+  //     Pexels stock photo.
   async function regenImage() {
     setBusy("photo");
     try {
-      const photo = await fetchPhotoFor(contentType, usedPhotoIds);
-      addUsedPhotoId(photo.id);
+      const tryCache = Math.random() < 0.5;
+      let photoUrl: string | null = null;
+      let credit: { photographer: string; sourceUrl: string } | null = null;
+
+      if (tryCache) {
+        const { pickRandomLibraryImages } = await import("@/lib/imageLibrary");
+        const [pick] = pickRandomLibraryImages(1, post.photoUrl ? [post.photoUrl] : []);
+        if (pick) {
+          photoUrl = pick.url;
+          credit = { photographer: AI_CREDIT_LABEL, sourceUrl: "" };
+        }
+      }
+
+      if (!photoUrl) {
+        const photo = await fetchPhotoFor(contentType, usedPhotoIds);
+        addUsedPhotoId(photo.id);
+        photoUrl = photo.url;
+        credit = { photographer: photo.photographer, sourceUrl: photo.sourceUrl };
+      }
+
       const imageDataUrl = await composeImageDataUrl({
-        photoUrl: photo.url,
+        photoUrl,
         headline: post.headline,
         cta: post.cta,
         fontVariant: post.fontVariant,
@@ -61,8 +83,8 @@ export function PostCard({ post }: { post: Post }) {
         style: post.style,
       });
       updatePost(post.id, {
-        photoUrl: photo.url,
-        photoCredit: { photographer: photo.photographer, sourceUrl: photo.sourceUrl },
+        photoUrl,
+        photoCredit: credit ?? { photographer: AI_CREDIT_LABEL, sourceUrl: "" },
         imageDataUrl,
       });
     } catch (e) {
@@ -77,7 +99,10 @@ export function PostCard({ post }: { post: Post }) {
     if (!prompt) return;
     setBusy("ai");
     try {
-      const ai = await fetchAiImage(prompt);
+      // Use fetchAndCacheAiImage so manual AI gens also land in the
+      // image library (mirrored to R2, available in future batches).
+      const { fetchAndCacheAiImage } = await import("@/lib/client");
+      const ai = await fetchAndCacheAiImage(prompt, "manual");
       const imageDataUrl = await composeImageDataUrl({
         photoUrl: ai.url,
         headline: post.headline,

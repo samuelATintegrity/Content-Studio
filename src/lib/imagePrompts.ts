@@ -141,13 +141,40 @@ const ETHNICITY_BY_LANG: Record<Language, string> = {
   zh: "chinese",
 };
 
+export type BatchSeedIndex = 0 | 1 | 2 | 3;
+
+// Architectural / interior prompts used at index 3. One is randomly picked
+// per batch so libraries don't fill up with identical bedroom shots over
+// repeated batches.
+const INTERIOR_VARIANTS = [
+  "a bright sunlit kitchen in a new home, neutral cabinetry, warm natural light, professional real estate photography, no people",
+  "a cozy living room in a new home, soft natural light through large windows, neutral decor, professional real estate photography, no people",
+  "a clean modern bathroom in a new home, natural materials, soft daylight, professional real estate photography, no people",
+  "a sun-filled bedroom in a new home, neutral linens, soft morning light, professional real estate photography, no people",
+  "a welcoming front entryway of a new home, natural wood floors, soft daylight, professional real estate photography, no people",
+  "a bright dining room set up for a family meal, natural wood table, large window, professional real estate photography, no people",
+] as const;
+
+function pickInterior(): string {
+  return INTERIOR_VARIANTS[Math.floor(Math.random() * INTERIOR_VARIANTS.length)];
+}
+
+// Architectural exterior prompt at index 2. Single variant for now — keeps
+// brand consistent (same kind of "warm, inviting" home aesthetic).
+const EXTERIOR_PROMPT =
+  "a warm inviting suburban home exterior, golden-hour light, manicured lawn, professional real estate photography, no people, no text or signage";
+
 export function batchSeedPrompt(
   language: Language,
   contentType: ContentType,
-  index: 0 | 1,
+  index: BatchSeedIndex,
 ): string {
   const eth = ETHNICITY_BY_LANG[language];
   const ethPart = eth ? `${eth} ` : "";
+
+  // Index 2 + 3 are home shots; ethnicity hint doesn't apply.
+  if (index === 2) return EXTERIOR_PROMPT;
+  if (index === 3) return pickInterior();
 
   if (contentType === "good_agents") {
     // Slot 0: portrait-style, looking at camera, warm smile.
@@ -164,6 +191,12 @@ export function batchSeedPrompt(
     return `a candid lifestyle photo of a ${ethPart}family at home together, unposed, not looking at the camera, sharing a natural everyday moment, soft natural light, professional editorial photography`;
   }
   return `a candid lifestyle photo of a young ${ethPart}couple in their new home, unposed and natural, looking at each other or off to the side, not looking at the camera, soft natural light, professional editorial photography`;
+}
+
+// Map BatchSeedIndex to a category label for the image library (used for
+// future filtering / search — not strictly needed today but cheap to record).
+export function categoryFor(index: BatchSeedIndex): string {
+  return index === 0 ? "people" : index === 1 ? "couple" : index === 2 ? "exterior" : "interior";
 }
 
 export const AI_CREDIT_LABEL = "AI (Nano Banana 2)";

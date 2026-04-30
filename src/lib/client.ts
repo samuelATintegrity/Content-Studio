@@ -47,6 +47,28 @@ export async function fetchAiImage(prompt: string): Promise<{ url: string }> {
   return res.json();
 }
 
+// Generate an AI image, mirror it to R2 (so the URL doesn't expire), and
+// add it to the local image library so subsequent batches can reuse it.
+// Returns the R2 URL (the persistent one) — callers should store this on
+// the post rather than the raw fal.ai URL. If the mirror fails, falls
+// back to the fal.ai URL so the live UX isn't blocked.
+export async function fetchAndCacheAiImage(
+  prompt: string,
+  category?: string,
+): Promise<{ url: string }> {
+  const { url: falUrl } = await fetchAiImage(prompt);
+  try {
+    const { mirrorClip } = await import("@/lib/videoClient");
+    const { addLibraryImage } = await import("@/lib/imageLibrary");
+    const { cachedUrl } = await mirrorClip({ url: falUrl, kind: "image" });
+    addLibraryImage({ url: cachedUrl, prompt, category });
+    return { url: cachedUrl };
+  } catch (e) {
+    console.error("[fetchAndCacheAiImage] mirror/cache failed; using raw fal URL", e);
+    return { url: falUrl };
+  }
+}
+
 export async function fetchPhotoFor(
   contentType: ContentType,
   excludeIds: number[],
