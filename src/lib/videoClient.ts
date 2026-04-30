@@ -98,10 +98,21 @@ export async function uploadClip(file: File): Promise<{ cachedUrl: string; filen
   const form = new FormData();
   form.append("file", file);
   const res = await fetch("/api/video/upload-clip", { method: "POST", body: form });
-  if (!res.ok) {
-    throw new Error((await res.json().catch(() => ({}))).error ?? "upload failed");
+  const text = await res.text();
+  let body: { cachedUrl?: string; filename?: string; error?: string } = {};
+  try {
+    body = text ? JSON.parse(text) : {};
+  } catch {
+    // Non-JSON response (e.g. Next dev error page). Surface a snippet so
+    // future failures are readable instead of "Unexpected token...".
+    if (!res.ok) {
+      throw new Error(`upload failed (${res.status}): ${text.slice(0, 200)}`);
+    }
+    throw new Error(`upload returned non-JSON body: ${text.slice(0, 200)}`);
   }
-  return res.json();
+  if (!res.ok) throw new Error(body.error ?? `upload failed (${res.status})`);
+  if (!body.cachedUrl || !body.filename) throw new Error("upload returned malformed body");
+  return { cachedUrl: body.cachedUrl, filename: body.filename };
 }
 
 export async function regenVideo(args: {

@@ -1,4 +1,3 @@
-import "server-only";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 
 let _client: S3Client | null = null;
