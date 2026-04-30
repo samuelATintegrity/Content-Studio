@@ -4,8 +4,17 @@ import { putBytes } from "@/lib/r2Server";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+// Bump this string on every meaningful change to confirm the deployed
+// build is actually running the latest code. Surfaced in x-deploy-marker.
+const DEPLOY_MARKER = "raw-body-v3";
 
 const MAX_BYTES = 100 * 1024 * 1024;
+
+// Trivial GET so you can hit /api/video/upload-clip in a browser to see
+// which build is live (returns the deploy marker, no auth needed).
+export async function GET() {
+  return NextResponse.json({ marker: DEPLOY_MARKER, accepts: "POST raw body, x-filename header" });
+}
 
 // Body is the raw file bytes. Filename + content-type travel in headers
 // (x-filename, content-type) — multipart parsing was producing a mangled
@@ -31,9 +40,15 @@ export async function POST(req: Request) {
 
     const cachedUrl = await putBytes({ key, body: buf, contentType });
 
-    return NextResponse.json({ cachedUrl, filename });
+    return NextResponse.json(
+      { cachedUrl, filename, marker: DEPLOY_MARKER },
+      { headers: { "x-deploy-marker": DEPLOY_MARKER } },
+    );
   } catch (e) {
     const msg = e instanceof Error ? e.message : "unknown error";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json(
+      { error: msg, marker: DEPLOY_MARKER },
+      { status: 500, headers: { "x-deploy-marker": DEPLOY_MARKER } },
+    );
   }
 }
