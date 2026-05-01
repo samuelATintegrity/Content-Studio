@@ -11,6 +11,7 @@ import {
   type ClipLanguage,
   type MergedClip,
 } from "@/lib/clipLibrary";
+import { LANGUAGE_LABELS, type Language } from "@/lib/types";
 import { listSavedSets } from "@/lib/savedSets";
 import { deleteClipFromStorage, tagClip, uploadClip } from "@/lib/videoClient";
 import {
@@ -179,6 +180,16 @@ export function ClipLibraryGrid() {
     ? clips.filter((c) => c.role === "outro" && matchesAvatarLanguage(c))
     : [];
 
+  // Diagnostic counts: how many clips are tagged with this role at all
+  // (regardless of avatar/language match)? Used to surface a more useful
+  // empty-state message when the tagging is partially right.
+  const totalIntros = isInfluencer
+    ? clips.filter((c) => c.role === "intro").length
+    : 0;
+  const totalOutros = isInfluencer
+    ? clips.filter((c) => c.role === "outro").length
+    : 0;
+
   // Influencer-mode middle picker: filler clips only (anything without an
   // intro/outro role). Bookends would visually clash with the avatar's
   // own intro/outro segments.
@@ -322,8 +333,11 @@ export function ClipLibraryGrid() {
       {isInfluencer && (
         <BookendZones
           avatarName={selectedAvatarName}
+          language={language}
           introClips={introClips}
           outroClips={outroClips}
+          totalIntros={totalIntros}
+          totalOutros={totalOutros}
           selectedIntroUrl={selectedIntroClipUrl}
           selectedOutroUrl={selectedOutroClipUrl}
           onPickIntro={setSelectedIntroClipUrl}
@@ -405,16 +419,22 @@ export function ClipLibraryGrid() {
 // (and toggles off) the URL into the dedicated store slice.
 function BookendZones({
   avatarName,
+  language,
   introClips,
   outroClips,
+  totalIntros,
+  totalOutros,
   selectedIntroUrl,
   selectedOutroUrl,
   onPickIntro,
   onPickOutro,
 }: {
   avatarName: string | null;
+  language: Language;
   introClips: MergedClip[];
   outroClips: MergedClip[];
+  totalIntros: number;
+  totalOutros: number;
   selectedIntroUrl: string | null;
   selectedOutroUrl: string | null;
   onPickIntro: (url: string | null) => void;
@@ -427,21 +447,28 @@ function BookendZones({
       </p>
     );
   }
+  const baseLanguageLabel = LANGUAGE_LABELS[language] ?? language;
   return (
     <div className="flex flex-col gap-5">
       <BookendRow
         label="Intro"
         clips={introClips}
+        totalRoleClips={totalIntros}
+        avatarName={avatarName}
+        languageLabel={baseLanguageLabel}
+        roleLabel="intro"
         selectedUrl={selectedIntroUrl}
         onPick={onPickIntro}
-        emptyHint="No intros tagged for this avatar in this language. Upload an intro clip and edit its details to set Role=Intro and Avatar."
       />
       <BookendRow
         label="Outro"
         clips={outroClips}
+        totalRoleClips={totalOutros}
+        avatarName={avatarName}
+        languageLabel={baseLanguageLabel}
+        roleLabel="outro"
         selectedUrl={selectedOutroUrl}
         onPick={onPickOutro}
-        emptyHint="No outros tagged for this avatar in this language. Upload an outro clip and edit its details to set Role=Outro and Avatar."
       />
     </div>
   );
@@ -450,16 +477,37 @@ function BookendZones({
 function BookendRow({
   label,
   clips,
+  totalRoleClips,
+  avatarName,
+  languageLabel,
+  roleLabel,
   selectedUrl,
   onPick,
-  emptyHint,
 }: {
   label: string;
   clips: MergedClip[];
+  totalRoleClips: number;
+  avatarName: string;
+  languageLabel: string;
+  roleLabel: string;
   selectedUrl: string | null;
   onPick: (url: string | null) => void;
-  emptyHint: string;
 }) {
+  // Diagnostic empty-state: when nothing matches avatar+language but there
+  // ARE clips with this role somewhere, the user has a tagging mismatch
+  // (wrong avatar or wrong language). Surface the count + the most likely
+  // fix instead of a generic "nothing here" message.
+  const orphanCount = totalRoleClips - clips.length;
+  let emptyMessage: string;
+  if (totalRoleClips === 0) {
+    emptyMessage =
+      `No ${roleLabel}s tagged yet. Upload a clip and use the pencil icon to set Role=${label} and Avatar=${avatarName}.`;
+  } else if (orphanCount > 0) {
+    emptyMessage =
+      `Found ${orphanCount} ${roleLabel}-tagged clip${orphanCount === 1 ? "" : "s"} that don't match the active avatar (${avatarName}) and language (${languageLabel}). Open each via the pencil icon and confirm Avatar=${avatarName} and Language=${languageLabel}.`;
+  } else {
+    emptyMessage = `No ${roleLabel}s for ${avatarName} in ${languageLabel}.`;
+  }
   return (
     <div>
       <h4 className="text-[11px] uppercase tracking-[0.16em] text-neutral-500 font-semibold mb-2 px-1 flex items-baseline gap-2">
@@ -469,7 +517,7 @@ function BookendRow({
         </span>
       </h4>
       {clips.length === 0 ? (
-        <p className="text-[11px] text-neutral-500 px-1 leading-snug">{emptyHint}</p>
+        <p className="text-[11px] text-neutral-500 px-1 leading-snug">{emptyMessage}</p>
       ) : (
         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
           {clips.map((c) => (
