@@ -97,10 +97,23 @@ export type ImageSlotState =
   | "video_ready"
   | "failed";
 
+// Index into VIDEO_IMAGE_PROMPTS (0..4 — kitchen / bedroom / bathroom /
+// exterior / agent). Used for choosing prompts and animation models.
 export type VideoSourcePromptIndex = 0 | 1 | 2 | 3 | 4;
 
 export interface ImageSlot {
-  promptIndex: VideoSourcePromptIndex;
+  // Position in the rendered video's scene order. 0..4 for from-scratch
+  // (5-clip) batches, 0..7 for the picked + AI mixed flow. The store keys
+  // updates by this index.
+  promptIndex: number;
+  // How this slot's content was sourced. "ai" runs the standard generate →
+  // approve → animate flow; "library" is pre-populated from a user pick
+  // and shows up as video_ready immediately.
+  source: "ai" | "library";
+  // Only for source === "ai": which of the 5 from-scratch prompts to use.
+  // For mixed-flow AI fills this cycles starting from 0 across the AI
+  // slots, so each AI fill picks a different scene category.
+  aiPromptIndex?: VideoSourcePromptIndex;
   state: ImageSlotState;
   imageUrl?: string;     // last-generated image (Nano Banana 2)
   videoUrl?: string;     // animated clip (Seedance) once approved

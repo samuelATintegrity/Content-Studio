@@ -9,7 +9,6 @@ import {
   type Language,
   type Post,
   type VideoPost,
-  type VideoSourcePromptIndex,
 } from "@/lib/types";
 import { PICKED_CLIP_COUNT } from "@/lib/videoPrompts";
 
@@ -39,7 +38,7 @@ interface BatchState {
   setVideoPosts: (p: VideoPost[]) => void;
   updateVideoPost: (id: string, patch: Partial<VideoPost>) => void;
   setImageSlots: (slots: ImageSlot[]) => void;
-  updateImageSlot: (promptIndex: VideoSourcePromptIndex, patch: Partial<ImageSlot>) => void;
+  updateImageSlot: (promptIndex: number, patch: Partial<ImageSlot>) => void;
   addUsedPhotoId: (id: number) => void;
   resetUsedPhotoIds: () => void;
   selectClip: (key: string, url: string) => void;

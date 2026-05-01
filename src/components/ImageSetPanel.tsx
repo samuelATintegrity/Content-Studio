@@ -10,9 +10,8 @@ import {
 } from "@/lib/generateVideo";
 import {
   VIDEO_IMAGE_PROMPT_LABELS,
-  VIDEO_PROMPT_COUNT,
 } from "@/lib/videoPrompts";
-import type { ImageSlot, ImageSlotState, VideoSourcePromptIndex } from "@/lib/types";
+import type { ImageSlot, ImageSlotState } from "@/lib/types";
 
 const STATE_LABELS: Record<ImageSlotState, string> = {
   queued: "Waiting",
@@ -30,11 +29,17 @@ export function ImageSetPanel() {
 
   if (imageSlots.length === 0) return null;
 
+  const total = imageSlots.length;
   const readyCount = imageSlots.filter((s) => s.state === "video_ready").length;
-  const allReady = readyCount === VIDEO_PROMPT_COUNT;
+  const allReady = readyCount === total;
+  // "Save set" only makes sense for pure-from-scratch batches: a saved set
+  // is reused later as a 5-slot image set, so any batch with library
+  // picks (mixed flow) shouldn't expose the save action.
+  const hasLibraryPicks = imageSlots.some((s) => s.source === "library");
+  const canSave = allReady && !hasLibraryPicks;
 
   async function onSave() {
-    if (saving || !allReady) return;
+    if (saving || !canSave) return;
     const proposed = `Set ${new Date().toLocaleString()}`;
     const name = window.prompt("Name this image set so you can reuse it later:", proposed);
     if (!name) return;
@@ -56,9 +61,9 @@ export function ImageSetPanel() {
         <h2 className="text-sm font-semibold tracking-tight">Image set</h2>
         <div className="flex items-center gap-3">
           <span className="text-[11px] text-neutral-500 tabular-nums">
-            {readyCount} / {VIDEO_PROMPT_COUNT} ready
+            {readyCount} / {total} ready
           </span>
-          {allReady && (
+          {canSave && (
             <button
               onClick={onSave}
               disabled={saving}
@@ -69,7 +74,11 @@ export function ImageSetPanel() {
           )}
         </div>
       </header>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+      <div
+        className={`grid gap-3 grid-cols-2 sm:grid-cols-3 ${
+          total > 5 ? "lg:grid-cols-4 xl:grid-cols-8" : "lg:grid-cols-5"
+        }`}
+      >
         {imageSlots.map((slot) => (
           <Slot key={slot.promptIndex} slot={slot} />
         ))}
@@ -79,12 +88,34 @@ export function ImageSetPanel() {
 }
 
 function Slot({ slot }: { slot: ImageSlot }) {
-  const label = VIDEO_IMAGE_PROMPT_LABELS[slot.promptIndex] ?? `Slot ${slot.promptIndex + 1}`;
+  // Label depends on source: library picks show "Scene N · Library";
+  // AI slots show the prompt category from VIDEO_IMAGE_PROMPT_LABELS
+  // (Kitchen / Bedroom / etc.) plus the scene number for clarity.
+  const sceneNum = slot.promptIndex + 1;
+  let label: string;
+  if (slot.source === "library") {
+    label = `Scene ${sceneNum} · Library`;
+  } else if (slot.aiPromptIndex !== undefined) {
+    const cat = VIDEO_IMAGE_PROMPT_LABELS[slot.aiPromptIndex] ?? `Scene ${sceneNum}`;
+    label = `Scene ${sceneNum} · ${cat}`;
+  } else {
+    label = `Scene ${sceneNum}`;
+  }
+
+  const isLibrary = slot.source === "library";
 
   return (
     <div className="relative rounded-2xl overflow-hidden border border-neutral-200 dark:border-neutral-900 bg-neutral-50 dark:bg-neutral-900">
       <div className="aspect-[9/16] relative">
-        {slot.imageUrl ? (
+        {slot.videoUrl && isLibrary ? (
+          <video
+            src={slot.videoUrl}
+            muted
+            playsInline
+            preload="metadata"
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+        ) : slot.imageUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={slot.imageUrl}
@@ -97,14 +128,14 @@ function Slot({ slot }: { slot: ImageSlot }) {
           </div>
         )}
 
-        {(slot.state === "generating" || slot.state === "animating") && (
+        {!isLibrary && (slot.state === "generating" || slot.state === "animating") && (
           <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
             <Spinner />
           </div>
         )}
 
-        {slot.state === "awaiting_approval" && (
-          <ApprovalOverlay promptIndex={slot.promptIndex} />
+        {!isLibrary && slot.state === "awaiting_approval" && (
+          <ApprovalOverlay slotIndex={slot.promptIndex} />
         )}
 
         {slot.state === "video_ready" && (
@@ -115,33 +146,39 @@ function Slot({ slot }: { slot: ImageSlot }) {
           </div>
         )}
 
-        {slot.state === "failed" && (
+        {isLibrary && (
+          <div className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-white/85 backdrop-blur-sm text-neutral-900 text-[9px] font-semibold tracking-wide uppercase">
+            Library
+          </div>
+        )}
+
+        {!isLibrary && slot.state === "failed" && (
           <FailedOverlay
-            promptIndex={slot.promptIndex}
+            slotIndex={slot.promptIndex}
             hasImage={!!slot.imageUrl}
             error={slot.error}
           />
         )}
       </div>
-      <div className="p-2.5 text-[11px] flex items-baseline justify-between">
-        <span className="font-medium text-neutral-700 dark:text-neutral-300">{label}</span>
-        <span className="text-neutral-500">{STATE_LABELS[slot.state]}</span>
+      <div className="p-2.5 text-[11px] flex items-baseline justify-between gap-2">
+        <span className="font-medium text-neutral-700 dark:text-neutral-300 truncate">{label}</span>
+        <span className="text-neutral-500 shrink-0">{STATE_LABELS[slot.state]}</span>
       </div>
     </div>
   );
 }
 
-function ApprovalOverlay({ promptIndex }: { promptIndex: VideoSourcePromptIndex }) {
+function ApprovalOverlay({ slotIndex }: { slotIndex: number }) {
   return (
     <div className="absolute inset-x-0 bottom-0 p-2 flex gap-2 bg-gradient-to-t from-black/85 to-transparent">
       <button
-        onClick={() => rejectImage(promptIndex)}
+        onClick={() => rejectImage(slotIndex)}
         className="flex-1 px-2 py-1.5 rounded-full text-[11px] font-semibold tracking-tight bg-white/90 hover:bg-white text-neutral-900 transition"
       >
         Reject
       </button>
       <button
-        onClick={() => approveImage(promptIndex)}
+        onClick={() => approveImage(slotIndex)}
         className="flex-1 px-2 py-1.5 rounded-full text-[11px] font-semibold tracking-tight bg-emerald-500 hover:bg-emerald-400 text-white transition"
       >
         Approve
@@ -151,11 +188,11 @@ function ApprovalOverlay({ promptIndex }: { promptIndex: VideoSourcePromptIndex 
 }
 
 function FailedOverlay({
-  promptIndex,
+  slotIndex,
   hasImage,
   error,
 }: {
-  promptIndex: VideoSourcePromptIndex;
+  slotIndex: number;
   hasImage: boolean;
   error?: string;
 }) {
@@ -172,14 +209,14 @@ function FailedOverlay({
       )}
       <div className="flex gap-2 mt-1">
         <button
-          onClick={() => rejectImage(promptIndex)}
+          onClick={() => rejectImage(slotIndex)}
           className="px-2.5 py-1 rounded-full text-[10px] font-semibold bg-white/90 hover:bg-white text-neutral-900"
         >
           New image
         </button>
         {hasImage && (
           <button
-            onClick={() => retryAnimation(promptIndex)}
+            onClick={() => retryAnimation(slotIndex)}
             className="px-2.5 py-1 rounded-full text-[10px] font-semibold bg-emerald-500 hover:bg-emerald-400 text-white"
           >
             Retry animate

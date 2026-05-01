@@ -12,11 +12,12 @@ import {
 } from "@/lib/videoClient";
 import { VIDEO_PROMPT_COUNT } from "@/lib/videoPrompts";
 
-// Slot-specific animation model. Seedance is sharper and supports 1080p,
-// but its safety filter rejects face-forward people shots. Kling is more
-// permissive with faces, so we route the agent slot through it.
-function modelForSlot(promptIndex: VideoSourcePromptIndex): AnimationModel {
-  return promptIndex === 4 ? "kling" : "seedance";
+// Animation model for a given prompt category. Seedance is sharper and
+// supports 1080p, but its safety filter rejects face-forward people shots.
+// Kling is more permissive with faces, so we route the agent prompt
+// (index 4) through it.
+function modelForPromptIndex(aiPromptIndex: VideoSourcePromptIndex): AnimationModel {
+  return aiPromptIndex === 4 ? "kling" : "seedance";
 }
 import { saveSet, type SavedSet, type SavedSetSlot } from "@/lib/savedSets";
 import { addLibraryClip, updateLibraryClip } from "@/lib/clipLibrary";
@@ -34,7 +35,7 @@ import type {
 async function archiveAnimatedClip(input: {
   videoUrl: string;
   imageUrl?: string;
-  promptIndex: VideoSourcePromptIndex;
+  aiPromptIndex: VideoSourcePromptIndex;
   batchId: string;
 }): Promise<void> {
   try {
@@ -50,7 +51,7 @@ async function archiveAnimatedClip(input: {
       url: videoMirror.cachedUrl,
       posterUrl: imageMirror,
       kind: "auto",
-      sourcePromptIndex: input.promptIndex,
+      sourcePromptIndex: input.aiPromptIndex,
       batchId: input.batchId,
     });
     // Fire-and-forget vision tag pass. Failures are silent — clip just
@@ -71,10 +72,14 @@ interface PendingBatch {
   scripts: Array<{ angle: string; script: string; caption: string; titleMoments?: Array<{ phrase: string; label: string }> }>;
   language: ReturnType<typeof useBatchStore.getState>["language"];
   contentType: ReturnType<typeof useBatchStore.getState>["contentType"];
-  // Set of slot indexes already animated. Render dispatches when size === 5.
-  videoUrls: Map<VideoSourcePromptIndex, string>;
-  // Picked-clip flow short-circuit: when set, dispatch uses these URLs as
-  // clipUrls directly (skipping the per-slot Map and the image set panel).
+  // slotIndex → final animated/picked clip URL. Render dispatches when this
+  // has an entry for every slot index in [0, slotCount).
+  videoUrls: Map<number, string>;
+  // Total slot count for this batch — 5 for from-scratch, 8 for picked /
+  // mixed flows. Drives `maybeDispatchRenders`'s readiness check.
+  slotCount: number;
+  // Pure picked-clip flow short-circuit: when set, dispatch uses these URLs
+  // as clipUrls directly (skipping the per-slot Map and the image set panel).
   pickedClipUrls?: string[];
   scriptsResolved: boolean;
   rendersDispatched: boolean;
@@ -82,11 +87,41 @@ interface PendingBatch {
 
 let _pending: PendingBatch | null = null;
 
-function emptySlots(): ImageSlot[] {
+// Slots for the from-scratch flow: 5 AI slots, each with its own prompt.
+function emptyFromScratchSlots(): ImageSlot[] {
   return Array.from({ length: VIDEO_PROMPT_COUNT }, (_, i) => ({
-    promptIndex: i as VideoSourcePromptIndex,
+    promptIndex: i,
+    source: "ai" as const,
+    aiPromptIndex: i as VideoSourcePromptIndex,
     state: "queued" as const,
   }));
+}
+
+// Slots for the mixed flow: first N from the user's library picks
+// (video_ready immediately), remaining (PICKED_CLIP_COUNT - N) AI fills
+// that cycle through the 5-prompt pool starting from prompt 0.
+function buildMixedSlots(pickedClipUrls: string[]): ImageSlot[] {
+  const total = PICKED_CLIP_COUNT;
+  const slots: ImageSlot[] = [];
+  for (let i = 0; i < total; i++) {
+    if (i < pickedClipUrls.length) {
+      slots.push({
+        promptIndex: i,
+        source: "library",
+        state: "video_ready",
+        videoUrl: pickedClipUrls[i],
+      });
+    } else {
+      const aiIdx = (i - pickedClipUrls.length) % VIDEO_PROMPT_COUNT;
+      slots.push({
+        promptIndex: i,
+        source: "ai",
+        aiPromptIndex: aiIdx as VideoSourcePromptIndex,
+        state: "queued",
+      });
+    }
+  }
+  return slots;
 }
 
 // Kick off a new batch:
@@ -100,7 +135,8 @@ export async function generateVideoBatch(): Promise<void> {
   setLoading(true);
   setError(null);
   setVideoPosts([]);
-  setImageSlots(emptySlots());
+  const initialSlots = emptyFromScratchSlots();
+  setImageSlots(initialSlots);
 
   const batchId = `${Date.now()}`;
   _pending = {
@@ -109,6 +145,7 @@ export async function generateVideoBatch(): Promise<void> {
     language,
     contentType,
     videoUrls: new Map(),
+    slotCount: initialSlots.length,
     scriptsResolved: false,
     rendersDispatched: false,
   };
@@ -130,12 +167,9 @@ export async function generateVideoBatch(): Promise<void> {
 
   try {
     // Image generation must be sequential: fal.ai breaks under concurrency.
-    for (let i = 0; i < VIDEO_PROMPT_COUNT; i++) {
-      const idx = i as VideoSourcePromptIndex;
-      // If a previous image was rejected and the user clicked regenerate,
-      // the slot may already be back in `generating` for that index — but
-      // in this initial loop the slot is still `queued`, so we just go.
-      await generateImageForSlot(idx, batchId);
+    for (const slot of initialSlots) {
+      if (slot.source !== "ai") continue;
+      await generateImageForSlot(slot.promptIndex, batchId);
       // Loop pauses here implicitly: generateImageForSlot only resolves
       // once the image has been generated and set to awaiting_approval.
       // The next iteration starts the NEXT slot — note this means slot
@@ -153,22 +187,28 @@ export async function generateVideoBatch(): Promise<void> {
   void scriptsPromise;
 }
 
+// Generate an image for the slot at `slotIndex`. Looks up the slot's
+// aiPromptIndex from the store to choose which prompt to use.
 async function generateImageForSlot(
-  promptIndex: VideoSourcePromptIndex,
+  slotIndex: number,
   batchId: string,
 ): Promise<void> {
-  const { updateImageSlot } = useBatchStore.getState();
-  updateImageSlot(promptIndex, { state: "generating", error: undefined });
+  const { imageSlots, updateImageSlot } = useBatchStore.getState();
+  const slot = imageSlots.find((s) => s.promptIndex === slotIndex);
+  if (!slot || slot.source !== "ai" || slot.aiPromptIndex === undefined) return;
+  const aiPromptIndex = slot.aiPromptIndex;
+
+  updateImageSlot(slotIndex, { state: "generating", error: undefined });
   try {
-    const { url } = await generateSourceImage(promptIndex);
+    const { url } = await generateSourceImage(aiPromptIndex);
     if (!_pending || _pending.batchId !== batchId) return; // batch was abandoned
-    updateImageSlot(promptIndex, {
+    updateImageSlot(slotIndex, {
       state: "awaiting_approval",
       imageUrl: url,
       error: undefined,
     });
   } catch (e) {
-    updateImageSlot(promptIndex, {
+    updateImageSlot(slotIndex, {
       state: "failed",
       error: e instanceof Error ? e.message : "image generation failed",
     });
@@ -179,59 +219,63 @@ async function generateImageForSlot(
 // User pressed Approve on a slot. Kick off Seedance animation in the
 // background; on completion, record the video URL and try to dispatch the
 // 3 renders if everything is ready.
-export async function approveImage(promptIndex: VideoSourcePromptIndex): Promise<void> {
+export async function approveImage(slotIndex: number): Promise<void> {
   const { imageSlots, updateImageSlot } = useBatchStore.getState();
-  const slot = imageSlots.find((s) => s.promptIndex === promptIndex);
-  if (!slot || slot.state !== "awaiting_approval" || !slot.imageUrl) return;
+  const slot = imageSlots.find((s) => s.promptIndex === slotIndex);
+  if (!slot || slot.source !== "ai" || slot.aiPromptIndex === undefined) return;
+  if (slot.state !== "awaiting_approval" || !slot.imageUrl) return;
   if (!_pending) return;
+  const aiPromptIndex = slot.aiPromptIndex;
 
   const batchId = _pending.batchId;
-  updateImageSlot(promptIndex, { state: "animating", error: undefined });
+  updateImageSlot(slotIndex, { state: "animating", error: undefined });
 
   try {
-    const { url } = await animateSourceImage(slot.imageUrl, modelForSlot(promptIndex));
+    const { url } = await animateSourceImage(slot.imageUrl, modelForPromptIndex(aiPromptIndex));
     const p = _pending;
     if (!p || p.batchId !== batchId) return;
-    p.videoUrls.set(promptIndex, url);
-    updateImageSlot(promptIndex, { state: "video_ready", videoUrl: url });
-    void archiveAnimatedClip({ videoUrl: url, imageUrl: slot.imageUrl, promptIndex, batchId });
+    p.videoUrls.set(slotIndex, url);
+    updateImageSlot(slotIndex, { state: "video_ready", videoUrl: url });
+    void archiveAnimatedClip({ videoUrl: url, imageUrl: slot.imageUrl, aiPromptIndex, batchId });
     maybeDispatchRenders(batchId);
   } catch (e) {
-    updateImageSlot(promptIndex, {
+    updateImageSlot(slotIndex, {
       state: "failed",
       error: e instanceof Error ? e.message : "animation failed",
     });
   }
 }
 
-// User pressed Reject. Re-roll the same prompt slot with a new seed.
-export async function rejectImage(promptIndex: VideoSourcePromptIndex): Promise<void> {
+// User pressed Reject. Re-roll the same slot with a new seed.
+export async function rejectImage(slotIndex: number): Promise<void> {
   if (!_pending) return;
   const batchId = _pending.batchId;
-  await generateImageForSlot(promptIndex, batchId).catch((e) => {
+  await generateImageForSlot(slotIndex, batchId).catch((e) => {
     useBatchStore.getState().setError(e instanceof Error ? e.message : "regenerate failed");
   });
 }
 
 // Re-attempt animation on a failed slot without regenerating the image.
-export async function retryAnimation(promptIndex: VideoSourcePromptIndex): Promise<void> {
+export async function retryAnimation(slotIndex: number): Promise<void> {
   const { imageSlots, updateImageSlot } = useBatchStore.getState();
-  const slot = imageSlots.find((s) => s.promptIndex === promptIndex);
+  const slot = imageSlots.find((s) => s.promptIndex === slotIndex);
   if (!slot || !slot.imageUrl) return;
+  if (slot.source !== "ai" || slot.aiPromptIndex === undefined) return;
   if (!_pending) return;
+  const aiPromptIndex = slot.aiPromptIndex;
 
   const batchId = _pending.batchId;
-  updateImageSlot(promptIndex, { state: "animating", error: undefined });
+  updateImageSlot(slotIndex, { state: "animating", error: undefined });
   try {
-    const { url } = await animateSourceImage(slot.imageUrl, modelForSlot(promptIndex));
+    const { url } = await animateSourceImage(slot.imageUrl, modelForPromptIndex(aiPromptIndex));
     const p = _pending;
     if (!p || p.batchId !== batchId) return;
-    p.videoUrls.set(promptIndex, url);
-    updateImageSlot(promptIndex, { state: "video_ready", videoUrl: url });
-    void archiveAnimatedClip({ videoUrl: url, imageUrl: slot.imageUrl, promptIndex, batchId });
+    p.videoUrls.set(slotIndex, url);
+    updateImageSlot(slotIndex, { state: "video_ready", videoUrl: url });
+    void archiveAnimatedClip({ videoUrl: url, imageUrl: slot.imageUrl, aiPromptIndex, batchId });
     maybeDispatchRenders(batchId);
   } catch (e) {
-    updateImageSlot(promptIndex, {
+    updateImageSlot(slotIndex, {
       state: "failed",
       error: e instanceof Error ? e.message : "animation failed",
     });
@@ -307,16 +351,17 @@ function maybeDispatchRenders(batchId: string): void {
   if (p.rendersDispatched) return;
   if (!p.scriptsResolved) return;
 
-  // Build clipUrls. For picked-clip flow we already have them; for
-  // from-scratch we assemble from the per-slot Map in canonical order.
+  // Build clipUrls. For pure picked-clip flow we already have them; for
+  // from-scratch and mixed (picked + AI fills) we assemble from the
+  // per-slot Map in slotIndex order.
   let clipUrls: string[];
   if (p.pickedClipUrls) {
     clipUrls = p.pickedClipUrls;
   } else {
-    if (p.videoUrls.size < VIDEO_PROMPT_COUNT) return;
+    if (p.videoUrls.size < p.slotCount) return;
     clipUrls = [];
-    for (let i = 0; i < VIDEO_PROMPT_COUNT; i++) {
-      const url = p.videoUrls.get(i as VideoSourcePromptIndex);
+    for (let i = 0; i < p.slotCount; i++) {
+      const url = p.videoUrls.get(i);
       if (!url) return; // unreachable — size check above guarantees presence
       clipUrls.push(url);
     }
@@ -376,17 +421,25 @@ export async function useSavedSet(set: SavedSet): Promise<void> {
   setVideoPosts([]);
 
   // Seed the slots in video_ready state directly from the saved set.
+  // Saved sets are 5-slot from-scratch outputs.
   const slots: ImageSlot[] = Array.from({ length: VIDEO_PROMPT_COUNT }, (_, i) => {
     const cached = set.slots.find((s) => s.promptIndex === i);
     if (cached) {
       return {
-        promptIndex: i as VideoSourcePromptIndex,
+        promptIndex: i,
+        source: "ai" as const,
+        aiPromptIndex: i as VideoSourcePromptIndex,
         state: "video_ready" as const,
         imageUrl: cached.imageUrl,
         videoUrl: cached.videoUrl,
       };
     }
-    return { promptIndex: i as VideoSourcePromptIndex, state: "queued" as const };
+    return {
+      promptIndex: i,
+      source: "ai" as const,
+      aiPromptIndex: i as VideoSourcePromptIndex,
+      state: "queued" as const,
+    };
   });
   setImageSlots(slots);
 
@@ -397,6 +450,7 @@ export async function useSavedSet(set: SavedSet): Promise<void> {
     language,
     contentType,
     videoUrls: new Map(),
+    slotCount: slots.length,
     scriptsResolved: false,
     rendersDispatched: false,
   };
@@ -470,6 +524,7 @@ export async function renderWithPickedClips(clipUrls: string[]): Promise<void> {
     language,
     contentType,
     videoUrls: new Map(),
+    slotCount: clipUrls.length,
     pickedClipUrls: clipUrls,
     scriptsResolved: false,
     rendersDispatched: false,
@@ -494,6 +549,79 @@ export async function renderWithPickedClips(clipUrls: string[]): Promise<void> {
   void scriptsPromise;
 }
 
+// Mixed flow: user picked some clips (1..PICKED_CLIP_COUNT-1), the
+// remaining slots are AI-generated. Picks fill scenes 1..N as video_ready
+// immediately; AI fills cycle through the 5-prompt pool starting at
+// prompt 0 and run the standard generate → approve → animate flow,
+// just like the from-scratch path.
+export async function generateMixedBatch(pickedClipUrls: string[]): Promise<void> {
+  if (pickedClipUrls.length === 0 || pickedClipUrls.length >= PICKED_CLIP_COUNT) {
+    throw new Error(
+      `generateMixedBatch needs 1..${PICKED_CLIP_COUNT - 1} picks, got ${pickedClipUrls.length}`,
+    );
+  }
+
+  const store = useBatchStore.getState();
+  const { language, contentType, setLoading, setError, setVideoPosts, setImageSlots, clearClipSelection } = store;
+
+  setLoading(true);
+  setError(null);
+  setVideoPosts([]);
+
+  const initialSlots = buildMixedSlots(pickedClipUrls);
+  setImageSlots(initialSlots);
+
+  const batchId = `${Date.now()}`;
+  _pending = {
+    batchId,
+    scripts: [],
+    language,
+    contentType,
+    videoUrls: new Map(),
+    slotCount: initialSlots.length,
+    scriptsResolved: false,
+    rendersDispatched: false,
+  };
+  // Pre-populate the picked URLs so maybeDispatchRenders only waits on the
+  // AI fills (and on scripts).
+  for (const slot of initialSlots) {
+    if (slot.source === "library" && slot.videoUrl) {
+      _pending.videoUrls.set(slot.promptIndex, slot.videoUrl);
+    }
+  }
+
+  clearClipSelection();
+
+  const scriptsPromise = startVideoBatch(language, contentType)
+    .then((res) => {
+      const p = _pending;
+      if (!p || p.batchId !== batchId) return;
+      p.scripts = res.scripts;
+      p.scriptsResolved = true;
+      maybeDispatchRenders(batchId);
+    })
+    .catch((e) => {
+      setError(e instanceof Error ? e.message : "scripts failed");
+      _pending = null;
+    });
+
+  // Sequential image generation only for the AI slots — picks are already
+  // video_ready. Same constraint as from-scratch (fal.ai breaks under
+  // concurrency), and same UX (next slot starts while user approves prior).
+  try {
+    for (const slot of initialSlots) {
+      if (slot.source !== "ai") continue;
+      await generateImageForSlot(slot.promptIndex, batchId);
+    }
+  } catch (e) {
+    setError(e instanceof Error ? e.message : "image generation failed");
+  } finally {
+    setLoading(false);
+  }
+
+  void scriptsPromise;
+}
+
 // Mirror the current (live) image set's image+video URLs to R2 and write
 // the resulting stable URLs into localStorage as a named set.
 export async function saveCurrentSet(name: string): Promise<SavedSet> {
@@ -510,8 +638,10 @@ export async function saveCurrentSet(name: string): Promise<SavedSet> {
         mirrorClip({ url: slot.imageUrl!, kind: "image" }),
         mirrorClip({ url: slot.videoUrl!, kind: "video" }),
       ]);
+      // Saved sets are only ever produced from the 5-slot from-scratch flow
+      // (canSave gates this), so promptIndex is in 0..4.
       return {
-        promptIndex: slot.promptIndex,
+        promptIndex: slot.promptIndex as VideoSourcePromptIndex,
         imageUrl,
         videoUrl,
       } satisfies SavedSetSlot;

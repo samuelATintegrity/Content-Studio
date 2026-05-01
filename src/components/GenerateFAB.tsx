@@ -2,7 +2,7 @@
 
 import { useBatchStore } from "@/store/batchStore";
 import { generateBatch } from "@/lib/generate";
-import { generateVideoBatch, renderWithPickedClips } from "@/lib/generateVideo";
+import { generateMixedBatch, generateVideoBatch, renderWithPickedClips } from "@/lib/generateVideo";
 import { PICKED_CLIP_COUNT } from "@/lib/videoPrompts";
 
 export function GenerateFAB() {
@@ -25,15 +25,20 @@ export function GenerateFAB() {
 
   const isPicking = isVideo && selectedCount > 0;
   const canRenderPicked = isVideo && selectedCount === PICKED_CLIP_COUNT;
-  const partialPick = isPicking && selectedCount < PICKED_CLIP_COUNT;
+  const canRenderMixed = isVideo && selectedCount > 0 && selectedCount < PICKED_CLIP_COUNT;
+  const aiFillCount = canRenderMixed ? PICKED_CLIP_COUNT - selectedCount : 0;
 
-  const disabled = loading || (isVideo && imageSetBusy) || partialPick;
+  const disabled = loading || (isVideo && imageSetBusy);
 
   function onClick() {
     if (disabled) return;
     if (isVideo) {
       if (canRenderPicked) {
         void renderWithPickedClips(selectedClipUrls);
+        return;
+      }
+      if (canRenderMixed) {
+        void generateMixedBatch(selectedClipUrls);
         return;
       }
       void generateVideoBatch();
@@ -46,9 +51,12 @@ export function GenerateFAB() {
   if (loading) label = isVideo ? "Starting batch" : "Generating";
   else if (isVideo && imageSetBusy) label = "Image set in progress";
   else if (canRenderPicked) label = "Render with selected";
-  else if (partialPick) label = `Pick ${PICKED_CLIP_COUNT} clips (${selectedCount}/${PICKED_CLIP_COUNT})`;
+  else if (canRenderMixed) label = `Generate (${selectedCount} pick${selectedCount === 1 ? "" : "s"} + ${aiFillCount} AI)`;
   else if (isVideo) label = hasVideos ? "Regenerate batch" : "Generate from scratch";
   else label = hasPosts ? "Regenerate" : "Generate posts";
+
+  // suppress unused-var lint if isPicking ever drops out below
+  void isPicking;
 
   return (
     <button
