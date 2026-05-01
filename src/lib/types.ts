@@ -130,16 +130,6 @@ export type VideoJobState =
   | "ready"
   | "failed";
 
-// Phrase-and-label pair for styled title-card overlays in the rendered
-// video. Picked by Claude during script generation (1–2 per script max).
-// `phrase` MUST appear verbatim (case-insensitive, punctuation-tolerant)
-// in the narration script — the worker matches it against TTS word
-// timings to decide when the title flashes on screen.
-export interface TitleMoment {
-  phrase: string;
-  label: string;
-}
-
 export interface VideoPost {
   id: string;
   angle: string;
@@ -151,7 +141,6 @@ export interface VideoPost {
   videoUrl?: string;     // R2 public URL once ready
   durationS?: number;
   error?: string;
-  titleMoments?: TitleMoment[];
 }
 
 // /api/video/start now only returns the 3 scripts. Render dispatch happens
@@ -161,7 +150,6 @@ export interface VideoStartResponse {
     angle: string;
     script: string;
     caption: string;
-    titleMoments?: TitleMoment[];
   }>;
 }
 

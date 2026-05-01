@@ -22,31 +22,11 @@ export interface SubtitleStyle {
   outlineColor?: string;  // hex, defaults to black
   outlineWidth?: number;  // px, defaults to 6
   shadowDepth?: number;   // px, defaults to 3
-  wordsPerPhrase?: number;// words shown on screen at once (default 3)
+  wordsPerPhrase?: number;// max words shown on screen at once (default 3) —
+                          // phrases also break early on sentence-end punctuation
   entranceMs?: number;    // entrance animation duration in ms (default 280)
   entranceLiftPx?: number;// how far to slide upward into rest (default 35)
 }
-
-// A resolved title-card span ready for rendering. Pipeline derives these
-// from Claude's title moments by phrase-matching against TTS word timings.
-export interface TitleSpan {
-  startS: number;     // when the spoken phrase begins
-  endS: number;       // when it ends (already extended to TITLE_MIN_DURATION_S if needed)
-  label: string;      // on-screen text (typically ALL CAPS)
-  leadInS?: number;   // optional lead-in fade-in seconds (defaults 0.1)
-  tailS?: number;     // optional fade-out tail seconds (defaults 0.2)
-}
-
-// TitleCard visual style. Sized big, centered top-third in the 9:16 frame
-// so it sits well clear of the karaoke band along the bottom.
-const TITLE_FONT_FAMILY = "Prata";
-const TITLE_FONT_SIZE = 140;
-const TITLE_MARGIN_V = 280;        // distance from TOP (alignment 8 = top-center)
-const TITLE_OUTLINE_WIDTH = 4;
-const TITLE_SHADOW_DEPTH = 4;
-const TITLE_LETTER_SPACING = 6;
-const TITLE_FADE_IN_MS = 150;
-const TITLE_FADE_OUT_MS = 250;
 
 const PLAY_RES_X = 1080;
 const PLAY_RES_Y = 1920;
@@ -89,39 +69,40 @@ interface Phrase {
   words: WordTiming[];
 }
 
+// Test for sentence-ending punctuation on a word's original (pre-strip)
+// text. Matches `.`, `!`, `?` — optionally followed by a closing quote/paren
+// — at the very end of the word. Common abbreviations like "etc." would
+// also match, but those are vanishingly rare in our real-estate scripts.
+const SENTENCE_END_RE = /[.!?][")\]”’]?$/u;
+
+// Group words into on-screen phrases. Two break rules:
+//   1. Hard cap at `size` words (default 3) so a phrase fits the band
+//      without wrapping awkwardly.
+//   2. Hard break right after any word ending a sentence (`.!?`). This
+//      keeps the final word of a sentence on screen alone through the
+//      narrator's pause, instead of pulling the next sentence's words
+//      onscreen too early.
 function chunkWords(words: WordTiming[], size: number): Phrase[] {
   const out: Phrase[] = [];
-  for (let i = 0; i < words.length; i += size) {
-    out.push({ words: words.slice(i, i + size) });
+  let buf: WordTiming[] = [];
+  for (const w of words) {
+    buf.push(w);
+    const endsSentence = SENTENCE_END_RE.test(w.word);
+    if (endsSentence || buf.length >= size) {
+      out.push({ words: buf });
+      buf = [];
+    }
   }
+  if (buf.length > 0) out.push({ words: buf });
   return out;
-}
-
-// Does a karaoke phrase visually overlap any title span? We compare the
-// phrase's MIDPOINT to each title's [startS, endS] — if the midpoint
-// lands inside a title window, suppress the phrase so the title gets the
-// stage to itself. Title spans are short (<1s typical), phrases run
-// ~0.9–1.2s, so at most one phrase gets dropped per title.
-function phraseOverlapsTitle(
-  phraseStart: number,
-  phraseEnd: number,
-  titleSpans: TitleSpan[],
-): boolean {
-  if (titleSpans.length === 0) return false;
-  const mid = (phraseStart + phraseEnd) / 2;
-  for (const t of titleSpans) {
-    if (mid >= t.startS && mid <= t.endS) return true;
-  }
-  return false;
 }
 
 export function buildAssSubtitles(
   words: WordTiming[],
   style: SubtitleStyle,
-  titleSpans: TitleSpan[] = [],
 ): string {
   if (words.length === 0) {
-    return buildHeader(style, titleSpans.length > 0) + "\n";
+    return buildHeader(style) + "\n";
   }
   const primary = hexToAss(style.primaryColor);
   const highlight = hexToAss(style.highlightColor);
@@ -138,18 +119,21 @@ export function buildAssSubtitles(
   const phrases = chunkWords(words, phraseSize);
   const lines: string[] = [];
 
-  for (const phrase of phrases) {
+  for (let pi = 0; pi < phrases.length; pi++) {
+    const phrase = phrases[pi]!;
     if (phrase.words.length === 0) continue;
     const first = phrase.words[0]!;
     const last = phrase.words[phrase.words.length - 1]!;
     const phraseStart = first.startS;
-    // Hold the phrase a touch past its last word so the highlight on the
-    // final word doesn't immediately vanish.
-    const phraseEnd = last.endS + 0.05;
-
-    // Skip phrases that overlap a title window — the title takes over the
-    // visual track at that moment and captions resume after.
-    if (phraseOverlapsTitle(phraseStart, phraseEnd, titleSpans)) continue;
+    // Default end: small hold past the last word's audio so the highlight
+    // doesn't snap off mid-syllable.
+    const naturalEnd = last.endS + 0.05;
+    // Extend the on-screen duration to the next phrase's start time when
+    // that gap is longer than the natural hold. This keeps the last word
+    // of a sentence visible during the narrator's pause (instead of going
+    // dark mid-pause, then snapping back when the next phrase begins).
+    const next = phrases[pi + 1];
+    const phraseEnd = next ? Math.max(naturalEnd, next.words[0]!.startS) : naturalEnd;
 
     const phraseDurationMs = Math.max(1, Math.round((phraseEnd - phraseStart) * 1000));
 
@@ -186,44 +170,14 @@ export function buildAssSubtitles(
     lines.push(`Dialogue: 0,${startStr},${endStr},Karaoke,,0,0,0,,${headerTags}${body}`);
   }
 
-  // Title-card Dialogues. Each one fires a beat early (lead-in) and holds
-  // a beat past the spoken phrase (tail). The TitleCard style sits top-center
-  // in the upper third, well clear of the karaoke band.
-  for (const t of titleSpans) {
-    const leadIn = t.leadInS ?? 0.1;
-    const tail = t.tailS ?? 0.2;
-    const startStr = fmtTime(Math.max(0, t.startS - leadIn));
-    const endStr = fmtTime(t.endS + tail);
-    const visible = escapeText(visualText(t.label));
-    if (!visible) continue;
-    const tags =
-      `{\\an8\\fad(${TITLE_FADE_IN_MS},${TITLE_FADE_OUT_MS})\\blur1}`;
-    lines.push(`Dialogue: 0,${startStr},${endStr},TitleCard,,0,0,0,,${tags}${visible}`);
-  }
-
-  return `${buildHeader(style, titleSpans.length > 0)}\n${lines.join("\n")}\n`;
+  return `${buildHeader(style)}\n${lines.join("\n")}\n`;
 }
 
-function buildHeader(style: SubtitleStyle, includeTitleStyle: boolean): string {
+function buildHeader(style: SubtitleStyle): string {
   const primary = hexToAss(style.primaryColor);
   const outline = hexToAss(style.outlineColor ?? "#000000");
   const outlineWidth = style.outlineWidth ?? 6;
   const shadow = style.shadowDepth ?? 3;
-
-  // TitleCard style: white Prata, black outline, large, top-center anchor,
-  // editorial letter-spacing. Alignment 8 = top-center; MarginV is distance
-  // from top in this anchor mode.
-  const titleWhite = hexToAss("#FFFFFF");
-  const titleOutline = hexToAss("#000000");
-
-  const styles: string[] = [
-    `Style: Karaoke,${style.fontFamily},${style.fontSize},${primary},${primary},${outline},&H00000000&,1,0,0,0,100,100,0,0,1,${outlineWidth},${shadow},2,80,80,${style.marginV},1`,
-  ];
-  if (includeTitleStyle) {
-    styles.push(
-      `Style: TitleCard,${TITLE_FONT_FAMILY},${TITLE_FONT_SIZE},${titleWhite},${titleWhite},${titleOutline},&H00000000&,0,0,0,0,100,100,${TITLE_LETTER_SPACING},0,1,${TITLE_OUTLINE_WIDTH},${TITLE_SHADOW_DEPTH},8,40,40,${TITLE_MARGIN_V},1`,
-    );
-  }
 
   return [
     "[Script Info]",
@@ -238,7 +192,7 @@ function buildHeader(style: SubtitleStyle, includeTitleStyle: boolean): string {
     "",
     "[V4+ Styles]",
     "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-    ...styles,
+    `Style: Karaoke,${style.fontFamily},${style.fontSize},${primary},${primary},${outline},&H00000000&,1,0,0,0,100,100,0,0,1,${outlineWidth},${shadow},2,80,80,${style.marginV},1`,
     "",
     "[Events]",
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",

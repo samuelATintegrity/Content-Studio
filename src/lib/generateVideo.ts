@@ -69,7 +69,7 @@ async function archiveAnimatedClip(input: {
 // store. Keyed by a synthetic batchId we mint on each kickoff.
 interface PendingBatch {
   batchId: string;
-  scripts: Array<{ angle: string; script: string; caption: string; titleMoments?: Array<{ phrase: string; label: string }> }>;
+  scripts: Array<{ angle: string; script: string; caption: string }>;
   language: ReturnType<typeof useBatchStore.getState>["language"];
   contentType: ReturnType<typeof useBatchStore.getState>["contentType"];
   // slotIndex → final animated/picked clip URL. Render dispatches when this
@@ -289,7 +289,6 @@ export async function retryAnimation(slotIndex: number): Promise<void> {
 interface RenderQueueEntry {
   postId: string;
   script: string;
-  titleMoments?: Array<{ phrase: string; label: string }>;
   dispatched: boolean;
 }
 interface RenderQueue {
@@ -308,7 +307,6 @@ function dispatchEntry(queue: RenderQueue, entry: RenderQueueEntry): void {
     language: queue.language,
     contentType: queue.contentType,
     clipUrls: queue.clipUrls,
-    titleMoments: entry.titleMoments,
   })
     .then(({ jobId }) => {
       useBatchStore.getState().updateVideoPost(entry.postId, {
@@ -382,7 +380,6 @@ function maybeDispatchRenders(batchId: string): void {
     jobId: null,
     state: "waiting_images",
     progress: 0,
-    titleMoments: s.titleMoments,
   }));
   store.setVideoPosts(initial);
 
@@ -396,7 +393,6 @@ function maybeDispatchRenders(batchId: string): void {
     entries: initial.map((post) => ({
       postId: post.id,
       script: post.script,
-      titleMoments: post.titleMoments,
       dispatched: false,
     })),
   };
@@ -694,7 +690,6 @@ export async function regenerateOneVideo(postId: string): Promise<void> {
       progress: 0,
       videoUrl: undefined,
       error: undefined,
-      titleMoments: fresh.titleMoments,
     });
   } catch (e) {
     useBatchStore.getState().updateVideoPost(postId, {

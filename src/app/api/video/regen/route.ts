@@ -40,7 +40,6 @@ export async function POST(req: Request) {
       language: body.language,
       contentType: body.contentType,
       clipUrls: body.clipUrls,
-      titleMoments: next.titleMoments,
     });
 
     return NextResponse.json({
@@ -48,7 +47,6 @@ export async function POST(req: Request) {
       script: next.script,
       caption: next.caption,
       jobId,
-      titleMoments: next.titleMoments,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "unknown error";

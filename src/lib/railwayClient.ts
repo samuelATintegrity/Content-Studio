@@ -31,7 +31,6 @@ export async function enqueueRender(args: {
   language: Language;
   contentType: ContentType;
   clipUrls: string[];
-  titleMoments?: Array<{ phrase: string; label: string }>;
 }): Promise<string> {
   if (!Array.isArray(args.clipUrls) || args.clipUrls.length === 0) {
     throw new Error("enqueueRender: clipUrls is required");
