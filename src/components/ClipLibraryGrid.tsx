@@ -15,6 +15,7 @@ import { listSavedSets } from "@/lib/savedSets";
 import { deleteClipFromStorage, tagClip, uploadClip } from "@/lib/videoClient";
 import { PICKED_CLIP_COUNT } from "@/lib/videoPrompts";
 import { AiClipModal } from "@/components/AiClipModal";
+import { ClipMetadataModal } from "@/components/ClipMetadataModal";
 
 // Six fixed category sections (matches the user's mental model: rooms +
 // pro people). Anything not matching lands in an "Other" bucket.
@@ -52,23 +53,28 @@ export function ClipLibraryGrid() {
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
   const [groupBy, setGroupBy] = useState<GroupBy>("none");
   const [aiModalOpen, setAiModalOpen] = useState(false);
+  // When set, opens the metadata modal pre-seeded from this clip. Used
+  // for the pencil-edit flow AND the auto-prompt after upload / AI clip
+  // creation so the user can name + categorize the new clip immediately.
+  const [editingClipKey, setEditingClipKey] = useState<string | null>(null);
   const selectedKeys = useBatchStore((s) => s.selectedClipKeys);
   const selectClip = useBatchStore((s) => s.selectClip);
   const deselectClip = useBatchStore((s) => s.deselectClip);
   const clearClipSelection = useBatchStore((s) => s.clearClipSelection);
 
-  function onRename(clip: MergedClip) {
+  function onEdit(clip: MergedClip) {
     if (clip.kind === "saved") return; // managed via the Saved Sets sidebar
     const id = clip.origin.libraryClipId;
     if (!id) return;
-    const current = clip.origin.filename ?? "";
-    const next = window.prompt("Rename this clip:", current);
-    if (next === null) return; // cancelled
-    const trimmed = next.trim();
-    // Empty string clears the name and falls back to the default label
-    // (Slot N for auto, Uploaded for uploads).
-    updateLibraryClip(id, { filename: trimmed || undefined });
+    setEditingClipKey(id);
   }
+
+  // Look up the LibraryClip-shaped values for the modal from our merged
+  // list. We want the live values, so this re-derives from `clips` which
+  // is already kept in sync via subscribeMergedLibrary.
+  const editingMerged = editingClipKey
+    ? clips.find((c) => c.origin.libraryClipId === editingClipKey)
+    : null;
 
   async function onDelete(clip: MergedClip) {
     if (clip.kind === "saved") return; // saved-set clips are governed by sidebar
@@ -150,7 +156,7 @@ export function ClipLibraryGrid() {
   }
 
   // Render one tile. Used both by the flat grid and by GroupedSections so
-  // the per-tile contract (selection, delete, rename, language) is one piece.
+  // the per-tile contract (selection, delete, edit, language) is one piece.
   function renderTile(clip: MergedClip) {
     const idx = selectedKeys.indexOf(clip.key);
     const selected = idx >= 0;
@@ -162,7 +168,7 @@ export function ClipLibraryGrid() {
         dim={!selected && atCap}
         onClick={() => selectClip(clip.key, clip.videoUrl)}
         onDelete={clip.kind === "saved" ? undefined : () => onDelete(clip)}
-        onRename={clip.kind === "saved" ? undefined : () => onRename(clip)}
+        onEdit={clip.kind === "saved" ? undefined : () => onEdit(clip)}
         onLanguageChange={
           clip.kind === "saved" ? undefined : (lang) => onChangeLanguage(clip, lang)
         }
@@ -263,7 +269,7 @@ export function ClipLibraryGrid() {
 
       {groupBy === "none" ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-          <UploadTile />
+          <UploadTile onUploaded={(id) => setEditingClipKey(id)} />
           <AiClipTile onOpen={() => setAiModalOpen(true)} />
           {filteredClips.map((clip) => renderTile(clip))}
         </div>
@@ -274,7 +280,7 @@ export function ClipLibraryGrid() {
           renderTile={renderTile}
           extraTiles={
             <>
-              <UploadTile />
+              <UploadTile onUploaded={(id) => setEditingClipKey(id)} />
               <AiClipTile onOpen={() => setAiModalOpen(true)} />
             </>
           }
@@ -296,9 +302,25 @@ export function ClipLibraryGrid() {
         <AiClipModal
           onClose={() => setAiModalOpen(false)}
           onCreated={({ libraryClipId, videoUrl }) => {
-            // Auto-select the freshly generated clip, same as upload.
+            // Auto-select + auto-open the metadata modal so the user can
+            // name + tag the new clip while it's fresh in mind.
             selectClip(libraryClipId, videoUrl);
+            setEditingClipKey(libraryClipId);
           }}
+        />
+      )}
+
+      {editingMerged && editingClipKey && (
+        <ClipMetadataModal
+          clip={{
+            libraryClipId: editingClipKey,
+            videoUrl: editingMerged.videoUrl,
+            posterUrl: editingMerged.posterUrl,
+            filename: editingMerged.origin.filename,
+            language: editingMerged.language,
+            tags: editingMerged.tags,
+          }}
+          onClose={() => setEditingClipKey(null)}
         />
       )}
     </section>
@@ -375,7 +397,7 @@ function ClipTile({
   dim,
   onClick,
   onDelete,
-  onRename,
+  onEdit,
   onLanguageChange,
 }: {
   clip: MergedClip;
@@ -383,7 +405,7 @@ function ClipTile({
   dim: boolean;
   onClick: () => void;
   onDelete?: () => void;
-  onRename?: () => void;
+  onEdit?: () => void;
   onLanguageChange?: (lang: ClipLanguage) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -480,15 +502,15 @@ function ClipTile({
           </svg>
         </button>
       )}
-      {onRename && (
+      {onEdit && (
         <button
           type="button"
           onClick={(e) => {
             e.stopPropagation();
-            onRename();
+            onEdit();
           }}
           className="absolute top-2 left-11 w-7 h-7 rounded-full bg-black/60 hover:bg-neutral-700 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
-          title="Rename clip"
+          title="Edit clip details"
         >
           <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M12 20h9" />
@@ -571,7 +593,7 @@ function onSeekToFirstFrame(e: SyntheticEvent<HTMLVideoElement>) {
   }
 }
 
-function UploadTile() {
+function UploadTile({ onUploaded }: { onUploaded?: (libraryClipId: string) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -597,6 +619,9 @@ function UploadTile() {
       void tagClip(cachedUrl)
         .then((tags) => updateLibraryClip(clip.id, { tags }))
         .catch(() => undefined);
+      // Open the metadata modal so the user can polish name/category/tags
+      // while the new clip is fresh in mind.
+      onUploaded?.(clip.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "upload failed");
     } finally {
