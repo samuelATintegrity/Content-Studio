@@ -84,6 +84,33 @@ export async function generateVideoSourceImage(
   return { url };
 }
 
+// 9:16 image with a user-supplied prompt — for the manual "Generate AI clip"
+// flow in the library picker. Same model + style suffix as the slot generator
+// so the resulting frame matches the rest of the library visually.
+export async function generateCustomVideoImage(userPrompt: string): Promise<{ url: string }> {
+  configure();
+  const trimmed = userPrompt.trim();
+  if (!trimmed) throw new Error("prompt is required");
+  const prompt = trimmed.replace(/\.$/, "") + VIDEO_IMAGE_STYLE_SUFFIX;
+
+  const result = await fal.subscribe(IMAGE_MODEL, {
+    input: {
+      prompt,
+      num_images: 1,
+      output_format: "jpeg",
+      aspect_ratio: "9:16",
+    },
+    logs: false,
+  });
+
+  type FalImage = { url?: string };
+  type FalData = { images?: FalImage[] };
+  const data = (result as { data?: FalData }).data;
+  const url = data?.images?.[0]?.url;
+  if (!url) throw new Error("fal.ai returned no image URL");
+  return { url };
+}
+
 type FalVideoFile = { url?: string };
 type FalVideoData = { video?: FalVideoFile };
 
@@ -94,11 +121,15 @@ function extractVideoUrl(result: unknown): string {
   return url;
 }
 
-async function callAnimationModel(model: AnimationModel, imageUrl: string): Promise<string> {
+async function callAnimationModel(
+  model: AnimationModel,
+  imageUrl: string,
+  prompt: string,
+): Promise<string> {
   if (model === "kling") {
     const klingInput = {
       start_image_url: imageUrl,
-      prompt: VIDEO_ANIMATION_PROMPT,
+      prompt,
       duration: "5",
       generate_audio: false,
     };
@@ -110,7 +141,7 @@ async function callAnimationModel(model: AnimationModel, imageUrl: string): Prom
   }
   const seedanceInput = {
     image_url: imageUrl,
-    prompt: VIDEO_ANIMATION_PROMPT,
+    prompt,
     aspect_ratio: "9:16",
     duration: 5,
     resolution: "1080p",
@@ -145,15 +176,22 @@ function looksLikeSafetyOr422(e: unknown): boolean {
 // 422 / safety error we automatically retry once via Kling — Kling has no
 // documented face restriction, so this catches both forgotten routings and
 // stale client builds that didn't pass the model field.
+//
+// `animationPrompt` overrides the default "subtle camera movement…" prompt
+// (used by the from-scratch flow + manual AI clip generator). Falls back to
+// VIDEO_ANIMATION_PROMPT when not supplied.
 export async function animateImage(
   imageUrl: string,
   model: AnimationModel = "seedance",
+  animationPrompt?: string,
 ): Promise<{ url: string }> {
   configure();
   if (!imageUrl) throw new Error("animateImage: imageUrl required");
 
+  const prompt = animationPrompt?.trim() || VIDEO_ANIMATION_PROMPT;
+
   try {
-    const url = await callAnimationModel(model, imageUrl);
+    const url = await callAnimationModel(model, imageUrl, prompt);
     return { url };
   } catch (e) {
     if (model === "seedance" && looksLikeSafetyOr422(e)) {
@@ -161,7 +199,7 @@ export async function animateImage(
         "[animateImage] Seedance refused with safety/422 — retrying with Kling.",
         e instanceof Error ? e.message : String(e),
       );
-      const url = await callAnimationModel("kling", imageUrl);
+      const url = await callAnimationModel("kling", imageUrl, prompt);
       return { url };
     }
     throw e;

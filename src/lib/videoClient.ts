@@ -37,16 +37,32 @@ export async function generateSourceImage(
   return res.json();
 }
 
+// Manual AI clip flow: user-supplied prompt → 9:16 image. Same Nano Banana
+// 2 model + style suffix as the slot generator, so results match the rest
+// of the library visually.
+export async function generateCustomImage(prompt: string): Promise<{ url: string }> {
+  const res = await fetch("/api/video/generate-image-custom", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt }),
+  });
+  if (!res.ok) {
+    throw new Error((await res.json().catch(() => ({}))).error ?? "custom-image failed");
+  }
+  return res.json();
+}
+
 export type AnimationModel = "seedance" | "kling";
 
 export async function animateSourceImage(
   imageUrl: string,
   model: AnimationModel = "seedance",
+  animationPrompt?: string,
 ): Promise<{ url: string }> {
   const res = await fetch("/api/video/animate-image", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ imageUrl, model }),
+    body: JSON.stringify({ imageUrl, model, animationPrompt }),
   });
   if (!res.ok) {
     throw new Error((await res.json().catch(() => ({}))).error ?? "animate-image failed");

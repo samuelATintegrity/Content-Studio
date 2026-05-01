@@ -13,11 +13,13 @@ import {
 import { listSavedSets } from "@/lib/savedSets";
 import { deleteClipFromStorage, tagClip, uploadClip } from "@/lib/videoClient";
 import { PICKED_CLIP_COUNT } from "@/lib/videoPrompts";
+import { AiClipModal } from "@/components/AiClipModal";
 
 export function ClipLibraryGrid() {
   const [clips, setClips] = useState<MergedClip[]>(() => listMergedLibrary());
   const [filter, setFilter] = useState("");
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
+  const [aiModalOpen, setAiModalOpen] = useState(false);
   const selectedKeys = useBatchStore((s) => s.selectedClipKeys);
   const selectClip = useBatchStore((s) => s.selectClip);
   const deselectClip = useBatchStore((s) => s.deselectClip);
@@ -170,6 +172,7 @@ export function ClipLibraryGrid() {
 
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
         <UploadTile />
+        <AiClipTile onOpen={() => setAiModalOpen(true)} />
         {filteredClips.map((clip) => {
           const idx = selectedKeys.indexOf(clip.key);
           const selected = idx >= 0;
@@ -195,6 +198,16 @@ export function ClipLibraryGrid() {
         <p className="mt-3 text-[11px] text-neutral-500 px-1">
           No clips match the current filter.
         </p>
+      )}
+
+      {aiModalOpen && (
+        <AiClipModal
+          onClose={() => setAiModalOpen(false)}
+          onCreated={({ libraryClipId, videoUrl }) => {
+            // Auto-select the freshly generated clip, same as upload.
+            selectClip(libraryClipId, videoUrl);
+          }}
+        />
       )}
     </section>
   );
@@ -425,6 +438,38 @@ function UploadTile() {
           {error}
         </span>
       )}
+    </button>
+  );
+}
+
+// Companion tile that opens the manual AI-clip modal (image prompt →
+// animation prompt → save to library). Same dashed-tile look as Upload
+// so the two creation entry points feel like a pair.
+function AiClipTile({ onOpen }: { onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="relative aspect-[9/16] rounded-2xl border-2 border-dashed border-neutral-300 dark:border-neutral-800 hover:border-neutral-500 dark:hover:border-neutral-600 bg-neutral-50 dark:bg-neutral-950 transition flex flex-col items-center justify-center gap-2"
+    >
+      <svg
+        className="w-6 h-6 text-neutral-500"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M5 3v4" />
+        <path d="M3 5h4" />
+        <path d="M19 17v4" />
+        <path d="M17 19h4" />
+        <path d="M14 4l-2.5 5.5L6 12l5.5 2.5L14 20l2.5-5.5L22 12l-5.5-2.5z" />
+      </svg>
+      <span className="text-[11px] font-medium text-neutral-600 dark:text-neutral-400 text-center px-2 leading-tight">
+        Generate AI clip
+      </span>
     </button>
   );
 }
