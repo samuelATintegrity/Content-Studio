@@ -138,20 +138,25 @@ export function Sidebar() {
         </div>
       </Section>
 
-      <Section title="Content type">
-        <div className="flex flex-col gap-2">
-          {contentTypes.map((c) => (
-            <Pill
-              key={c}
-              selected={contentType === c}
-              onClick={() => setContentType(c)}
-              align="left"
-            >
-              {CONTENT_TYPE_LABELS[c]}
-            </Pill>
-          ))}
-        </div>
-      </Section>
+      {/* Influencer mode locks content type to "good_agents" (the
+          matching-mission script) — the avatar's on-camera intro is the
+          hook, so we don't surface a topic picker. */}
+      {!(format === "video" && subMode === "influencer") && (
+        <Section title="Content type">
+          <div className="flex flex-col gap-2">
+            {contentTypes.map((c) => (
+              <Pill
+                key={c}
+                selected={contentType === c}
+                onClick={() => setContentType(c)}
+                align="left"
+              >
+                {CONTENT_TYPE_LABELS[c]}
+              </Pill>
+            ))}
+          </div>
+        </Section>
+      )}
     </aside>
   );
 }

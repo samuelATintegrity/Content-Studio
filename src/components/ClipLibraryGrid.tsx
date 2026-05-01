@@ -15,8 +15,7 @@ import { LANGUAGE_LABELS, type Language } from "@/lib/types";
 import { listSavedSets } from "@/lib/savedSets";
 import { deleteClipFromStorage, tagClip, uploadClip } from "@/lib/videoClient";
 import {
-  INFLUENCER_MIDDLE_MAX,
-  INFLUENCER_MIDDLE_MIN,
+  INFLUENCER_MIDDLE_COUNT,
   PICKED_CLIP_COUNT,
 } from "@/lib/videoPrompts";
 import { AiClipModal } from "@/components/AiClipModal";
@@ -128,7 +127,7 @@ export function ClipLibraryGrid() {
   }, []);
 
   const selectedCount = selectedKeys.length;
-  const middlePickCap = isInfluencer ? INFLUENCER_MIDDLE_MAX : PICKED_CLIP_COUNT;
+  const middlePickCap = isInfluencer ? INFLUENCER_MIDDLE_COUNT : PICKED_CLIP_COUNT;
   const atCap = selectedCount >= middlePickCap;
 
   // Build the union of all tags currently in the library, for the filter chips.
@@ -213,7 +212,7 @@ export function ClipLibraryGrid() {
       // Influencer middle picker enforces its own cap (the store's hard cap
       // is PICKED_CLIP_COUNT, larger than the influencer max). Block adding
       // beyond INFLUENCER_MIDDLE_MAX; toggling-off an existing pick is fine.
-      if (isInfluencer && !selected && selectedKeys.length >= INFLUENCER_MIDDLE_MAX) {
+      if (isInfluencer && !selected && selectedKeys.length >= INFLUENCER_MIDDLE_COUNT) {
         return;
       }
       selectClip(clip.key, clip.videoUrl);
@@ -255,9 +254,14 @@ export function ClipLibraryGrid() {
               {PICKED_CLIP_COUNT} / {PICKED_CLIP_COUNT} ready
             </span>
           )}
-          {isInfluencer && selectedCount >= INFLUENCER_MIDDLE_MIN && (
+          {isInfluencer && selectedCount === INFLUENCER_MIDDLE_COUNT && (
             <span className="text-[11px] font-semibold text-emerald-500 tabular-nums">
-              {selectedCount} / {INFLUENCER_MIDDLE_MAX} middle
+              {INFLUENCER_MIDDLE_COUNT} / {INFLUENCER_MIDDLE_COUNT} ready
+            </span>
+          )}
+          {isInfluencer && selectedCount > 0 && selectedCount < INFLUENCER_MIDDLE_COUNT && (
+            <span className="text-[11px] font-semibold text-neutral-500 tabular-nums">
+              {selectedCount} / {INFLUENCER_MIDDLE_COUNT} middle
             </span>
           )}
           {selectedCount > 0 && (
@@ -347,7 +351,7 @@ export function ClipLibraryGrid() {
 
       {isInfluencer && (
         <h4 className="text-[11px] uppercase tracking-[0.16em] text-neutral-500 font-semibold mb-2 px-1 mt-6">
-          Middle filler ({INFLUENCER_MIDDLE_MIN}–{INFLUENCER_MIDDLE_MAX} clips)
+          Middle filler ({INFLUENCER_MIDDLE_COUNT} clips)
         </h4>
       )}
 

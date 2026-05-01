@@ -46,9 +46,8 @@ export const VIDEO_IMAGE_STYLE_SUFFIX =
 export const VIDEO_ANIMATION_PROMPT =
   "subtle camera movement, slow steady push-in, no people speaking, no abrupt motion";
 
-// Influencer-mode middle filler clip count bounds. The user picks 1
-// pre-recorded intro + N filler clips (in this range) + 1 pre-recorded
-// outro per render. AI fills the middle script which is TTS'd over the
-// filler clips.
-export const INFLUENCER_MIDDLE_MIN = 2;
-export const INFLUENCER_MIDDLE_MAX = 6;
+// Influencer-mode middle filler clip count. Fixed at 8 so the AI middle
+// script (15–20s of audio) gets divided into 8 equal-length clips of
+// ~2s each. The pipeline trims each source clip down to its share so
+// all 8 play for identical durations and the timeline never desyncs.
+export const INFLUENCER_MIDDLE_COUNT = 8;

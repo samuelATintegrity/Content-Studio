@@ -9,8 +9,7 @@ import {
   renderWithPickedClips,
 } from "@/lib/generateVideo";
 import {
-  INFLUENCER_MIDDLE_MAX,
-  INFLUENCER_MIDDLE_MIN,
+  INFLUENCER_MIDDLE_COUNT,
   PICKED_CLIP_COUNT,
 } from "@/lib/videoPrompts";
 
@@ -51,15 +50,13 @@ export function GenerateFAB() {
       influencerLabel = "Pick an avatar";
     } else if (!selectedIntroClipUrl) {
       influencerLabel = "Pick an intro clip";
-    } else if (selectedCount < INFLUENCER_MIDDLE_MIN) {
-      const need = INFLUENCER_MIDDLE_MIN - selectedCount;
+    } else if (selectedCount < INFLUENCER_MIDDLE_COUNT) {
+      const need = INFLUENCER_MIDDLE_COUNT - selectedCount;
       influencerLabel = `Pick ${need} more middle clip${need === 1 ? "" : "s"}`;
-    } else if (selectedCount > INFLUENCER_MIDDLE_MAX) {
-      influencerLabel = `Too many middle clips (max ${INFLUENCER_MIDDLE_MAX})`;
     } else if (!selectedOutroClipUrl) {
       influencerLabel = "Pick an outro clip";
     } else {
-      influencerLabel = `Render influencer (${selectedCount} middle)`;
+      influencerLabel = `Render influencer (${INFLUENCER_MIDDLE_COUNT} middle)`;
       influencerReady = true;
     }
   }

@@ -182,17 +182,21 @@ export async function generateVideoScripts(
 
 const INFLUENCER_VOICE_RULES = `
 INFLUENCER-MIDDLE-SCRIPT RULES (this script is the AI-generated middle of a 9:16 video; the intro and outro are pre-recorded videos of an influencer talking on camera):
-- Voice: conversational, second person ("you", "your"), warm and casual. Read aloud by an AI voice in the influencer's avatar voice.
-- DO NOT include a hook opener — the intro clip is the hook. Start mid-conversation as if the avatar just finished saying "you need to check out Agent Match".
+- Voice: conversational AND energetic, second person ("you", "your"), warm and excited like you're telling a friend about something genuinely good. Read aloud by an AI voice in the influencer's avatar voice. Use contractions ("it's", "they'll", "you're"). Short, punchy sentences — not long lecture-y ones.
+- DO NOT include a hook opener — the intro clip is the hook. Start mid-conversation as if the avatar just finished saying "you've gotta check out Agent Match".
 - DO NOT include a verbal closer — the outro clip is the closer. NEVER say "click the link", "go to", any URL, hashtags, "DM me", or "fill out the form".
 - Target 45–60 words (≈ 15–20 seconds at a normal speaking pace). Tight is better.
 - DECLARATIVE TONE: end every sentence with a period or exclamation mark — NEVER a question mark. The TTS engine drifts into rising question intonation on short imperatives, so keep clauses confident and grounded.
 - NO em dashes. NO bracketed asides. NO stage directions.
+- WHAT TO COVER (lean into the unique value props — the script must feel like the AI middle is selling THIS specific service, not generic real estate):
+  - Vetted-agent angle: Agent Match only connects you with proven top-performing agents who've been interviewed and reviewed. Not part-time, not random.
+  - Specialty-matching angle: if you need an agent familiar with $0 down programs, USDA loans, down payment assistance, language matching, or any other specific situation, they connect you with someone who actually specializes in that. You don't have to figure it out yourself.
+  - Pick ONE or TWO of those angles per script — don't try to cram both. Keep it conversational, not exhaustive.
 - STAY HIGH-LEVEL — DO NOT GO INTO THE WEEDS:
-  - NEVER state specific timelines, dollar amounts, percentages, or step-by-step processes.
+  - NEVER state specific timelines, dollar amounts, percentages, or step-by-step processes (the only exception is the framing "$0 down" since it's the program name, not a quote).
   - When real constraints exist (income limits, area limits, fund availability, credit considerations), name them GENERICALLY: "area and income limits apply", "credit considerations apply".
-  - Always hand off to a professional rather than explaining mechanics: "the right team can talk you through whether this fits your situation".
-- Mental shape (don't copy verbatim): "Here's why I trust them. [One or two specific value-prop points from the reference document, plain-spoken]. [Generic constraint, if relevant]. The right team will figure out what fits you."
+  - Always hand off to a professional rather than explaining mechanics: "the right specialist can talk you through whether this fits".
+- Mental shape (don't copy verbatim, just match the energy): "Honestly, here's what I love. [Punchy specialty/vetted point]. [Quick example, plain-spoken]. They'll connect you with someone who actually does this every day."
 - The "caption" is the IG body text (3-5 sentences + 3-5 hashtags), exactly as for static posts. Hashtags on a NEW line at the end. Do not repeat the script verbatim in the caption.
 `.trim();
 

@@ -13,8 +13,7 @@ import {
   type AnimationModel,
 } from "@/lib/videoClient";
 import {
-  INFLUENCER_MIDDLE_MAX,
-  INFLUENCER_MIDDLE_MIN,
+  INFLUENCER_MIDDLE_COUNT,
   VIDEO_PROMPT_COUNT,
 } from "@/lib/videoPrompts";
 import { getAvatar } from "@/lib/avatars";
@@ -673,25 +672,25 @@ export async function generateInfluencerBatch(args: {
   if (!avatar) {
     throw new Error(`Unknown avatar: ${args.avatarName}`);
   }
-  if (
-    args.middleClipUrls.length < INFLUENCER_MIDDLE_MIN ||
-    args.middleClipUrls.length > INFLUENCER_MIDDLE_MAX
-  ) {
+  if (args.middleClipUrls.length !== INFLUENCER_MIDDLE_COUNT) {
     throw new Error(
-      `Influencer middle needs ${INFLUENCER_MIDDLE_MIN}-${INFLUENCER_MIDDLE_MAX} clips, got ${args.middleClipUrls.length}`,
+      `Influencer middle needs exactly ${INFLUENCER_MIDDLE_COUNT} clips, got ${args.middleClipUrls.length}`,
     );
   }
 
   const store = useBatchStore.getState();
   const {
     language,
-    contentType,
     setLoading,
     setError,
     setVideoPosts,
     setImageSlots,
     clearClipSelection,
   } = store;
+  // Influencer mode is locked to the Good Agents (matching mission)
+  // content type — the on-camera intro is the hook and the middle script
+  // explains why Agent Match's matching process is worth using.
+  const contentType = "good_agents" as const;
 
   if (!avatar.supportedLanguages.includes(language)) {
     throw new Error(
@@ -795,7 +794,7 @@ export async function regenerateOneVideo(postId: string): Promise<void> {
       return;
     }
     const middleClipUrls = state.selectedClipUrls;
-    if (middleClipUrls.length < INFLUENCER_MIDDLE_MIN) {
+    if (middleClipUrls.length !== INFLUENCER_MIDDLE_COUNT) {
       state.updateVideoPost(postId, {
         state: "failed",
         error:
