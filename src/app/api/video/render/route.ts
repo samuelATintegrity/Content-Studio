@@ -10,6 +10,7 @@ interface Body {
   language: Language;
   contentType: ContentType;
   clipUrls: string[];
+  titleMoments?: Array<{ phrase: string; label: string }>;
 }
 
 export async function POST(req: Request) {
@@ -29,6 +30,7 @@ export async function POST(req: Request) {
       language: body.language,
       contentType: body.contentType,
       clipUrls: body.clipUrls,
+      titleMoments: body.titleMoments,
     });
     return NextResponse.json({ jobId });
   } catch (e) {

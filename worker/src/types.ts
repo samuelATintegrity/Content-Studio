@@ -30,12 +30,21 @@ export interface JobState {
   updatedAt: number;
 }
 
+// Phrase + on-screen label for styled title-card overlays. Worker matches
+// `phrase` against TTS word timings to find the on-screen span; `label` is
+// what gets rendered (often phrase upper-cased).
+export interface TitleMoment {
+  phrase: string;
+  label: string;
+}
+
 // Body of POST /render from Vercel.
 export interface RenderRequest {
   script: string;          // narration text
   language: Language;      // selects voice + caption styling
   contentType: ContentType;// kept for logging / future per-type music selection
   clipUrls: string[];      // pre-made 9:16 clips (Seedance-animated images), in order
+  titleMoments?: TitleMoment[]; // 0–2 styled title cards Claude flagged in the script
 }
 
 export interface RenderResponse {

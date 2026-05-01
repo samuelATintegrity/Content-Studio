@@ -21,6 +21,7 @@ VIDEO-SPECIFIC RULES (this is for a 9:16 short-form video with voiceover narrati
 - NO numbers spelled as digits where it sounds awkward ("two thousand" reads better than "2000" sometimes — use your judgment).
 - NO em dashes anywhere. NO bracketed asides. NO stage directions like "(pause)".
 - DECLARATIVE TONE: every sentence in the script must end with a period (or exclamation mark for emphasis) — NEVER a question mark. Statements only. The TTS engine drifts into rising question intonation on short imperatives, so keep clauses confident and grounded. If you want to pose a thought, phrase it as a statement ("Most buyers don't know this." NOT "Did you know?"). The closer especially must read flat and final.
+- TITLE MOMENTS: pick 0–2 short phrases (1–4 words each) that deserve a styled title-card overlay during the video. Good candidates: numbered milestones ("step one"), key acronyms ("USDA", "VA", "DPA"), pivotal terms ("$0 down"), section markers. Skip entirely if the script has no natural emphasis — many scripts won't need any. Each \`phrase\` MUST appear verbatim in the script (case-insensitive). The \`label\` is what shows on screen — usually the phrase in ALL CAPS, but you can shorten ("step one of three" → label "STEP ONE"). NEVER pick the closer ("Click the link...") as a title moment.
 - The "caption" is the IG body text (3-5 sentences + 3-5 hashtags), exactly as for static posts. Hashtags on a NEW line at the end.
 - Do not repeat the script verbatim in the caption — the caption complements the video, it doesn't transcribe it.
 `.trim();
@@ -29,6 +30,7 @@ interface RawVideoScript {
   angle: string;
   script: string;
   body: string;
+  titleMoments?: Array<{ phrase: string; label: string }>;
 }
 
 const VIDEO_TOOL = {
@@ -46,6 +48,19 @@ const VIDEO_TOOL = {
             angle: { type: "string", description: "Echo back the angle key you were given." },
             script: { type: "string", description: "Voiceover narration: 80-100 words, hook in first 6 words, no URLs, no hashtags, no em dashes." },
             body: { type: "string", description: "IG caption body in the requested language: 3-5 sentences, then a newline and 3-5 hashtags. No URLs. No DM/CTA language." },
+            titleMoments: {
+              type: "array",
+              maxItems: 2,
+              description: "0–2 short phrases from the script that deserve a styled title-card overlay (e.g. \"step one\", \"$0 down\", \"USDA\"). Pick only true emphasis points — numbered milestones, key acronyms, pivotal terms. Each phrase MUST appear verbatim (case-insensitive) in the script. Empty/omitted is fine; many scripts have no natural emphasis. Never pick the closer phrase.",
+              items: {
+                type: "object",
+                properties: {
+                  phrase: { type: "string", description: "The exact phrase from the script that should pop as a title (1–4 words)." },
+                  label:  { type: "string", description: "What appears on screen when the title fires. Usually the phrase in ALL CAPS, but you can shorten/sharpen (e.g. phrase=\"step one of three\" → label=\"STEP ONE\")." },
+                },
+                required: ["phrase", "label"],
+              },
+            },
           },
           required: ["angle", "script", "body"],
         },
@@ -129,14 +144,41 @@ export interface VideoScript {
   angle: string;
   script: string;
   caption: string;
+  titleMoments?: Array<{ phrase: string; label: string }>;
+}
+
+// Defensive: cap at 2, drop entries missing required fields, drop ones whose
+// phrase doesn't actually appear in the (lowercased, punctuation-stripped)
+// script — a stale tag would just produce no on-screen title at the worker,
+// but cleaning up here keeps the data tidy.
+function sanitizeTitleMoments(
+  raw: RawVideoScript["titleMoments"],
+  script: string,
+): VideoScript["titleMoments"] {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const haystack = script.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ");
+  const out: Array<{ phrase: string; label: string }> = [];
+  for (const m of raw) {
+    if (!m || typeof m.phrase !== "string" || typeof m.label !== "string") continue;
+    const needle = m.phrase.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
+    if (!needle) continue;
+    if (!haystack.includes(needle)) continue;
+    out.push({ phrase: m.phrase.trim(), label: m.label.trim() });
+    if (out.length >= 2) break;
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 function finalize(raw: RawVideoScript[], language: Language, contentType: ContentType): VideoScript[] {
-  return raw.map((r) => ({
-    angle: r.angle,
-    script: stripDashes(r.script).trim(),
-    caption: buildCaption(language, contentType, r.body),
-  }));
+  return raw.map((r) => {
+    const script = stripDashes(r.script).trim();
+    return {
+      angle: r.angle,
+      script,
+      caption: buildCaption(language, contentType, r.body),
+      titleMoments: sanitizeTitleMoments(r.titleMoments, script),
+    };
+  });
 }
 
 export async function generateVideoScripts(

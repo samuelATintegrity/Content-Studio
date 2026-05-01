@@ -59,6 +59,7 @@ export async function startVideoRender(args: {
   language: Language;
   contentType: ContentType;
   clipUrls: string[];
+  titleMoments?: Array<{ phrase: string; label: string }>;
 }): Promise<{ jobId: string }> {
   const res = await fetch("/api/video/render", {
     method: "POST",
@@ -159,7 +160,13 @@ export async function regenVideo(args: {
   contentType: ContentType;
   angleKey: string;
   clipUrls: string[];
-}): Promise<{ angle: string; script: string; caption: string; jobId: string }> {
+}): Promise<{
+  angle: string;
+  script: string;
+  caption: string;
+  jobId: string;
+  titleMoments?: Array<{ phrase: string; label: string }>;
+}> {
   const res = await fetch("/api/video/regen", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
