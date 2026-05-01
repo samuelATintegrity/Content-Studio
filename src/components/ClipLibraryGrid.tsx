@@ -25,6 +25,19 @@ export function ClipLibraryGrid() {
   const deselectClip = useBatchStore((s) => s.deselectClip);
   const clearClipSelection = useBatchStore((s) => s.clearClipSelection);
 
+  function onRename(clip: MergedClip) {
+    if (clip.kind === "saved") return; // managed via the Saved Sets sidebar
+    const id = clip.origin.libraryClipId;
+    if (!id) return;
+    const current = clip.origin.filename ?? "";
+    const next = window.prompt("Rename this clip:", current);
+    if (next === null) return; // cancelled
+    const trimmed = next.trim();
+    // Empty string clears the name and falls back to the default label
+    // (Slot N for auto, Uploaded for uploads).
+    updateLibraryClip(id, { filename: trimmed || undefined });
+  }
+
   async function onDelete(clip: MergedClip) {
     if (clip.kind === "saved") return; // saved-set clips are governed by sidebar
     const id = clip.origin.libraryClipId;
@@ -184,6 +197,7 @@ export function ClipLibraryGrid() {
               dim={!selected && atCap}
               onClick={() => selectClip(clip.key, clip.videoUrl)}
               onDelete={clip.kind === "saved" ? undefined : () => onDelete(clip)}
+              onRename={clip.kind === "saved" ? undefined : () => onRename(clip)}
             />
           );
         })}
@@ -219,12 +233,14 @@ function ClipTile({
   dim,
   onClick,
   onDelete,
+  onRename,
 }: {
   clip: MergedClip;
   selectionNumber: number | null;
   dim: boolean;
   onClick: () => void;
   onDelete?: () => void;
+  onRename?: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -249,9 +265,11 @@ function ClipTile({
     if (clip.kind === "saved") {
       return clip.origin.setName ? `From: ${clip.origin.setName}` : "Saved set";
     }
-    if (clip.kind === "upload") {
-      return clip.origin.filename ?? "Uploaded";
-    }
+    // Both upload and auto clips: a user-renamed `filename` (stored on the
+    // LibraryClip) wins. Auto clips fall back to "Slot N"; uploads to
+    // "Uploaded".
+    if (clip.origin.filename) return clip.origin.filename;
+    if (clip.kind === "upload") return "Uploaded";
     if (typeof clip.origin.promptIndex === "number") {
       return `Slot ${clip.origin.promptIndex + 1}`;
     }
@@ -299,7 +317,9 @@ function ClipTile({
         />
       )}
 
-      {/* Delete button (auto + upload only; saved-set clips are managed in sidebar) */}
+      {/* Hover actions stack (auto + upload only; saved-set clips are
+          managed in the Saved Sets sidebar). Delete sits in the corner; a
+          rename pencil appears next to it. */}
       {onDelete && (
         <button
           type="button"
@@ -313,6 +333,22 @@ function ClipTile({
           <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <line x1="18" y1="6" x2="6" y2="18" />
             <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      )}
+      {onRename && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRename();
+          }}
+          className="absolute top-2 left-11 w-7 h-7 rounded-full bg-black/60 hover:bg-neutral-700 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
+          title="Rename clip"
+        >
+          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
           </svg>
         </button>
       )}
