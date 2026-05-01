@@ -24,7 +24,10 @@ export interface ComposeArgs {
 
 const DEFAULT_OUTRO_S = 3;
 const DEFAULT_OUTRO_BG = "#0B2545"; // brand primary
-const DEFAULT_MUSIC_VOLUME = 0.12; // ~+3.5dB louder than 0.08, ~+6dB over the original 0.06
+const DEFAULT_MUSIC_VOLUME = 0.15; // ~+2dB louder than the prior 0.12, ~+8dB over the original 0.06
+// Narration is mixed at slightly under unity so the music sits up alongside
+// it more comfortably. ~-1.5 dB; small enough that no make-up gain is needed.
+const NARRATION_VOLUME = 0.85;
 const ASSETS_DIR = process.env.ASSETS_DIR ?? "/app/assets";
 
 // Outro transition timing.
@@ -176,9 +179,10 @@ function buildFilterComplex(args: {
   chains.push(`[${captionedLabel}]subtitles=filename='${escapedAss}':fontsdir='${escapedFonts}',format=yuv420p,setsar=1[v_subbed]`);
   chains.push(`[v_subbed][voutro]concat=n=2:v=1:a=0[v_final]`);
 
-  // Audio: trim narration to real length, then concat with silence (covers outro).
+  // Audio: trim narration to real length, drop it slightly under unity so the
+  // music sits comfortably alongside, then concat with silence (covers outro).
   chains.push(
-    `[${audioInputIndex}:a]atrim=duration=${audioDurationS.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_rates=44100:channel_layouts=stereo[a_main]`,
+    `[${audioInputIndex}:a]atrim=duration=${audioDurationS.toFixed(3)},asetpts=PTS-STARTPTS,volume=${NARRATION_VOLUME.toFixed(3)},aformat=sample_rates=44100:channel_layouts=stereo[a_main]`,
   );
   chains.push(
     `[${silenceInputIndex}:a]aformat=sample_rates=44100:channel_layouts=stereo[a_silence]`,
