@@ -8,6 +8,7 @@ import {
   removeLibraryClip,
   subscribeMergedLibrary,
   updateLibraryClip,
+  type ClipLanguage,
   type MergedClip,
 } from "@/lib/clipLibrary";
 import { listSavedSets } from "@/lib/savedSets";
@@ -15,10 +16,41 @@ import { deleteClipFromStorage, tagClip, uploadClip } from "@/lib/videoClient";
 import { PICKED_CLIP_COUNT } from "@/lib/videoPrompts";
 import { AiClipModal } from "@/components/AiClipModal";
 
+// Six fixed category sections (matches the user's mental model: rooms +
+// pro people). Anything not matching lands in an "Other" bucket.
+type CategoryKey = "kitchen" | "bedroom" | "bathroom" | "exterior" | "agent" | "loan_officer";
+const CATEGORY_ORDER: { key: CategoryKey; label: string; tag: string }[] = [
+  { key: "kitchen",      label: "Kitchen",      tag: "kitchen" },
+  { key: "bedroom",      label: "Bedroom",      tag: "bedroom" },
+  { key: "bathroom",     label: "Bathroom",     tag: "bathroom" },
+  { key: "exterior",     label: "Exterior",     tag: "exterior" },
+  { key: "agent",        label: "Agent",        tag: "agent" },
+  { key: "loan_officer", label: "Loan Officer", tag: "loan_officer" },
+];
+
+const LANGUAGE_ORDER: { key: ClipLanguage; label: string }[] = [
+  { key: "en",    label: "English" },
+  { key: "tl",    label: "Tagalog" },
+  { key: "es",    label: "Spanish" },
+  { key: "zh",    label: "Mandarin" },
+  { key: "multi", label: "Multilingual" },
+];
+
+const LANGUAGE_SHORT: Record<ClipLanguage, string> = {
+  en: "EN",
+  tl: "TL",
+  es: "ES",
+  zh: "ZH",
+  multi: "ALL",
+};
+
+type GroupBy = "none" | "category" | "language";
+
 export function ClipLibraryGrid() {
   const [clips, setClips] = useState<MergedClip[]>(() => listMergedLibrary());
   const [filter, setFilter] = useState("");
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
+  const [groupBy, setGroupBy] = useState<GroupBy>("none");
   const [aiModalOpen, setAiModalOpen] = useState(false);
   const selectedKeys = useBatchStore((s) => s.selectedClipKeys);
   const selectClip = useBatchStore((s) => s.selectClip);
@@ -110,6 +142,34 @@ export function ClipLibraryGrid() {
     return true;
   });
 
+  function onChangeLanguage(clip: MergedClip, language: ClipLanguage) {
+    if (clip.kind === "saved") return; // saved-set clips don't live in our index
+    const id = clip.origin.libraryClipId;
+    if (!id) return;
+    updateLibraryClip(id, { language });
+  }
+
+  // Render one tile. Used both by the flat grid and by GroupedSections so
+  // the per-tile contract (selection, delete, rename, language) is one piece.
+  function renderTile(clip: MergedClip) {
+    const idx = selectedKeys.indexOf(clip.key);
+    const selected = idx >= 0;
+    return (
+      <ClipTile
+        key={clip.key}
+        clip={clip}
+        selectionNumber={selected ? idx + 1 : null}
+        dim={!selected && atCap}
+        onClick={() => selectClip(clip.key, clip.videoUrl)}
+        onDelete={clip.kind === "saved" ? undefined : () => onDelete(clip)}
+        onRename={clip.kind === "saved" ? undefined : () => onRename(clip)}
+        onLanguageChange={
+          clip.kind === "saved" ? undefined : (lang) => onChangeLanguage(clip, lang)
+        }
+      />
+    );
+  }
+
   function toggleTag(tag: string) {
     setActiveTags((prev) => {
       const next = new Set(prev);
@@ -145,13 +205,31 @@ export function ClipLibraryGrid() {
       {/* Search + tag-chip filter. Only render when there's anything to filter. */}
       {(clips.length > 0 || filter) && (
         <div className="mb-3 px-1 flex flex-col gap-2">
-          <input
-            type="text"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="Search filenames, tags…"
-            className="w-full sm:max-w-xs px-3 py-1.5 rounded-full text-[12px] bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 focus:outline-none focus:border-neutral-400 dark:focus:border-neutral-600"
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="text"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Search filenames, tags…"
+              className="flex-1 min-w-[200px] sm:max-w-xs px-3 py-1.5 rounded-full text-[12px] bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 focus:outline-none focus:border-neutral-400 dark:focus:border-neutral-600"
+            />
+            {/* Group-by segmented toggle */}
+            <div className="inline-flex rounded-full border border-neutral-200 dark:border-neutral-800 overflow-hidden text-[11px]">
+              {(["none", "category", "language"] as const).map((g) => (
+                <button
+                  key={g}
+                  onClick={() => setGroupBy(g)}
+                  className={`px-3 py-1.5 transition ${
+                    groupBy === g
+                      ? "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 font-semibold"
+                      : "bg-transparent text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-900"
+                  }`}
+                >
+                  {g === "none" ? "Flat" : g === "category" ? "By category" : "By language"}
+                </button>
+              ))}
+            </div>
+          </div>
           {allTags.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {allTags.map((tag) => {
@@ -183,25 +261,25 @@ export function ClipLibraryGrid() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-        <UploadTile />
-        <AiClipTile onOpen={() => setAiModalOpen(true)} />
-        {filteredClips.map((clip) => {
-          const idx = selectedKeys.indexOf(clip.key);
-          const selected = idx >= 0;
-          return (
-            <ClipTile
-              key={clip.key}
-              clip={clip}
-              selectionNumber={selected ? idx + 1 : null}
-              dim={!selected && atCap}
-              onClick={() => selectClip(clip.key, clip.videoUrl)}
-              onDelete={clip.kind === "saved" ? undefined : () => onDelete(clip)}
-              onRename={clip.kind === "saved" ? undefined : () => onRename(clip)}
-            />
-          );
-        })}
-      </div>
+      {groupBy === "none" ? (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+          <UploadTile />
+          <AiClipTile onOpen={() => setAiModalOpen(true)} />
+          {filteredClips.map((clip) => renderTile(clip))}
+        </div>
+      ) : (
+        <GroupedSections
+          groupBy={groupBy}
+          clips={filteredClips}
+          renderTile={renderTile}
+          extraTiles={
+            <>
+              <UploadTile />
+              <AiClipTile onOpen={() => setAiModalOpen(true)} />
+            </>
+          }
+        />
+      )}
 
       {clips.length === 0 && (
         <p className="mt-3 text-[11px] text-neutral-500 px-1">
@@ -227,6 +305,70 @@ export function ClipLibraryGrid() {
   );
 }
 
+// Group the filtered clips into sections (Category or Language) and render
+// each section as a header + sub-grid. Clips that match multiple category
+// tags appear under each matching section so the user can find them either
+// way; the "Other" bucket catches clips with no matching category.
+function GroupedSections({
+  groupBy,
+  clips,
+  renderTile,
+  extraTiles,
+}: {
+  groupBy: "category" | "language";
+  clips: MergedClip[];
+  renderTile: (clip: MergedClip) => React.ReactNode;
+  extraTiles: React.ReactNode;
+}) {
+  let sections: Array<{ key: string; label: string; clips: MergedClip[] }>;
+  if (groupBy === "category") {
+    sections = CATEGORY_ORDER.map((cat) => ({
+      key: cat.key,
+      label: cat.label,
+      clips: clips.filter((c) => (c.tags ?? []).includes(cat.tag)),
+    }));
+    const matchedKeys = new Set(CATEGORY_ORDER.map((c) => c.tag));
+    const other = clips.filter((c) => {
+      const tags = c.tags ?? [];
+      return !tags.some((t) => matchedKeys.has(t));
+    });
+    if (other.length > 0) sections.push({ key: "other", label: "Other", clips: other });
+  } else {
+    sections = LANGUAGE_ORDER.map((lang) => ({
+      key: lang.key,
+      label: lang.label,
+      clips: clips.filter((c) => (c.language ?? "multi") === lang.key),
+    }));
+  }
+
+  const visible = sections.filter((s) => s.clips.length > 0);
+  const empty = visible.length === 0;
+
+  return (
+    <div className="flex flex-col gap-6">
+      {/* Always show the upload + AI tiles in a top row regardless of grouping. */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+        {extraTiles}
+      </div>
+      {empty ? null : (
+        visible.map((s) => (
+          <section key={s.key}>
+            <h4 className="text-[11px] uppercase tracking-[0.16em] text-neutral-500 font-semibold mb-2 px-1 flex items-baseline gap-2">
+              <span>{s.label}</span>
+              <span className="text-neutral-400 dark:text-neutral-600 font-normal">
+                {s.clips.length}
+              </span>
+            </h4>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+              {s.clips.map((c) => renderTile(c))}
+            </div>
+          </section>
+        ))
+      )}
+    </div>
+  );
+}
+
 function ClipTile({
   clip,
   selectionNumber,
@@ -234,6 +376,7 @@ function ClipTile({
   onClick,
   onDelete,
   onRename,
+  onLanguageChange,
 }: {
   clip: MergedClip;
   selectionNumber: number | null;
@@ -241,6 +384,7 @@ function ClipTile({
   onClick: () => void;
   onDelete?: () => void;
   onRename?: () => void;
+  onLanguageChange?: (lang: ClipLanguage) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -366,8 +510,35 @@ function ClipTile({
         )}
       </div>
 
+      {/* Language pill (top-right, below the selection badge area). Native
+          select for editability — clicking opens a small dropdown. Saved-set
+          clips have no editor: just a static pill. */}
+      {onLanguageChange ? (
+        <label
+          className="absolute bottom-2 right-2 z-10"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <select
+            value={clip.language ?? "multi"}
+            onChange={(e) => onLanguageChange(e.target.value as ClipLanguage)}
+            className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-white/85 hover:bg-white text-neutral-900 backdrop-blur-sm leading-none tabular-nums tracking-wider cursor-pointer focus:outline-none border-0 appearance-none pr-1.5"
+            title="Set clip language"
+          >
+            {LANGUAGE_ORDER.map((l) => (
+              <option key={l.key} value={l.key}>
+                {LANGUAGE_SHORT[l.key]}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : clip.language ? (
+        <span className="absolute bottom-2 right-2 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-white/70 text-neutral-900 backdrop-blur-sm leading-none tabular-nums tracking-wider">
+          {LANGUAGE_SHORT[clip.language]}
+        </span>
+      ) : null}
+
       {/* Origin chip + tags */}
-      <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
+      <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/80 to-transparent pr-12">
         <div className="text-[10px] font-medium text-white/95 truncate">
           {originLabel}
         </div>
@@ -418,6 +589,7 @@ function UploadTile() {
         url: cachedUrl,
         kind: "upload",
         filename,
+        language: "multi",
       });
       // Auto-select the freshly uploaded clip.
       selectClip(clip.id, cachedUrl);

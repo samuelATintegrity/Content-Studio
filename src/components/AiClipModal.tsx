@@ -100,6 +100,7 @@ export function AiClipModal({
         posterUrl: mirroredImage,
         kind: "auto",
         filename: imagePrompt.trim().slice(0, 80),
+        language: "multi",
       });
       // Fire-and-forget vision tag pass — same as auto-archived clips.
       void tagClip(clip.url)

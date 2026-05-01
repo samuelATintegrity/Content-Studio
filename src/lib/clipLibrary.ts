@@ -1,11 +1,17 @@
 "use client";
 
 import { listSavedSets, subscribeSavedSets } from "./savedSets";
-import type { VideoSourcePromptIndex } from "./types";
+import type { Language, VideoSourcePromptIndex } from "./types";
 
 const STORAGE_KEY = "video-clip-library";
 const SCHEMA_VERSION = 1;
 const AUTO_CAP = 200;
+
+// Library language tags. "multi" = the clip is visually language-agnostic
+// (rooms, exteriors, no people speaking) and works across all narrations.
+// "en" | "tl" | "es" | "zh" mirror the app's Language type and are stamped
+// at generation time for from-scratch clips.
+export type ClipLanguage = Language | "multi";
 
 export interface LibraryClip {
   id: string;
@@ -19,6 +25,12 @@ export interface LibraryClip {
   // Auto-tags from a vision pass on the first frame. Populated async after
   // add. `undefined` = not yet scanned, `[]` = scanned, no tags inferred.
   tags?: string[];
+  // Language tag — auto-set for from-scratch clips (the batch's language at
+  // generation time), defaults to "multi" for uploads + AI-generated clips.
+  // User can override via the per-tile language pill. Saved-set clips
+  // inherit from the LibraryClip when the URL matches; otherwise default
+  // to "multi".
+  language?: ClipLanguage;
 }
 
 interface Stored {
@@ -119,6 +131,7 @@ export interface MergedClip {
     batchId?: string;
   };
   tags?: string[];
+  language?: ClipLanguage;
   savedAt: number;
 }
 
@@ -143,6 +156,7 @@ export function listMergedLibrary(): MergedClip[] {
         filename: c.filename,
       },
       tags: c.tags,
+      language: c.language,
       savedAt: c.savedAt,
     });
   }

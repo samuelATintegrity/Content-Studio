@@ -47,12 +47,17 @@ async function archiveAnimatedClip(input: {
             .catch(() => undefined)
         : Promise.resolve<string | undefined>(undefined),
     ]);
+    // Stamp the clip with the batch's language at generation time. The
+    // user can override via the per-tile language pill if the visual
+    // doesn't actually require that language.
+    const language = useBatchStore.getState().language;
     const clip = addLibraryClip({
       url: videoMirror.cachedUrl,
       posterUrl: imageMirror,
       kind: "auto",
       sourcePromptIndex: input.aiPromptIndex,
       batchId: input.batchId,
+      language,
     });
     // Fire-and-forget vision tag pass. Failures are silent — clip just
     // shows up untagged, which the picker UI handles fine.
