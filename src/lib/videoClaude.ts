@@ -21,6 +21,15 @@ VIDEO-SPECIFIC RULES (this is for a 9:16 short-form video with voiceover narrati
 - NO numbers spelled as digits where it sounds awkward ("two thousand" reads better than "2000" sometimes — use your judgment).
 - NO em dashes anywhere. NO bracketed asides. NO stage directions like "(pause)".
 - DECLARATIVE TONE: every sentence in the script must end with a period (or exclamation mark for emphasis) — NEVER a question mark. Statements only. The TTS engine drifts into rising question intonation on short imperatives, so keep clauses confident and grounded. If you want to pose a thought, phrase it as a statement ("Most buyers don't know this." NOT "Did you know?"). The closer especially must read flat and final.
+- STAY HIGH-LEVEL — DO NOT GO INTO THE WEEDS: the script's job is to introduce the topic and get the viewer excited to learn more, NOT to educate them fully. The viewer should come away thinking "this option exists, I might qualify, the right team can help me figure out the details" — never "here's exactly how it works."
+  - NEVER state specific timelines (no "60-90 days", "30 days to close", "in 6 weeks"). If timing comes up, say "the timeline is more straightforward than most people think" or hand off to the team.
+  - NEVER state specific dollar amounts (the only allowed money phrasing is the framing "$0 down"; no specific grant sizes, fees, closing costs, etc.).
+  - NEVER state specific percentages (interest rates, down-payment percentages, minimum credit scores, income-limit percentages).
+  - NEVER walk through a step-by-step process. Big-picture only.
+  - When real constraints exist (income limits, area limits, fund availability, credit considerations), name them GENERICALLY: "area and income limits apply", "credit considerations apply", "funds are limited each year".
+  - Always hand off to a professional rather than explaining the mechanics: "the right team can talk you through whether this fits your situation", "an expert can walk you through what fits", etc. THEN the closer.
+  - This rule overrides the angle's brief. If the angle brief mentions a timeline, fees, percentages, minimum scores, or income-limit specifics, IGNORE those specifics in the narration — keep the angle's TOPIC but stay high-level. The IG caption (body field) can carry slightly more nuance, but still no invented numbers.
+  - Mental template (don't copy verbatim, but match the shape): "[Hook / myth-bust]. [The basic idea in 1–2 sentences]. [Generic constraints: 'X and Y apply']. The right team can [help / discuss your options]. Click the link to get connected today."
 - The "caption" is the IG body text (3-5 sentences + 3-5 hashtags), exactly as for static posts. Hashtags on a NEW line at the end.
 - Do not repeat the script verbatim in the caption — the caption complements the video, it doesn't transcribe it.
 `.trim();
