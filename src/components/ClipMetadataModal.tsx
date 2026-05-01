@@ -8,6 +8,7 @@ import {
   type LibraryClip,
 } from "@/lib/clipLibrary";
 import { AVATARS } from "@/lib/avatars";
+import { useBatchStore } from "@/store/batchStore";
 
 // Same six categories the picker groups by — the modal exposes them as
 // quick-toggle chips so users can always slot a clip into the right
@@ -68,6 +69,24 @@ export function ClipMetadataModal({
     clip.captionCutoffPhrase ?? "",
   );
   const inputRef = useRef<HTMLInputElement>(null);
+  const sidebarAvatarName = useBatchStore((s) => s.selectedAvatarName);
+
+  // When the user flips Role to Intro/Outro and hasn't picked an avatar
+  // yet, pre-select the sidebar's current avatar if any (most likely
+  // intent). Falls back to the only registered avatar when there's just
+  // one. Saves a click + prevents the silent-mistag trap where the
+  // Avatar pill is shown but not actually selected.
+  useEffect(() => {
+    if (role === "filler") return;
+    if (avatarName) return;
+    if (sidebarAvatarName) {
+      setAvatarName(sidebarAvatarName);
+      return;
+    }
+    if (AVATARS.length === 1 && AVATARS[0]) {
+      setAvatarName(AVATARS[0].name);
+    }
+  }, [role, avatarName, sidebarAvatarName]);
 
   // Esc closes; nothing async runs in this modal so always allow close.
   useEffect(() => {
