@@ -24,7 +24,7 @@ export interface ComposeArgs {
 
 const DEFAULT_OUTRO_S = 3;
 const DEFAULT_OUTRO_BG = "#0B2545"; // brand primary
-const DEFAULT_MUSIC_VOLUME = 0.08; // ~+2.5dB louder than the prior 0.06 default
+const DEFAULT_MUSIC_VOLUME = 0.12; // ~+3.5dB louder than 0.08, ~+6dB over the original 0.06
 const ASSETS_DIR = process.env.ASSETS_DIR ?? "/app/assets";
 
 // Outro transition timing.
