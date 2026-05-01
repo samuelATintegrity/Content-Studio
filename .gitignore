@@ -39,6 +39,12 @@ yarn-error.log*
 # vercel
 .vercel
 
+# worker scratch — local staging for video files being compressed/edited
+# before upload to R2. Bundled worker assets (music/, fonts/, outro.png)
+# stay tracked.
+worker/assets/9x16 videos/
+worker/assets/*.mp4
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
