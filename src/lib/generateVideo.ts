@@ -6,11 +6,18 @@ import {
   generateSourceImage,
   mirrorClip,
   regenVideo,
+  startInfluencerRender,
+  startInfluencerScript,
   startVideoBatch,
   startVideoRender,
   type AnimationModel,
 } from "@/lib/videoClient";
-import { VIDEO_PROMPT_COUNT } from "@/lib/videoPrompts";
+import {
+  INFLUENCER_MIDDLE_MAX,
+  INFLUENCER_MIDDLE_MIN,
+  VIDEO_PROMPT_COUNT,
+} from "@/lib/videoPrompts";
+import { getAvatar } from "@/lib/avatars";
 
 // Animation model for a given prompt category. Seedance is sharper and
 // supports 1080p, but its safety filter rejects face-forward people shots.
@@ -20,7 +27,7 @@ function modelForPromptIndex(aiPromptIndex: VideoSourcePromptIndex): AnimationMo
   return aiPromptIndex === 4 ? "kling" : "seedance";
 }
 import { saveSet, type SavedSet, type SavedSetSlot } from "@/lib/savedSets";
-import { addLibraryClip, updateLibraryClip } from "@/lib/clipLibrary";
+import { addLibraryClip, listMergedLibrary, updateLibraryClip } from "@/lib/clipLibrary";
 import { tagClip } from "@/lib/videoClient";
 import { PICKED_CLIP_COUNT } from "@/lib/videoPrompts";
 import type {
@@ -652,12 +659,172 @@ export async function saveCurrentSet(name: string): Promise<SavedSet> {
   return saveSet(name, mirrored);
 }
 
+// Influencer mode: one render per click. Pre-recorded intro + AI-narrated
+// middle (over filler clips) + pre-recorded outro. Skips the from-scratch
+// image set entirely; no _renderQueues machinery since there's only one
+// VideoPost.
+export async function generateInfluencerBatch(args: {
+  avatarName: string;
+  introClipUrl: string;
+  middleClipUrls: string[];
+  outroClipUrl: string;
+}): Promise<void> {
+  const avatar = getAvatar(args.avatarName);
+  if (!avatar) {
+    throw new Error(`Unknown avatar: ${args.avatarName}`);
+  }
+  if (
+    args.middleClipUrls.length < INFLUENCER_MIDDLE_MIN ||
+    args.middleClipUrls.length > INFLUENCER_MIDDLE_MAX
+  ) {
+    throw new Error(
+      `Influencer middle needs ${INFLUENCER_MIDDLE_MIN}-${INFLUENCER_MIDDLE_MAX} clips, got ${args.middleClipUrls.length}`,
+    );
+  }
+
+  const store = useBatchStore.getState();
+  const {
+    language,
+    contentType,
+    setLoading,
+    setError,
+    setVideoPosts,
+    setImageSlots,
+    clearClipSelection,
+  } = store;
+
+  if (!avatar.supportedLanguages.includes(language)) {
+    throw new Error(
+      `Avatar "${avatar.name}" does not support ${language}. Update AVATARS.supportedLanguages.`,
+    );
+  }
+
+  setLoading(true);
+  setError(null);
+  // Influencer mode skips the image set panel entirely.
+  setImageSlots([]);
+
+  const batchId = `inf-${Date.now()}`;
+  const postId = `${batchId}-0`;
+
+  // Seed a single placeholder video post so the card renders immediately.
+  const placeholder: VideoPost = {
+    id: postId,
+    angle: "influencer",
+    script: "",
+    caption: "",
+    jobId: null,
+    state: "waiting_images",
+    progress: 0,
+    mode: "influencer",
+    avatarName: avatar.name,
+    introClipUrl: args.introClipUrl,
+    outroClipUrl: args.outroClipUrl,
+  };
+  setVideoPosts([placeholder]);
+  clearClipSelection();
+  // Reset bookend selections so the user has a clean slate next click.
+  store.setSelectedIntroClipUrl(null);
+  store.setSelectedOutroClipUrl(null);
+
+  try {
+    const { script, caption } = await startInfluencerScript({
+      language,
+      contentType,
+      avatarName: avatar.name,
+    });
+
+    useBatchStore.getState().updateVideoPost(postId, {
+      script,
+      caption,
+      state: "queued",
+    });
+
+    // Look up the picked bookend clips so we can forward each one's
+    // captionCutoffPhrase to the worker. The library is keyed by URL.
+    const merged = listMergedLibrary();
+    const introClip = merged.find((c) => c.videoUrl === args.introClipUrl);
+    const outroClip = merged.find((c) => c.videoUrl === args.outroClipUrl);
+
+    const { jobId } = await startInfluencerRender({
+      script,
+      language,
+      contentType,
+      voiceId: avatar.voiceId,
+      introClipUrl: args.introClipUrl,
+      introCaptionCutoffPhrase: introClip?.captionCutoffPhrase,
+      middleClipUrls: args.middleClipUrls,
+      outroClipUrl: args.outroClipUrl,
+      outroCaptionCutoffPhrase: outroClip?.captionCutoffPhrase,
+    });
+
+    useBatchStore.getState().updateVideoPost(postId, {
+      jobId,
+      state: "queued",
+      progress: 0,
+    });
+  } catch (e) {
+    useBatchStore.getState().updateVideoPost(postId, {
+      state: "failed",
+      error: e instanceof Error ? e.message : "influencer render failed",
+    });
+    setError(e instanceof Error ? e.message : "influencer render failed");
+  } finally {
+    setLoading(false);
+  }
+}
+
 // Per-card regeneration. Reuses the existing clipUrls from the live image
 // set — only Claude + Railway re-run, no new fal.ai charges.
 export async function regenerateOneVideo(postId: string): Promise<void> {
   const state = useBatchStore.getState();
   const post = state.videoPosts.find((v) => v.id === postId);
   if (!post) return;
+
+  // Influencer mode: re-run the same intro/middle/outro pipeline with a
+  // fresh middle script. The middle clip URLs are not stored on the post
+  // (they come from selectedClipUrls in narration mode but are consumed at
+  // dispatch time in influencer mode), so we surface a guidance error if
+  // the user has cleared their picks since the last render.
+  if (post.mode === "influencer") {
+    if (!post.avatarName || !post.introClipUrl || !post.outroClipUrl) {
+      state.updateVideoPost(postId, {
+        state: "failed",
+        error: "Cannot regenerate: missing influencer metadata.",
+      });
+      return;
+    }
+    const middleClipUrls = state.selectedClipUrls;
+    if (middleClipUrls.length < INFLUENCER_MIDDLE_MIN) {
+      state.updateVideoPost(postId, {
+        state: "failed",
+        error:
+          "Re-pick the middle filler clips in the library, then click Generate again.",
+      });
+      return;
+    }
+    state.updateVideoPost(postId, {
+      state: "queued",
+      progress: 0,
+      jobId: null,
+      error: undefined,
+      videoUrl: undefined,
+    });
+    try {
+      await generateInfluencerBatch({
+        avatarName: post.avatarName,
+        introClipUrl: post.introClipUrl,
+        middleClipUrls,
+        outroClipUrl: post.outroClipUrl,
+      });
+    } catch (e) {
+      useBatchStore.getState().updateVideoPost(postId, {
+        state: "failed",
+        error: e instanceof Error ? e.message : "regen failed",
+      });
+    }
+    return;
+  }
 
   // Pull clipUrls from the current image set (in canonical order).
   const clipUrls: string[] = [];

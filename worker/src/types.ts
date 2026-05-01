@@ -30,12 +30,28 @@ export interface JobState {
   updatedAt: number;
 }
 
+export type RenderMode = "narration" | "influencer";
+
 // Body of POST /render from Vercel.
 export interface RenderRequest {
   script: string;          // narration text
   language: Language;      // selects voice + caption styling
   contentType: ContentType;// kept for logging / future per-type music selection
   clipUrls: string[];      // pre-made 9:16 clips (Seedance-animated images), in order
+  // Influencer mode: a single pre-recorded intro clip + N filler middle
+  // clips (clipUrls) + a pre-recorded outro clip. Intro/outro carry their
+  // own audio; the middle gets TTS narration + karaoke captions; the
+  // intro/outro audio is transcribed via ElevenLabs STT to drive their
+  // own karaoke captions. captionCutoffPhrase, when set on a bookend,
+  // drops captions from that phrase onward (e.g. to clear the canvas
+  // before a brand mention so the editor can drop a title card on top).
+  // No background music in this mode.
+  mode?: RenderMode;
+  voiceId?: string;
+  introClipUrl?: string;
+  introCaptionCutoffPhrase?: string;
+  outroClipUrl?: string;
+  outroCaptionCutoffPhrase?: string;
 }
 
 export interface RenderResponse {

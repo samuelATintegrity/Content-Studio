@@ -17,6 +17,7 @@ import {
   type SavedSet,
 } from "@/lib/savedSets";
 import { useSavedSet } from "@/lib/generateVideo";
+import { avatarsForLanguage } from "@/lib/avatars";
 
 const FORMATS: Format[] = ["static", "video"];
 const LANGS: Language[] = ["en", "tl", "es", "zh"];
@@ -45,8 +46,18 @@ function visibleContentTypes(language: Language, format: Format): ContentType[] 
 }
 
 export function Sidebar() {
-  const { format, language, contentType, setFormat, setLanguage, setContentType } =
-    useBatchStore();
+  const {
+    format,
+    language,
+    contentType,
+    subMode,
+    selectedAvatarName,
+    setFormat,
+    setLanguage,
+    setContentType,
+    setSubMode,
+    setSelectedAvatarName,
+  } = useBatchStore();
 
   // If the user's current content type becomes invisible after a language
   // or format swap (e.g. switching to video when zero_down_generic was
@@ -91,13 +102,31 @@ export function Sidebar() {
       {format === "video" && (
         <Section title="Sub-mode">
           <div className="flex flex-col gap-2">
-            <Pill selected>Narration · footage</Pill>
-            <Pill muted>Vlogger · split-screen · soon</Pill>
+            <Pill
+              selected={subMode === "narration"}
+              onClick={() => setSubMode("narration")}
+            >
+              Narration · footage
+            </Pill>
+            <Pill
+              selected={subMode === "influencer"}
+              onClick={() => setSubMode("influencer")}
+            >
+              Influencer
+            </Pill>
           </div>
         </Section>
       )}
 
-      {format === "video" && <SavedSetsSection />}
+      {format === "video" && subMode === "influencer" && (
+        <AvatarSection
+          language={language}
+          selectedAvatarName={selectedAvatarName}
+          onPick={setSelectedAvatarName}
+        />
+      )}
+
+      {format === "video" && subMode === "narration" && <SavedSetsSection />}
 
       <Section title="Language">
         <div className="grid grid-cols-2 gap-2">
@@ -124,6 +153,63 @@ export function Sidebar() {
         </div>
       </Section>
     </aside>
+  );
+}
+
+function AvatarSection({
+  language,
+  selectedAvatarName,
+  onPick,
+}: {
+  language: Language;
+  selectedAvatarName: string | null;
+  onPick: (name: string | null) => void;
+}) {
+  const avatars = avatarsForLanguage(language);
+  if (avatars.length === 0) {
+    return (
+      <Section title="Avatar">
+        <p className="text-[11px] text-neutral-500 leading-snug">
+          No avatars available in {LANGUAGE_LABELS[language]}. Add one to
+          <code className="mx-1 text-neutral-700 dark:text-neutral-300">
+            src/lib/avatars.ts
+          </code>
+          with this language in <code>supportedLanguages</code>.
+        </p>
+      </Section>
+    );
+  }
+  return (
+    <Section title="Avatar">
+      <div className="flex flex-col gap-2">
+        {avatars.map((a) => {
+          const isSelected = selectedAvatarName === a.name;
+          return (
+            <button
+              key={a.name}
+              onClick={() => onPick(isSelected ? null : a.name)}
+              className={`w-full flex items-center gap-3 px-3 py-2 rounded-2xl text-[13px] border transition leading-snug text-left ${
+                isSelected
+                  ? "bg-neutral-900 text-white border-neutral-900 dark:bg-neutral-100 dark:text-neutral-900 dark:border-neutral-100"
+                  : "bg-white dark:bg-neutral-950 text-neutral-800 dark:text-neutral-200 border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-900"
+              }`}
+            >
+              {a.imageUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={a.imageUrl}
+                  alt=""
+                  className="w-9 h-9 rounded-full object-cover bg-neutral-200 dark:bg-neutral-800 shrink-0"
+                />
+              ) : (
+                <div className="w-9 h-9 rounded-full bg-neutral-200 dark:bg-neutral-800 shrink-0" />
+              )}
+              <span className="font-medium">{a.name}</span>
+            </button>
+          );
+        })}
+      </div>
+    </Section>
   );
 }
 

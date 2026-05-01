@@ -13,6 +13,11 @@ const AUTO_CAP = 200;
 // at generation time for from-scratch clips.
 export type ClipLanguage = Language | "multi";
 
+// Influencer-mode clip role. Undefined = filler (the default for every
+// existing clip). Set to "intro" or "outro" via the metadata modal to
+// dedicate a clip to an avatar's pre-recorded bookends.
+export type ClipRole = "intro" | "outro";
+
 export interface LibraryClip {
   id: string;
   url: string;
@@ -31,6 +36,16 @@ export interface LibraryClip {
   // inherit from the LibraryClip when the URL matches; otherwise default
   // to "multi".
   language?: ClipLanguage;
+  // Influencer-mode bookend role. Only meaningful when avatarName is also
+  // set. Existing clips without these fields behave as filler.
+  role?: ClipRole;
+  avatarName?: string;
+  // Influencer-mode caption cutoff. When this phrase appears in the
+  // transcribed bookend audio, ALL words from the cutoff onward are
+  // dropped from the burned captions. Used to clear the canvas right
+  // before a brand mention so the user can drop a title card on top.
+  // Empty / undefined = caption everything.
+  captionCutoffPhrase?: string;
 }
 
 interface Stored {
@@ -132,6 +147,9 @@ export interface MergedClip {
   };
   tags?: string[];
   language?: ClipLanguage;
+  role?: ClipRole;
+  avatarName?: string;
+  captionCutoffPhrase?: string;
   savedAt: number;
 }
 
@@ -157,6 +175,9 @@ export function listMergedLibrary(): MergedClip[] {
       },
       tags: c.tags,
       language: c.language,
+      role: c.role,
+      avatarName: c.avatarName,
+      captionCutoffPhrase: c.captionCutoffPhrase,
       savedAt: c.savedAt,
     });
   }

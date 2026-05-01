@@ -4,12 +4,19 @@ import { join } from "node:path";
 import { fail, getJob, setState, updateJob } from "./jobs.js";
 import { uploadVideo } from "./r2.js";
 import { synthesize } from "./elevenlabs.js";
-import { buildAssSubtitles, type SubtitleStyle } from "./subtitles.js";
+import {
+  buildAssSubtitles,
+  buildMultiSegmentAssSubtitles,
+  type SubtitleStyle,
+} from "./subtitles.js";
 import { voiceIdFor } from "./voices.js";
 import { downloadClips } from "./clipDownload.js";
-import { compose } from "./ffmpeg.js";
+import { compose, composeInfluencer } from "./ffmpeg.js";
 import { pickMusicTrack } from "./music.js";
+import { probeDurationS } from "./probe.js";
+import { applyCaptionCutoff, transcribeMediaFile } from "./transcribe.js";
 import type { RenderRequest } from "./types.js";
+import type { WordTiming } from "./elevenlabs.js";
 
 // Subtitle styling. White all-caps with a strong yellow highlight on the
 // currently-spoken word, sitting mid-lower in the 1080x1920 frame and
@@ -52,6 +59,11 @@ export async function runPipeline(jobId: string, req: RenderRequest): Promise<vo
   const workDir = await mkdtemp(join(tmpdir(), `cs-${jobId}-`));
 
   try {
+    if (req.mode === "influencer") {
+      await runInfluencerPipeline(jobId, req, workDir);
+      return;
+    }
+
     // ── Stage: TTS ────────────────────────────────────────────────────
     setState(jobId, "tts", 0.1);
     const tts = await synthesize(req.script, voiceIdFor(req.language), workDir);
@@ -107,5 +119,123 @@ export async function runPipeline(jobId: string, req: RenderRequest): Promise<vo
     fail(jobId, message);
   } finally {
     await rm(workDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+// Influencer pipeline: pre-recorded intro + AI-narrated middle + pre-recorded
+// outro, all concatenated. No background music. Karaoke captions span all
+// three segments — intro/outro words come from ElevenLabs STT, middle
+// words from the TTS alignment. Per-bookend captionCutoffPhrase truncates
+// captions before brand mentions so the user can drop title cards on top.
+async function runInfluencerPipeline(
+  jobId: string,
+  req: RenderRequest,
+  workDir: string,
+): Promise<void> {
+  if (!req.introClipUrl || !req.outroClipUrl) {
+    throw new Error("influencer mode requires introClipUrl and outroClipUrl");
+  }
+
+  // ── Stage: TTS (avatar voice) ──────────────────────────────────────
+  setState(jobId, "tts", 0.1);
+  const voiceId = req.voiceId ?? voiceIdFor(req.language);
+  const tts = await synthesize(req.script, voiceId, workDir);
+  if (tts.durationS <= 0) {
+    throw new Error("ElevenLabs returned zero-duration audio");
+  }
+
+  // ── Stage: Footage download (intro + middle + outro) ───────────────
+  setState(jobId, "footage", 0.3);
+  const introDir = await mkdtemp(join(workDir, "intro-"));
+  const middleDir = await mkdtemp(join(workDir, "middle-"));
+  const outroDir = await mkdtemp(join(workDir, "outro-"));
+  const [introClips, middleClips, outroClips] = await Promise.all([
+    downloadClips([req.introClipUrl], introDir),
+    downloadClips(req.clipUrls, middleDir),
+    downloadClips([req.outroClipUrl], outroDir),
+  ]);
+  const introPath = introClips[0]!.filePath;
+  const outroPath = outroClips[0]!.filePath;
+  const middlePaths = middleClips.map((c) => c.filePath);
+
+  const [introDurationS, outroDurationS] = await Promise.all([
+    probeDurationS(introPath),
+    probeDurationS(outroPath),
+  ]);
+
+  // ── Stage: Transcribe bookends + build merged ASS ──────────────────
+  // Run intro + outro STT in parallel. STT failures fall back to no
+  // captions on that segment so the render still completes — the middle
+  // TTS captions are unaffected.
+  const [introWords, outroWords] = await Promise.all([
+    transcribeBookendSafe(introPath, req.introCaptionCutoffPhrase),
+    transcribeBookendSafe(outroPath, req.outroCaptionCutoffPhrase),
+  ]);
+
+  // Time offsets in the final concatenated video:
+  //   intro:  0
+  //   middle: introDurationS
+  //   outro:  introDurationS + ttsDurationS  (the audio drives the middle
+  //           length; visual is padded to match — see ffmpeg)
+  const ass = buildMultiSegmentAssSubtitles(
+    [
+      { words: introWords, offsetS: 0 },
+      { words: tts.words, offsetS: introDurationS },
+      {
+        words: outroWords,
+        offsetS: introDurationS + tts.durationS,
+      },
+    ],
+    SUBTITLE_STYLE,
+  );
+  const assPath = join(workDir, "subs.ass");
+  await writeFile(assPath, ass, "utf8");
+
+  // ── Stage: Render ───────────────────────────────────────────────────
+  setState(jobId, "rendering", 0.6);
+  const finalPath = join(workDir, "final.mp4");
+  await composeInfluencer({
+    introPath,
+    middleClipPaths: middlePaths,
+    outroPath,
+    introDurationS,
+    outroDurationS,
+    audioPath: tts.mp3Path,
+    audioDurationS: tts.durationS,
+    assPath,
+    fontsDir: FONTS_DIR,
+    outPath: finalPath,
+  });
+
+  // ── Stage: Upload ───────────────────────────────────────────────────
+  setState(jobId, "uploading", 0.9);
+  const url = await uploadVideo(finalPath, `videos/${jobId}.mp4`);
+
+  const totalDurationS = introDurationS + tts.durationS + outroDurationS;
+  updateJob(jobId, {
+    state: "ready",
+    progress: 1,
+    videoUrl: url,
+    durationS: totalDurationS,
+  });
+}
+
+// Transcribe a bookend file and apply the optional cutoff phrase. Returns
+// [] on STT failure so the caller can render uncaptioned over that segment
+// rather than failing the whole job.
+async function transcribeBookendSafe(
+  filePath: string,
+  cutoffPhrase: string | undefined,
+): Promise<WordTiming[]> {
+  try {
+    const words = await transcribeMediaFile(filePath);
+    return applyCaptionCutoff(words, cutoffPhrase);
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[influencer] STT failed for ${filePath}; rendering without bookend captions.`,
+      e,
+    );
+    return [];
   }
 }

@@ -2,8 +2,17 @@
 
 import { useBatchStore } from "@/store/batchStore";
 import { generateBatch } from "@/lib/generate";
-import { generateMixedBatch, generateVideoBatch, renderWithPickedClips } from "@/lib/generateVideo";
-import { PICKED_CLIP_COUNT } from "@/lib/videoPrompts";
+import {
+  generateInfluencerBatch,
+  generateMixedBatch,
+  generateVideoBatch,
+  renderWithPickedClips,
+} from "@/lib/generateVideo";
+import {
+  INFLUENCER_MIDDLE_MAX,
+  INFLUENCER_MIDDLE_MIN,
+  PICKED_CLIP_COUNT,
+} from "@/lib/videoPrompts";
 
 export function GenerateFAB() {
   const loading = useBatchStore((s) => s.loading);
@@ -12,7 +21,12 @@ export function GenerateFAB() {
   const imageSlots = useBatchStore((s) => s.imageSlots);
   const format = useBatchStore((s) => s.format);
   const selectedClipUrls = useBatchStore((s) => s.selectedClipUrls);
+  const subMode = useBatchStore((s) => s.subMode);
+  const selectedAvatarName = useBatchStore((s) => s.selectedAvatarName);
+  const selectedIntroClipUrl = useBatchStore((s) => s.selectedIntroClipUrl);
+  const selectedOutroClipUrl = useBatchStore((s) => s.selectedOutroClipUrl);
   const isVideo = format === "video";
+  const isInfluencer = isVideo && subMode === "influencer";
   const selectedCount = selectedClipUrls.length;
 
   // Block re-trigger while an image set is mid-flight (any slot not finished
@@ -24,14 +38,56 @@ export function GenerateFAB() {
     );
 
   const isPicking = isVideo && selectedCount > 0;
-  const canRenderPicked = isVideo && selectedCount === PICKED_CLIP_COUNT;
-  const canRenderMixed = isVideo && selectedCount > 0 && selectedCount < PICKED_CLIP_COUNT;
+  const canRenderPicked = isVideo && !isInfluencer && selectedCount === PICKED_CLIP_COUNT;
+  const canRenderMixed =
+    isVideo && !isInfluencer && selectedCount > 0 && selectedCount < PICKED_CLIP_COUNT;
   const aiFillCount = canRenderMixed ? PICKED_CLIP_COUNT - selectedCount : 0;
 
-  const disabled = loading || (isVideo && imageSetBusy);
+  // Influencer flow gating. Each branch returns its own label/disabled.
+  let influencerLabel: string | null = null;
+  let influencerReady = false;
+  if (isInfluencer) {
+    if (!selectedAvatarName) {
+      influencerLabel = "Pick an avatar";
+    } else if (!selectedIntroClipUrl) {
+      influencerLabel = "Pick an intro clip";
+    } else if (selectedCount < INFLUENCER_MIDDLE_MIN) {
+      const need = INFLUENCER_MIDDLE_MIN - selectedCount;
+      influencerLabel = `Pick ${need} more middle clip${need === 1 ? "" : "s"}`;
+    } else if (selectedCount > INFLUENCER_MIDDLE_MAX) {
+      influencerLabel = `Too many middle clips (max ${INFLUENCER_MIDDLE_MAX})`;
+    } else if (!selectedOutroClipUrl) {
+      influencerLabel = "Pick an outro clip";
+    } else {
+      influencerLabel = `Render influencer (${selectedCount} middle)`;
+      influencerReady = true;
+    }
+  }
+
+  const disabled =
+    loading ||
+    (isVideo && imageSetBusy) ||
+    (isInfluencer && !influencerReady);
 
   function onClick() {
     if (disabled) return;
+    if (isInfluencer) {
+      if (!influencerReady) return;
+      if (
+        !selectedAvatarName ||
+        !selectedIntroClipUrl ||
+        !selectedOutroClipUrl
+      ) {
+        return;
+      }
+      void generateInfluencerBatch({
+        avatarName: selectedAvatarName,
+        introClipUrl: selectedIntroClipUrl,
+        middleClipUrls: selectedClipUrls,
+        outroClipUrl: selectedOutroClipUrl,
+      });
+      return;
+    }
     if (isVideo) {
       if (canRenderPicked) {
         void renderWithPickedClips(selectedClipUrls);
@@ -50,6 +106,7 @@ export function GenerateFAB() {
   let label: string;
   if (loading) label = isVideo ? "Starting batch" : "Generating";
   else if (isVideo && imageSetBusy) label = "Image set in progress";
+  else if (isInfluencer) label = influencerLabel ?? "Render influencer";
   else if (canRenderPicked) label = "Render with selected";
   else if (canRenderMixed) label = `Generate (${selectedCount} pick${selectedCount === 1 ? "" : "s"} + ${aiFillCount} AI)`;
   else if (isVideo) label = hasVideos ? "Regenerate batch" : "Generate from scratch";

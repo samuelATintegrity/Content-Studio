@@ -171,3 +171,116 @@ export async function generateVideoScripts(
     throw friendlyError(e);
   }
 }
+
+// ── Influencer middle script ─────────────────────────────────────────
+//
+// Influencer mode produces a short conversational paragraph that bridges a
+// pre-recorded avatar intro and outro. The avatar's recorded intro is the
+// hook ("if you're buying a home, you need to check out Agent Match") and
+// their recorded outro is the closer — so the middle script doesn't need
+// either, just a warm second-person elaboration of the value prop.
+
+const INFLUENCER_VOICE_RULES = `
+INFLUENCER-MIDDLE-SCRIPT RULES (this script is the AI-generated middle of a 9:16 video; the intro and outro are pre-recorded videos of an influencer talking on camera):
+- Voice: conversational, second person ("you", "your"), warm and casual. Read aloud by an AI voice in the influencer's avatar voice.
+- DO NOT include a hook opener — the intro clip is the hook. Start mid-conversation as if the avatar just finished saying "you need to check out Agent Match".
+- DO NOT include a verbal closer — the outro clip is the closer. NEVER say "click the link", "go to", any URL, hashtags, "DM me", or "fill out the form".
+- Target 45–60 words (≈ 15–20 seconds at a normal speaking pace). Tight is better.
+- DECLARATIVE TONE: end every sentence with a period or exclamation mark — NEVER a question mark. The TTS engine drifts into rising question intonation on short imperatives, so keep clauses confident and grounded.
+- NO em dashes. NO bracketed asides. NO stage directions.
+- STAY HIGH-LEVEL — DO NOT GO INTO THE WEEDS:
+  - NEVER state specific timelines, dollar amounts, percentages, or step-by-step processes.
+  - When real constraints exist (income limits, area limits, fund availability, credit considerations), name them GENERICALLY: "area and income limits apply", "credit considerations apply".
+  - Always hand off to a professional rather than explaining mechanics: "the right team can talk you through whether this fits your situation".
+- Mental shape (don't copy verbatim): "Here's why I trust them. [One or two specific value-prop points from the reference document, plain-spoken]. [Generic constraint, if relevant]. The right team will figure out what fits you."
+- The "caption" is the IG body text (3-5 sentences + 3-5 hashtags), exactly as for static posts. Hashtags on a NEW line at the end. Do not repeat the script verbatim in the caption.
+`.trim();
+
+interface RawInfluencerScript {
+  script: string;
+  body: string;
+}
+
+const INFLUENCER_TOOL = {
+  name: "influencer_middle_result",
+  description:
+    "Return the conversational middle script and IG caption for an influencer-mode video. Call this exactly once.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      script: {
+        type: "string",
+        description:
+          "Voiceover middle script: 45-60 words, second-person, no hook, no closer, no URLs, no hashtags, no em dashes.",
+      },
+      body: {
+        type: "string",
+        description:
+          "IG caption body in the requested language: 3-5 sentences, then a newline and 3-5 hashtags. No URLs. No DM/CTA language.",
+      },
+    },
+    required: ["script", "body"],
+  },
+};
+
+function buildInfluencerUserPrompt(
+  language: Language,
+  contentType: ContentType,
+  avatarName: string,
+): string {
+  const spec = CONTENT_TYPE_SPECS[contentType];
+  const refDocSection = spec.referenceDocument
+    ? `\n\nREFERENCE DOCUMENT (rephrase ideas naturally, never copy verbatim, never invent claims beyond this):\n${spec.referenceDocument}\n`
+    : "";
+
+  return `Language: ${LANGUAGE_LABELS[language]}
+Topic: ${spec.topic}
+Guardrails: ${spec.guardrails}${refDocSection}
+
+The avatar's name is "${avatarName}". They have already introduced Agent Match in a pre-recorded clip and will close out in a pre-recorded outro. Your job is the warm, conversational middle that elaborates on the value prop.
+
+${INFLUENCER_VOICE_RULES}
+
+Return your result by calling the influencer_middle_result tool.`;
+}
+
+function extractInfluencerScript(resp: Anthropic.Messages.Message): RawInfluencerScript {
+  const tu = resp.content.find((b) => b.type === "tool_use");
+  if (!tu || tu.type !== "tool_use") {
+    throw new Error("Claude did not call the influencer_middle_result tool");
+  }
+  const input = tu.input as { script?: string; body?: string };
+  if (typeof input.script !== "string" || typeof input.body !== "string") {
+    throw new Error("influencer_middle_result tool call missing 'script' or 'body'");
+  }
+  return { script: input.script, body: input.body };
+}
+
+export async function generateInfluencerMiddleScript(
+  language: Language,
+  contentType: ContentType,
+  avatarName: string,
+): Promise<{ script: string; caption: string }> {
+  try {
+    const resp = await client().messages.create({
+      model: MODEL,
+      max_tokens: 2048,
+      system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
+      tools: [INFLUENCER_TOOL],
+      tool_choice: { type: "tool", name: INFLUENCER_TOOL.name },
+      messages: [
+        {
+          role: "user",
+          content: buildInfluencerUserPrompt(language, contentType, avatarName),
+        },
+      ],
+    });
+    const raw = extractInfluencerScript(resp);
+    return {
+      script: stripDashes(raw.script).trim(),
+      caption: buildCaption(language, contentType, raw.body),
+    };
+  } catch (e) {
+    throw friendlyError(e);
+  }
+}

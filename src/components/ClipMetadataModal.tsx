@@ -4,8 +4,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   updateLibraryClip,
   type ClipLanguage,
+  type ClipRole,
   type LibraryClip,
 } from "@/lib/clipLibrary";
+import { AVATARS } from "@/lib/avatars";
 
 // Same six categories the picker groups by — the modal exposes them as
 // quick-toggle chips so users can always slot a clip into the right
@@ -32,6 +34,8 @@ function normalizeTag(s: string): string {
   return s.toLowerCase().trim().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
 }
 
+type RoleSelection = "filler" | ClipRole;
+
 interface InitialClip {
   libraryClipId: string;
   // Optional preview surfaces — modal renders whichever is available.
@@ -40,6 +44,9 @@ interface InitialClip {
   filename?: string;
   language?: ClipLanguage;
   tags?: string[];
+  role?: ClipRole;
+  avatarName?: string;
+  captionCutoffPhrase?: string;
 }
 
 export function ClipMetadataModal({
@@ -55,6 +62,11 @@ export function ClipMetadataModal({
   const [language, setLanguage] = useState<ClipLanguage>(clip.language ?? "multi");
   const [tags, setTags] = useState<string[]>(clip.tags ?? []);
   const [tagInput, setTagInput] = useState("");
+  const [role, setRole] = useState<RoleSelection>(clip.role ?? "filler");
+  const [avatarName, setAvatarName] = useState<string>(clip.avatarName ?? "");
+  const [captionCutoffPhrase, setCaptionCutoffPhrase] = useState<string>(
+    clip.captionCutoffPhrase ?? "",
+  );
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Esc closes; nothing async runs in this modal so always allow close.
@@ -97,10 +109,22 @@ export function ClipMetadataModal({
   }
 
   function onSave() {
+    // Role + avatar are only persisted when role is intro/outro AND an
+    // avatar is picked. Filler clears both fields so a clip can be moved
+    // back into the general filler pool.
+    const persistedRole = role === "filler" ? undefined : role;
+    const persistedAvatar = persistedRole && avatarName ? avatarName : undefined;
+    const persistedCutoff =
+      persistedRole && captionCutoffPhrase.trim()
+        ? captionCutoffPhrase.trim()
+        : undefined;
     updateLibraryClip(clip.libraryClipId, {
       filename: name.trim() || undefined,
       language,
       tags,
+      role: persistedRole,
+      avatarName: persistedAvatar,
+      captionCutoffPhrase: persistedCutoff,
     });
     onClose();
   }
@@ -207,6 +231,81 @@ export function ClipMetadataModal({
             </div>
           </div>
 
+          {/* Influencer-mode: Role pills (filler / intro / outro). Filler is
+              the default and matches existing library behavior. Intro/outro
+              dedicate the clip to a specific avatar's bookend library. */}
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] uppercase tracking-[0.16em] text-neutral-500 font-semibold">
+              Role <span className="font-normal text-neutral-400">(influencer mode)</span>
+            </span>
+            <div className="flex flex-wrap gap-1.5">
+              {(["filler", "intro", "outro"] as RoleSelection[]).map((r) => (
+                <button
+                  key={r}
+                  onClick={() => setRole(r)}
+                  className={`text-[11px] px-2.5 py-1.5 rounded-full border transition capitalize ${
+                    role === r
+                      ? "bg-neutral-900 dark:bg-white border-neutral-900 dark:border-white text-white dark:text-neutral-900 font-semibold"
+                      : "bg-neutral-50 dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                  }`}
+                >
+                  {r}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {role !== "filler" && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[11px] uppercase tracking-[0.16em] text-neutral-500 font-semibold">
+                Avatar
+              </span>
+              {AVATARS.length === 0 ? (
+                <p className="text-[11px] text-neutral-400">
+                  No avatars configured yet. Edit <code>src/lib/avatars.ts</code> to add one.
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {AVATARS.map((a) => (
+                    <button
+                      key={a.name}
+                      onClick={() => setAvatarName(a.name)}
+                      className={`text-[11px] px-2.5 py-1.5 rounded-full border transition ${
+                        avatarName === a.name
+                          ? "bg-neutral-900 dark:bg-white border-neutral-900 dark:border-white text-white dark:text-neutral-900 font-semibold"
+                          : "bg-neutral-50 dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                      }`}
+                    >
+                      {a.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {role !== "filler" && (
+            <label className="flex flex-col gap-1.5">
+              <span className="text-[11px] uppercase tracking-[0.16em] text-neutral-500 font-semibold">
+                Caption cutoff phrase{" "}
+                <span className="font-normal text-neutral-400 normal-case tracking-normal">
+                  (optional — captions stop when this phrase is spoken)
+                </span>
+              </span>
+              <input
+                type="text"
+                value={captionCutoffPhrase}
+                onChange={(e) => setCaptionCutoffPhrase(e.target.value)}
+                placeholder='e.g. "check out" — drops captions for that phrase and everything after'
+                className="px-3 py-2 rounded-xl bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-sm focus:outline-none focus:border-neutral-400 dark:focus:border-neutral-600"
+              />
+              <span className="text-[10px] text-neutral-500 leading-snug">
+                Useful for clean-canvas moments — e.g. when a brand mention will
+                be covered by a title-card overlay in post.
+              </span>
+            </label>
+          )}
+
           <div className="flex flex-col gap-1.5">
             <span className="text-[11px] uppercase tracking-[0.16em] text-neutral-500 font-semibold">
               Other tags
@@ -290,5 +389,8 @@ export function libraryClipToInitial(c: LibraryClip): InitialClip {
     filename: c.filename,
     language: c.language,
     tags: c.tags,
+    role: c.role,
+    avatarName: c.avatarName,
+    captionCutoffPhrase: c.captionCutoffPhrase,
   };
 }

@@ -31,6 +31,12 @@ export async function enqueueRender(args: {
   language: Language;
   contentType: ContentType;
   clipUrls: string[];
+  mode?: "narration" | "influencer";
+  voiceId?: string;
+  introClipUrl?: string;
+  introCaptionCutoffPhrase?: string;
+  outroClipUrl?: string;
+  outroCaptionCutoffPhrase?: string;
 }): Promise<string> {
   if (!Array.isArray(args.clipUrls) || args.clipUrls.length === 0) {
     throw new Error("enqueueRender: clipUrls is required");

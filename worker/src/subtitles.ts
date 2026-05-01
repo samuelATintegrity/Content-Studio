@@ -97,13 +97,16 @@ function chunkWords(words: WordTiming[], size: number): Phrase[] {
   return out;
 }
 
-export function buildAssSubtitles(
+// Build just the Dialogue lines for one segment of words. `offsetS` is
+// added to each word's start/end so multiple segments (e.g. influencer
+// intro/middle/outro) can be combined into a single ASS file with
+// globally-correct timestamps. Empty input returns no lines.
+export function buildAssDialogueLines(
   words: WordTiming[],
   style: SubtitleStyle,
-): string {
-  if (words.length === 0) {
-    return buildHeader(style) + "\n";
-  }
+  offsetS = 0,
+): string[] {
+  if (words.length === 0) return [];
   const primary = hexToAss(style.primaryColor);
   const highlight = hexToAss(style.highlightColor);
 
@@ -124,16 +127,16 @@ export function buildAssSubtitles(
     if (phrase.words.length === 0) continue;
     const first = phrase.words[0]!;
     const last = phrase.words[phrase.words.length - 1]!;
-    const phraseStart = first.startS;
+    const phraseStart = first.startS + offsetS;
     // Default end: small hold past the last word's audio so the highlight
     // doesn't snap off mid-syllable.
-    const naturalEnd = last.endS + 0.05;
+    const naturalEnd = last.endS + 0.05 + offsetS;
     // Extend the on-screen duration to the next phrase's start time when
     // that gap is longer than the natural hold. This keeps the last word
     // of a sentence visible during the narrator's pause (instead of going
     // dark mid-pause, then snapping back when the next phrase begins).
     const next = phrases[pi + 1];
-    const phraseEnd = next ? Math.max(naturalEnd, next.words[0]!.startS) : naturalEnd;
+    const phraseEnd = next ? Math.max(naturalEnd, next.words[0]!.startS + offsetS) : naturalEnd;
 
     const phraseDurationMs = Math.max(1, Math.round((phraseEnd - phraseStart) * 1000));
 
@@ -151,11 +154,13 @@ export function buildAssSubtitles(
     // Per-word body: each word resets color to base, then schedules a
     // highlight on/off pair via \t around its spoken window. Resetting before
     // each word prevents the highlight color from leaking into the next.
+    // \t times are relative to the dialogue line start (phraseStart), so
+    // they don't need the offsetS — that already shifted the line itself.
     const bodyParts: string[] = [];
     for (let i = 0; i < phrase.words.length; i++) {
       const w = phrase.words[i]!;
-      const sMs = Math.max(0, Math.round((w.startS - phraseStart) * 1000));
-      const eMs = Math.max(sMs + 1, Math.round((w.endS - phraseStart) * 1000));
+      const sMs = Math.max(0, Math.round((w.startS + offsetS - phraseStart) * 1000));
+      const eMs = Math.max(sMs + 1, Math.round((w.endS + offsetS - phraseStart) * 1000));
       const visible = escapeText(visualText(w.word));
       if (visible.length === 0) continue;
       const reset = i === 0 ? "" : `{\\1c${primary}}`;
@@ -170,7 +175,38 @@ export function buildAssSubtitles(
     lines.push(`Dialogue: 0,${startStr},${endStr},Karaoke,,0,0,0,,${headerTags}${body}`);
   }
 
+  return lines;
+}
+
+export function buildAssSubtitles(
+  words: WordTiming[],
+  style: SubtitleStyle,
+): string {
+  const lines = buildAssDialogueLines(words, style, 0);
+  if (lines.length === 0) return buildHeader(style) + "\n";
   return `${buildHeader(style)}\n${lines.join("\n")}\n`;
+}
+
+// Combine per-segment word lists (each with its own time offset in the
+// final video) into a single ASS file. Used by the influencer pipeline
+// to produce one subtitle track for [intro words] + [middle words] +
+// [outro words]. Segments with no words are silently skipped.
+export interface AssSegment {
+  words: WordTiming[];
+  offsetS: number;
+}
+
+export function buildMultiSegmentAssSubtitles(
+  segments: AssSegment[],
+  style: SubtitleStyle,
+): string {
+  const allLines: string[] = [];
+  for (const seg of segments) {
+    const lines = buildAssDialogueLines(seg.words, style, seg.offsetS);
+    allLines.push(...lines);
+  }
+  if (allLines.length === 0) return buildHeader(style) + "\n";
+  return `${buildHeader(style)}\n${allLines.join("\n")}\n`;
 }
 
 function buildHeader(style: SubtitleStyle): string {

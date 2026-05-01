@@ -10,6 +10,13 @@ interface Body {
   language: Language;
   contentType: ContentType;
   clipUrls: string[];
+  // Influencer-mode fields. Optional — narration-mode renders omit these.
+  mode?: "narration" | "influencer";
+  voiceId?: string;
+  introClipUrl?: string;
+  introCaptionCutoffPhrase?: string;
+  outroClipUrl?: string;
+  outroCaptionCutoffPhrase?: string;
 }
 
 export async function POST(req: Request) {
@@ -24,11 +31,31 @@ export async function POST(req: Request) {
     if (!Array.isArray(body.clipUrls) || body.clipUrls.length === 0) {
       return NextResponse.json({ error: "clipUrls is required" }, { status: 400 });
     }
+    if (body.mode === "influencer") {
+      if (!body.introClipUrl || !body.outroClipUrl) {
+        return NextResponse.json(
+          { error: "introClipUrl and outroClipUrl are required for influencer mode" },
+          { status: 400 },
+        );
+      }
+      if (!body.voiceId) {
+        return NextResponse.json(
+          { error: "voiceId is required for influencer mode" },
+          { status: 400 },
+        );
+      }
+    }
     const jobId = await enqueueRender({
       script: body.script,
       language: body.language,
       contentType: body.contentType,
       clipUrls: body.clipUrls,
+      mode: body.mode,
+      voiceId: body.voiceId,
+      introClipUrl: body.introClipUrl,
+      introCaptionCutoffPhrase: body.introCaptionCutoffPhrase,
+      outroClipUrl: body.outroClipUrl,
+      outroCaptionCutoffPhrase: body.outroCaptionCutoffPhrase,
     });
     return NextResponse.json({ jobId });
   } catch (e) {

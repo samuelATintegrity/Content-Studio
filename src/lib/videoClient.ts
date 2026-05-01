@@ -23,6 +23,26 @@ export async function startVideoBatch(
   return res.json();
 }
 
+// Influencer-mode script generation. Returns a single conversational
+// middle script + caption tied to the chosen avatar.
+export async function startInfluencerScript(args: {
+  language: Language;
+  contentType: ContentType;
+  avatarName: string;
+}): Promise<{ script: string; caption: string }> {
+  const res = await fetch("/api/video/start-influencer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(args),
+  });
+  if (!res.ok) {
+    throw new Error(
+      (await res.json().catch(() => ({}))).error ?? "influencer start failed",
+    );
+  }
+  return res.json();
+}
+
 export async function generateSourceImage(
   promptIndex: VideoSourcePromptIndex,
 ): Promise<{ url: string }> {
@@ -80,6 +100,41 @@ export async function startVideoRender(args: {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(args),
+  });
+  if (!res.ok) {
+    throw new Error((await res.json().catch(() => ({}))).error ?? "render failed");
+  }
+  return res.json();
+}
+
+// Influencer-mode render. Same /render endpoint, mode-dispatched on the
+// worker. clipUrls here is the middle filler list (1..INFLUENCER_MIDDLE_MAX).
+export async function startInfluencerRender(args: {
+  script: string;
+  language: Language;
+  contentType: ContentType;
+  voiceId: string;
+  introClipUrl: string;
+  introCaptionCutoffPhrase?: string;
+  middleClipUrls: string[];
+  outroClipUrl: string;
+  outroCaptionCutoffPhrase?: string;
+}): Promise<{ jobId: string }> {
+  const res = await fetch("/api/video/render", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      script: args.script,
+      language: args.language,
+      contentType: args.contentType,
+      clipUrls: args.middleClipUrls,
+      mode: "influencer",
+      voiceId: args.voiceId,
+      introClipUrl: args.introClipUrl,
+      introCaptionCutoffPhrase: args.introCaptionCutoffPhrase,
+      outroClipUrl: args.outroClipUrl,
+      outroCaptionCutoffPhrase: args.outroCaptionCutoffPhrase,
+    }),
   });
   if (!res.ok) {
     throw new Error((await res.json().catch(() => ({}))).error ?? "render failed");

@@ -130,6 +130,8 @@ export type VideoJobState =
   | "ready"
   | "failed";
 
+export type VideoMode = "narration" | "influencer";
+
 export interface VideoPost {
   id: string;
   angle: string;
@@ -141,6 +143,11 @@ export interface VideoPost {
   videoUrl?: string;     // R2 public URL once ready
   durationS?: number;
   error?: string;
+  // Influencer-mode fields. Undefined for the standard narration flow.
+  mode?: VideoMode;
+  avatarName?: string;
+  introClipUrl?: string;
+  outroClipUrl?: string;
 }
 
 // /api/video/start now only returns the 3 scripts. Render dispatch happens

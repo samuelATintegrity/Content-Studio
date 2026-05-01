@@ -326,3 +326,186 @@ export async function compose(args: ComposeArgs): Promise<void> {
 
   await runFfmpeg(ffArgs, cwd);
 }
+
+// ── Influencer compose ──────────────────────────────────────────────
+//
+// Layout: [intro video + intro audio] → [middle filler clips + AI TTS +
+// karaoke captions] → [outro video + outro audio]. No background music;
+// no logo card; no white hold; no head-trim on intro/outro (they have
+// their own natural framing). Middle clips still get the 0.15s warmup
+// trim used elsewhere.
+
+export interface ComposeInfluencerArgs {
+  introPath: string;
+  middleClipPaths: string[];
+  outroPath: string;
+  introDurationS: number;
+  outroDurationS: number;
+  audioPath: string;       // AI middle TTS narration MP3
+  audioDurationS: number;
+  assPath: string;
+  fontsDir: string;
+  outPath: string;
+}
+
+function buildInfluencerFilterComplex(args: {
+  middleClipCount: number;
+  middlePerClipS: number;
+  middleVisualPadS: number;
+  introInputIndex: number;
+  middleInputBaseIndex: number;
+  outroInputIndex: number;
+  audioInputIndex: number;
+  audioDurationS: number;
+  introDurationS: number;
+  outroDurationS: number;
+  assRelPath: string;
+  fontsDir: string;
+}): string {
+  const {
+    middleClipCount, middlePerClipS, middleVisualPadS,
+    introInputIndex, middleInputBaseIndex, outroInputIndex,
+    audioInputIndex, audioDurationS, introDurationS, outroDurationS,
+    assRelPath, fontsDir,
+  } = args;
+
+  const escapedAss = escapeForFilter(assRelPath);
+  const escapedFonts = escapeForFilter(fontsDir);
+
+  const chains: string[] = [];
+
+  // Intro segment: scale/crop to 9:16, trim to its natural duration, no
+  // head-trim — the avatar's recorded clip is the source of truth.
+  chains.push(
+    `[${introInputIndex}:v]scale=1080:1920:force_original_aspect_ratio=increase,` +
+      `crop=1080:1920,setsar=1,fps=30,` +
+      `trim=duration=${introDurationS.toFixed(3)},setpts=PTS-STARTPTS,format=yuv420p[v_intro]`,
+  );
+
+  // Middle clips: warmup head-trim + per-clip share of AI narration.
+  for (let i = 0; i < middleClipCount; i++) {
+    const inputIdx = middleInputBaseIndex + i;
+    chains.push(
+      `[${inputIdx}:v]trim=start=${CLIP_HEAD_TRIM_S.toFixed(3)}:duration=${middlePerClipS.toFixed(3)},setpts=PTS-STARTPTS,` +
+        `scale=1080:1920:force_original_aspect_ratio=increase,` +
+        `crop=1080:1920,setsar=1,fps=30,format=yuv420p[v_mid${i}]`,
+    );
+  }
+  const midConcatInputs = Array.from({ length: middleClipCount }, (_, i) => `[v_mid${i}]`).join("");
+  chains.push(`${midConcatInputs}concat=n=${middleClipCount}:v=1:a=0[v_mid_cat]`);
+
+  // If the AI middle audio is longer than the available visual share
+  // (clipCount × maxAvailablePerClip), freeze the last frame to fill the
+  // gap so the outro doesn't slide forward and desync from its audio.
+  const middleVisualLabel = middleVisualPadS > 0 ? "v_mid_padded" : "v_mid_cat";
+  if (middleVisualPadS > 0) {
+    chains.push(
+      `[v_mid_cat]tpad=stop_mode=clone:stop_duration=${middleVisualPadS.toFixed(3)}[v_mid_padded]`,
+    );
+  }
+
+  // Outro segment: same shape as intro.
+  chains.push(
+    `[${outroInputIndex}:v]scale=1080:1920:force_original_aspect_ratio=increase,` +
+      `crop=1080:1920,setsar=1,fps=30,` +
+      `trim=duration=${outroDurationS.toFixed(3)},setpts=PTS-STARTPTS,format=yuv420p[v_outro]`,
+  );
+
+  // Visual concat: intro → middle (visually padded) → outro. Subtitles are
+  // burned AFTER concat so a single ASS file with global timestamps drives
+  // captions across all three segments.
+  chains.push(
+    `[v_intro][${middleVisualLabel}][v_outro]concat=n=3:v=1:a=0[v_concat]`,
+  );
+  chains.push(
+    `[v_concat]subtitles=filename='${escapedAss}':fontsdir='${escapedFonts}',format=yuv420p,setsar=1[v_final]`,
+  );
+
+  // Audio track: intro audio (from intro file, unity gain) → AI TTS middle
+  // (slightly under unity for headroom) → outro audio (unity gain). No music.
+  // Trim narration to its real length so trailing silence doesn't extend
+  // the timeline past the visual middle.
+  chains.push(
+    `[${introInputIndex}:a]atrim=duration=${introDurationS.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_rates=44100:channel_layouts=stereo[a_intro]`,
+  );
+  chains.push(
+    `[${audioInputIndex}:a]atrim=duration=${audioDurationS.toFixed(3)},asetpts=PTS-STARTPTS,volume=${NARRATION_VOLUME.toFixed(3)},aformat=sample_rates=44100:channel_layouts=stereo[a_mid]`,
+  );
+  chains.push(
+    `[${outroInputIndex}:a]atrim=duration=${outroDurationS.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_rates=44100:channel_layouts=stereo[a_outro]`,
+  );
+  chains.push(`[a_intro][a_mid][a_outro]concat=n=3:v=0:a=1[a_final]`);
+
+  return chains.join(";");
+}
+
+export async function composeInfluencer(args: ComposeInfluencerArgs): Promise<void> {
+  if (args.middleClipPaths.length === 0) {
+    throw new Error("composeInfluencer: no middle clips provided");
+  }
+  if (args.introDurationS <= 0 || args.outroDurationS <= 0) {
+    throw new Error("composeInfluencer: intro and outro durations must be > 0");
+  }
+
+  // Per-middle-clip duration: bound by source after head-trim, by AI TTS share.
+  const maxAvailablePerClip = SOURCE_CLIP_DURATION_S - CLIP_HEAD_TRIM_S;
+  const audioShare = args.audioDurationS / args.middleClipPaths.length;
+  const middlePerClipS = Math.max(0.5, Math.min(maxAvailablePerClip, audioShare));
+  const middleClipsLengthS = middlePerClipS * args.middleClipPaths.length;
+  // If audio is longer than what the source clips can cover, freeze the
+  // last frame to bridge the gap. Keeps the outro aligned with its audio.
+  const middleVisualPadS = Math.max(0, args.audioDurationS - middleClipsLengthS);
+
+  const cwd = dirname(args.assPath);
+  const assRel = basename(args.assPath);
+
+  // Inputs in this order: intro, middleClip[0..N-1], outro, ttsAudio.
+  const inputs: string[] = [];
+  inputs.push("-i", args.introPath);
+  const introInputIndex = 0;
+
+  const middleInputBaseIndex = 1;
+  for (const clip of args.middleClipPaths) inputs.push("-i", clip);
+
+  const outroInputIndex = middleInputBaseIndex + args.middleClipPaths.length;
+  inputs.push("-i", args.outroPath);
+
+  const audioInputIndex = outroInputIndex + 1;
+  inputs.push("-i", args.audioPath);
+
+  const filter = buildInfluencerFilterComplex({
+    middleClipCount: args.middleClipPaths.length,
+    middlePerClipS,
+    middleVisualPadS,
+    introInputIndex,
+    middleInputBaseIndex,
+    outroInputIndex,
+    audioInputIndex,
+    audioDurationS: args.audioDurationS,
+    introDurationS: args.introDurationS,
+    outroDurationS: args.outroDurationS,
+    assRelPath: assRel,
+    fontsDir: args.fontsDir,
+  });
+
+  const ffArgs = [
+    "-hide_banner",
+    "-loglevel", "error",
+    "-y",
+    ...inputs,
+    "-filter_complex", filter,
+    "-map", "[v_final]",
+    "-map", "[a_final]",
+    "-c:v", "libx264",
+    "-preset", "veryfast",
+    "-crf", "23",
+    "-pix_fmt", "yuv420p",
+    "-c:a", "aac",
+    "-b:a", "128k",
+    "-r", "30",
+    "-movflags", "+faststart",
+    args.outPath,
+  ];
+
+  await runFfmpeg(ffArgs, cwd);
+}

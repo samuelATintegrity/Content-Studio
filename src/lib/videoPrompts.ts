@@ -45,3 +45,10 @@ export const VIDEO_IMAGE_STYLE_SUFFIX =
 // Animation prompt sent to Seedance with each approved image.
 export const VIDEO_ANIMATION_PROMPT =
   "subtle camera movement, slow steady push-in, no people speaking, no abrupt motion";
+
+// Influencer-mode middle filler clip count bounds. The user picks 1
+// pre-recorded intro + N filler clips (in this range) + 1 pre-recorded
+// outro per render. AI fills the middle script which is TTS'd over the
+// filler clips.
+export const INFLUENCER_MIDDLE_MIN = 2;
+export const INFLUENCER_MIDDLE_MAX = 6;

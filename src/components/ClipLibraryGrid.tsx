@@ -13,7 +13,11 @@ import {
 } from "@/lib/clipLibrary";
 import { listSavedSets } from "@/lib/savedSets";
 import { deleteClipFromStorage, tagClip, uploadClip } from "@/lib/videoClient";
-import { PICKED_CLIP_COUNT } from "@/lib/videoPrompts";
+import {
+  INFLUENCER_MIDDLE_MAX,
+  INFLUENCER_MIDDLE_MIN,
+  PICKED_CLIP_COUNT,
+} from "@/lib/videoPrompts";
 import { AiClipModal } from "@/components/AiClipModal";
 import { ClipMetadataModal } from "@/components/ClipMetadataModal";
 
@@ -61,6 +65,14 @@ export function ClipLibraryGrid() {
   const selectClip = useBatchStore((s) => s.selectClip);
   const deselectClip = useBatchStore((s) => s.deselectClip);
   const clearClipSelection = useBatchStore((s) => s.clearClipSelection);
+  const subMode = useBatchStore((s) => s.subMode);
+  const language = useBatchStore((s) => s.language);
+  const selectedAvatarName = useBatchStore((s) => s.selectedAvatarName);
+  const selectedIntroClipUrl = useBatchStore((s) => s.selectedIntroClipUrl);
+  const selectedOutroClipUrl = useBatchStore((s) => s.selectedOutroClipUrl);
+  const setSelectedIntroClipUrl = useBatchStore((s) => s.setSelectedIntroClipUrl);
+  const setSelectedOutroClipUrl = useBatchStore((s) => s.setSelectedOutroClipUrl);
+  const isInfluencer = subMode === "influencer";
 
   function onEdit(clip: MergedClip) {
     if (clip.kind === "saved") return; // managed via the Saved Sets sidebar
@@ -115,7 +127,8 @@ export function ClipLibraryGrid() {
   }, []);
 
   const selectedCount = selectedKeys.length;
-  const atCap = selectedCount >= PICKED_CLIP_COUNT;
+  const middlePickCap = isInfluencer ? INFLUENCER_MIDDLE_MAX : PICKED_CLIP_COUNT;
+  const atCap = selectedCount >= middlePickCap;
 
   // Build the union of all tags currently in the library, for the filter chips.
   const allTags: string[] = (() => {
@@ -148,6 +161,31 @@ export function ClipLibraryGrid() {
     return true;
   });
 
+  // Influencer-mode bookend pools, scoped to the active avatar + language.
+  // Filtered from the full library (not the search-filtered list) so the
+  // user always sees their available bookends regardless of text/tag filters.
+  const matchesAvatarLanguage = (c: MergedClip): boolean => {
+    if (!selectedAvatarName) return false;
+    if (c.avatarName !== selectedAvatarName) return false;
+    // Bookends must be language-specific — "multi" doesn't make sense for
+    // a recorded avatar speaking a particular language.
+    if (c.language !== language) return false;
+    return true;
+  };
+  const introClips = isInfluencer
+    ? clips.filter((c) => c.role === "intro" && matchesAvatarLanguage(c))
+    : [];
+  const outroClips = isInfluencer
+    ? clips.filter((c) => c.role === "outro" && matchesAvatarLanguage(c))
+    : [];
+
+  // Influencer-mode middle picker: filler clips only (anything without an
+  // intro/outro role). Bookends would visually clash with the avatar's
+  // own intro/outro segments.
+  const middleFiltered = isInfluencer
+    ? filteredClips.filter((c) => !c.role)
+    : filteredClips;
+
   function onChangeLanguage(clip: MergedClip, language: ClipLanguage) {
     if (clip.kind === "saved") return; // saved-set clips don't live in our index
     const id = clip.origin.libraryClipId;
@@ -160,13 +198,22 @@ export function ClipLibraryGrid() {
   function renderTile(clip: MergedClip) {
     const idx = selectedKeys.indexOf(clip.key);
     const selected = idx >= 0;
+    const handleClick = () => {
+      // Influencer middle picker enforces its own cap (the store's hard cap
+      // is PICKED_CLIP_COUNT, larger than the influencer max). Block adding
+      // beyond INFLUENCER_MIDDLE_MAX; toggling-off an existing pick is fine.
+      if (isInfluencer && !selected && selectedKeys.length >= INFLUENCER_MIDDLE_MAX) {
+        return;
+      }
+      selectClip(clip.key, clip.videoUrl);
+    };
     return (
       <ClipTile
         key={clip.key}
         clip={clip}
         selectionNumber={selected ? idx + 1 : null}
         dim={!selected && atCap}
-        onClick={() => selectClip(clip.key, clip.videoUrl)}
+        onClick={handleClick}
         onDelete={clip.kind === "saved" ? undefined : () => onDelete(clip)}
         onEdit={clip.kind === "saved" ? undefined : () => onEdit(clip)}
         onLanguageChange={
@@ -192,9 +239,14 @@ export function ClipLibraryGrid() {
           Clip library · {clips.length} {clips.length === 1 ? "clip" : "clips"}
         </h3>
         <div className="flex items-center gap-2">
-          {selectedCount === PICKED_CLIP_COUNT && (
+          {!isInfluencer && selectedCount === PICKED_CLIP_COUNT && (
             <span className="text-[11px] font-semibold text-emerald-500 tabular-nums">
               {PICKED_CLIP_COUNT} / {PICKED_CLIP_COUNT} ready
+            </span>
+          )}
+          {isInfluencer && selectedCount >= INFLUENCER_MIDDLE_MIN && (
+            <span className="text-[11px] font-semibold text-emerald-500 tabular-nums">
+              {selectedCount} / {INFLUENCER_MIDDLE_MAX} middle
             </span>
           )}
           {selectedCount > 0 && (
@@ -267,16 +319,34 @@ export function ClipLibraryGrid() {
         </div>
       )}
 
+      {isInfluencer && (
+        <BookendZones
+          avatarName={selectedAvatarName}
+          introClips={introClips}
+          outroClips={outroClips}
+          selectedIntroUrl={selectedIntroClipUrl}
+          selectedOutroUrl={selectedOutroClipUrl}
+          onPickIntro={setSelectedIntroClipUrl}
+          onPickOutro={setSelectedOutroClipUrl}
+        />
+      )}
+
+      {isInfluencer && (
+        <h4 className="text-[11px] uppercase tracking-[0.16em] text-neutral-500 font-semibold mb-2 px-1 mt-6">
+          Middle filler ({INFLUENCER_MIDDLE_MIN}–{INFLUENCER_MIDDLE_MAX} clips)
+        </h4>
+      )}
+
       {groupBy === "none" ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
           <UploadTile onUploaded={(id) => setEditingClipKey(id)} />
           <AiClipTile onOpen={() => setAiModalOpen(true)} />
-          {filteredClips.map((clip) => renderTile(clip))}
+          {middleFiltered.map((clip) => renderTile(clip))}
         </div>
       ) : (
         <GroupedSections
           groupBy={groupBy}
-          clips={filteredClips}
+          clips={middleFiltered}
           renderTile={renderTile}
           extraTiles={
             <>
@@ -319,11 +389,166 @@ export function ClipLibraryGrid() {
             filename: editingMerged.origin.filename,
             language: editingMerged.language,
             tags: editingMerged.tags,
+            role: editingMerged.role,
+            avatarName: editingMerged.avatarName,
+            captionCutoffPhrase: editingMerged.captionCutoffPhrase,
           }}
           onClose={() => setEditingClipKey(null)}
         />
       )}
     </section>
+  );
+}
+
+// Influencer-mode intro/outro pickers. Each is a single-pick row showing
+// only the active avatar + language's bookend clips. Clicking selects
+// (and toggles off) the URL into the dedicated store slice.
+function BookendZones({
+  avatarName,
+  introClips,
+  outroClips,
+  selectedIntroUrl,
+  selectedOutroUrl,
+  onPickIntro,
+  onPickOutro,
+}: {
+  avatarName: string | null;
+  introClips: MergedClip[];
+  outroClips: MergedClip[];
+  selectedIntroUrl: string | null;
+  selectedOutroUrl: string | null;
+  onPickIntro: (url: string | null) => void;
+  onPickOutro: (url: string | null) => void;
+}) {
+  if (!avatarName) {
+    return (
+      <p className="text-[11px] text-neutral-500 px-1 py-3 leading-snug">
+        Pick an avatar in the sidebar to load their intro and outro clips.
+      </p>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-5">
+      <BookendRow
+        label="Intro"
+        clips={introClips}
+        selectedUrl={selectedIntroUrl}
+        onPick={onPickIntro}
+        emptyHint="No intros tagged for this avatar in this language. Upload an intro clip and edit its details to set Role=Intro and Avatar."
+      />
+      <BookendRow
+        label="Outro"
+        clips={outroClips}
+        selectedUrl={selectedOutroUrl}
+        onPick={onPickOutro}
+        emptyHint="No outros tagged for this avatar in this language. Upload an outro clip and edit its details to set Role=Outro and Avatar."
+      />
+    </div>
+  );
+}
+
+function BookendRow({
+  label,
+  clips,
+  selectedUrl,
+  onPick,
+  emptyHint,
+}: {
+  label: string;
+  clips: MergedClip[];
+  selectedUrl: string | null;
+  onPick: (url: string | null) => void;
+  emptyHint: string;
+}) {
+  return (
+    <div>
+      <h4 className="text-[11px] uppercase tracking-[0.16em] text-neutral-500 font-semibold mb-2 px-1 flex items-baseline gap-2">
+        <span>{label}</span>
+        <span className="text-neutral-400 dark:text-neutral-600 font-normal">
+          {clips.length}
+        </span>
+      </h4>
+      {clips.length === 0 ? (
+        <p className="text-[11px] text-neutral-500 px-1 leading-snug">{emptyHint}</p>
+      ) : (
+        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-3">
+          {clips.map((c) => (
+            <BookendTile
+              key={c.key}
+              clip={c}
+              selected={selectedUrl === c.videoUrl}
+              onClick={() =>
+                onPick(selectedUrl === c.videoUrl ? null : c.videoUrl)
+              }
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BookendTile({
+  clip,
+  selected,
+  onClick,
+}: {
+  clip: MergedClip;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  function onEnter() {
+    void videoRef.current?.play().catch(() => undefined);
+  }
+  function onLeave() {
+    const v = videoRef.current;
+    if (!v) return;
+    v.pause();
+    try {
+      v.currentTime = 0;
+    } catch {
+      /* ignore */
+    }
+  }
+  const label = clip.origin.filename ?? "Bookend";
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick();
+        }
+      }}
+      onMouseEnter={onEnter}
+      onMouseLeave={onLeave}
+      className={`relative aspect-[9/16] rounded-2xl overflow-hidden border bg-neutral-100 dark:bg-neutral-900 cursor-pointer transition ${
+        selected
+          ? "border-emerald-500 ring-2 ring-emerald-500/40"
+          : "border-neutral-200 dark:border-neutral-900 hover:border-neutral-400 dark:hover:border-neutral-700"
+      }`}
+    >
+      <video
+        ref={videoRef}
+        src={clip.videoUrl}
+        poster={clip.posterUrl}
+        muted
+        playsInline
+        preload="metadata"
+        className="absolute inset-0 w-full h-full object-cover"
+      />
+      {selected && (
+        <div className="absolute top-2 right-2 w-7 h-7 rounded-full bg-emerald-500 text-white text-[10px] font-bold flex items-center justify-center shadow">
+          ✓
+        </div>
+      )}
+      <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
+        <div className="text-[10px] font-medium text-white/95 truncate">{label}</div>
+      </div>
+    </div>
   );
 }
 

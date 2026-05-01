@@ -12,6 +12,8 @@ import {
 } from "@/lib/types";
 import { PICKED_CLIP_COUNT } from "@/lib/videoPrompts";
 
+export type SubMode = "narration" | "influencer";
+
 interface BatchState {
   format: Format;
   language: Language;
@@ -27,6 +29,14 @@ interface BatchState {
   // capped at PICKED_CLIP_COUNT). Parallel keys array drives badges.
   selectedClipUrls: string[];
   selectedClipKeys: string[];
+
+  // Influencer-mode state. subMode toggles the second pill in the sidebar
+  // ("Narration · footage" vs "Influencer"); selectedAvatarName + intro/
+  // outro picks are scoped to the influencer flow only.
+  subMode: SubMode;
+  selectedAvatarName: string | null;
+  selectedIntroClipUrl: string | null;
+  selectedOutroClipUrl: string | null;
 
   setFormat: (f: Format) => void;
   setLanguage: (l: Language) => void;
@@ -44,6 +54,10 @@ interface BatchState {
   selectClip: (key: string, url: string) => void;
   deselectClip: (key: string) => void;
   clearClipSelection: () => void;
+  setSubMode: (m: SubMode) => void;
+  setSelectedAvatarName: (name: string | null) => void;
+  setSelectedIntroClipUrl: (url: string | null) => void;
+  setSelectedOutroClipUrl: (url: string | null) => void;
 }
 
 export const useBatchStore = create<BatchState>((set) => ({
@@ -58,6 +72,10 @@ export const useBatchStore = create<BatchState>((set) => ({
   usedPhotoIds: [],
   selectedClipUrls: [],
   selectedClipKeys: [],
+  subMode: "narration",
+  selectedAvatarName: null,
+  selectedIntroClipUrl: null,
+  selectedOutroClipUrl: null,
 
   setFormat: (format) =>
     set((s) => ({
@@ -66,7 +84,15 @@ export const useBatchStore = create<BatchState>((set) => ({
       selectedClipUrls: format === "video" ? s.selectedClipUrls : [],
       selectedClipKeys: format === "video" ? s.selectedClipKeys : [],
     })),
-  setLanguage: (language) => set({ language }),
+  // Switching language invalidates the avatar/intro/outro picks, since
+  // each avatar's intro/outro library is language-specific.
+  setLanguage: (language) =>
+    set({
+      language,
+      selectedAvatarName: null,
+      selectedIntroClipUrl: null,
+      selectedOutroClipUrl: null,
+    }),
   setContentType: (contentType) => set({ contentType }),
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
@@ -115,4 +141,26 @@ export const useBatchStore = create<BatchState>((set) => ({
       };
     }),
   clearClipSelection: () => set({ selectedClipKeys: [], selectedClipUrls: [] }),
+  // Switching sub-mode resets the picked clips and avatar/intro/outro
+  // selections, since the two flows pick into the same selection slice but
+  // have different shape requirements.
+  setSubMode: (subMode) =>
+    set({
+      subMode,
+      selectedClipKeys: [],
+      selectedClipUrls: [],
+      selectedAvatarName: null,
+      selectedIntroClipUrl: null,
+      selectedOutroClipUrl: null,
+    }),
+  // Switching the avatar invalidates the intro/outro picks, since both are
+  // filtered by avatar.
+  setSelectedAvatarName: (name) =>
+    set({
+      selectedAvatarName: name,
+      selectedIntroClipUrl: null,
+      selectedOutroClipUrl: null,
+    }),
+  setSelectedIntroClipUrl: (url) => set({ selectedIntroClipUrl: url }),
+  setSelectedOutroClipUrl: (url) => set({ selectedOutroClipUrl: url }),
 }));
