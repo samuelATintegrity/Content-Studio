@@ -297,10 +297,25 @@ export async function retryAnimation(slotIndex: number): Promise<void> {
 // post is in flight at a time, the next is dispatched when the current
 // reaches a terminal state. This avoids two ffmpeg processes competing
 // on the same Railway worker.
+
+// Per-entry dispatch payload for influencer-mode renders. When set, the
+// queue dispatches via /render with mode=influencer (each entry has its
+// own shuffled middle clip order); otherwise the entry uses the queue's
+// shared clipUrls and the standard narration render path.
+interface InfluencerEntryPayload {
+  voiceId: string;
+  introClipUrl: string;
+  introCaptionCutoffPhrase?: string;
+  middleClipUrls: string[];
+  outroClipUrl: string;
+  outroCaptionCutoffPhrase?: string;
+}
+
 interface RenderQueueEntry {
   postId: string;
   script: string;
   dispatched: boolean;
+  influencer?: InfluencerEntryPayload;
 }
 interface RenderQueue {
   batchId: string;
@@ -313,12 +328,25 @@ const _renderQueues = new Map<string, RenderQueue>();
 
 function dispatchEntry(queue: RenderQueue, entry: RenderQueueEntry): void {
   entry.dispatched = true;
-  startVideoRender({
-    script: entry.script,
-    language: queue.language,
-    contentType: queue.contentType,
-    clipUrls: queue.clipUrls,
-  })
+  const promise = entry.influencer
+    ? startInfluencerRender({
+        script: entry.script,
+        language: queue.language,
+        contentType: queue.contentType,
+        voiceId: entry.influencer.voiceId,
+        introClipUrl: entry.influencer.introClipUrl,
+        introCaptionCutoffPhrase: entry.influencer.introCaptionCutoffPhrase,
+        middleClipUrls: entry.influencer.middleClipUrls,
+        outroClipUrl: entry.influencer.outroClipUrl,
+        outroCaptionCutoffPhrase: entry.influencer.outroCaptionCutoffPhrase,
+      })
+    : startVideoRender({
+        script: entry.script,
+        language: queue.language,
+        contentType: queue.contentType,
+        clipUrls: queue.clipUrls,
+      });
+  promise
     .then(({ jobId }) => {
       useBatchStore.getState().updateVideoPost(entry.postId, {
         jobId,
@@ -658,10 +686,25 @@ export async function saveCurrentSet(name: string): Promise<SavedSet> {
   return saveSet(name, mirrored);
 }
 
-// Influencer mode: one render per click. Pre-recorded intro + AI-narrated
-// middle (over filler clips) + pre-recorded outro. Skips the from-scratch
-// image set entirely; no _renderQueues machinery since there's only one
-// VideoPost.
+// Fisher-Yates shuffle. Used to randomize the middle clip order for each
+// of the 3 influencer videos so the same 8 picks visually cut differently
+// across the 3 outputs.
+function shuffle<T>(arr: readonly T[]): T[] {
+  const out = arr.slice();
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = out[i] as T;
+    out[i] = out[j] as T;
+    out[j] = tmp;
+  }
+  return out;
+}
+
+// Influencer mode: 3 renders per click. Same intro, same outro, same 8
+// middle picks — but each video uses a different angle from good_agents
+// AND a different shuffled order of the middle clips. Renders dispatch
+// sequentially via _renderQueues so the Railway worker only runs one
+// ffmpeg job at a time.
 export async function generateInfluencerBatch(args: {
   avatarName: string;
   introClipUrl: string;
@@ -704,11 +747,11 @@ export async function generateInfluencerBatch(args: {
   setImageSlots([]);
 
   const batchId = `inf-${Date.now()}`;
-  const postId = `${batchId}-0`;
 
-  // Seed a single placeholder video post so the card renders immediately.
-  const placeholder: VideoPost = {
-    id: postId,
+  // Seed 3 placeholder video posts so the cards render immediately while
+  // we wait for Claude's 3 scripts to come back.
+  const placeholderPosts: VideoPost[] = Array.from({ length: 3 }, (_, i) => ({
+    id: `${batchId}-${i}`,
     angle: "influencer",
     script: "",
     caption: "",
@@ -719,55 +762,95 @@ export async function generateInfluencerBatch(args: {
     avatarName: avatar.name,
     introClipUrl: args.introClipUrl,
     outroClipUrl: args.outroClipUrl,
-  };
-  setVideoPosts([placeholder]);
+  }));
+  setVideoPosts(placeholderPosts);
   clearClipSelection();
   // Reset bookend selections so the user has a clean slate next click.
   store.setSelectedIntroClipUrl(null);
   store.setSelectedOutroClipUrl(null);
 
+  // Look up the picked bookend clips so we can forward each one's
+  // captionCutoffPhrase to the worker. The library is keyed by URL.
+  const merged = listMergedLibrary();
+  const introClip = merged.find((c) => c.videoUrl === args.introClipUrl);
+  const outroClip = merged.find((c) => c.videoUrl === args.outroClipUrl);
+
   try {
-    const { script, caption } = await startInfluencerScript({
+    const scripts = await startInfluencerScript({
       language,
       contentType,
       avatarName: avatar.name,
     });
+    if (scripts.length === 0) {
+      throw new Error("Influencer script generation returned no scripts");
+    }
 
-    useBatchStore.getState().updateVideoPost(postId, {
-      script,
-      caption,
-      state: "queued",
-    });
+    // Truncate or pad the 3 placeholder slots to match how many scripts
+    // Claude actually returned (always 3 in practice — this is just a
+    // safety net so the UI never references a non-existent script).
+    const usableCount = Math.min(scripts.length, placeholderPosts.length);
+    const renderEntries: RenderQueueEntry[] = [];
+    for (let i = 0; i < usableCount; i++) {
+      const post = placeholderPosts[i]!;
+      const script = scripts[i]!;
+      // Update the placeholder with the script + angle now that we have it.
+      useBatchStore.getState().updateVideoPost(post.id, {
+        angle: script.angle,
+        script: script.script,
+        caption: script.caption,
+        state: "queued",
+      });
+      renderEntries.push({
+        postId: post.id,
+        script: script.script,
+        dispatched: false,
+        influencer: {
+          voiceId: avatar.voiceId,
+          introClipUrl: args.introClipUrl,
+          introCaptionCutoffPhrase: introClip?.captionCutoffPhrase,
+          // Per-video shuffle of the user's 8 middle picks so each of the
+          // 3 rendered videos cuts to a different visual order.
+          middleClipUrls: shuffle(args.middleClipUrls),
+          outroClipUrl: args.outroClipUrl,
+          outroCaptionCutoffPhrase: outroClip?.captionCutoffPhrase,
+        },
+      });
+    }
+    // If Claude returned fewer scripts than placeholder posts, mark the
+    // unused placeholders as failed so the user sees them and can retry.
+    for (let i = usableCount; i < placeholderPosts.length; i++) {
+      useBatchStore.getState().updateVideoPost(placeholderPosts[i]!.id, {
+        state: "failed",
+        error: "Script generation returned fewer scripts than expected",
+      });
+    }
 
-    // Look up the picked bookend clips so we can forward each one's
-    // captionCutoffPhrase to the worker. The library is keyed by URL.
-    const merged = listMergedLibrary();
-    const introClip = merged.find((c) => c.videoUrl === args.introClipUrl);
-    const outroClip = merged.find((c) => c.videoUrl === args.outroClipUrl);
-
-    const { jobId } = await startInfluencerRender({
-      script,
+    const queue: RenderQueue = {
+      batchId,
       language,
       contentType,
-      voiceId: avatar.voiceId,
-      introClipUrl: args.introClipUrl,
-      introCaptionCutoffPhrase: introClip?.captionCutoffPhrase,
-      middleClipUrls: args.middleClipUrls,
-      outroClipUrl: args.outroClipUrl,
-      outroCaptionCutoffPhrase: outroClip?.captionCutoffPhrase,
-    });
-
-    useBatchStore.getState().updateVideoPost(postId, {
-      jobId,
-      state: "queued",
-      progress: 0,
-    });
+      // clipUrls is unused for influencer entries (each carries its own
+      // shuffled middleClipUrls) but the queue type still requires the
+      // field. Set it to the un-shuffled picks so it isn't empty.
+      clipUrls: args.middleClipUrls,
+      entries: renderEntries,
+    };
+    // Drop any prior queues so old narration-mode renders can't dispatch
+    // ghost entries if their polling somehow ticks over after this kicks off.
+    _renderQueues.clear();
+    _renderQueues.set(batchId, queue);
+    if (renderEntries.length > 0) {
+      dispatchEntry(queue, renderEntries[0]!);
+    }
   } catch (e) {
-    useBatchStore.getState().updateVideoPost(postId, {
-      state: "failed",
-      error: e instanceof Error ? e.message : "influencer render failed",
-    });
-    setError(e instanceof Error ? e.message : "influencer render failed");
+    const message = e instanceof Error ? e.message : "influencer render failed";
+    for (const post of placeholderPosts) {
+      useBatchStore.getState().updateVideoPost(post.id, {
+        state: "failed",
+        error: message,
+      });
+    }
+    setError(message);
   } finally {
     setLoading(false);
   }

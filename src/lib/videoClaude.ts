@@ -187,7 +187,9 @@ INFLUENCER-MIDDLE-SCRIPT RULES (this script is the AI-generated middle of a 9:16
 - DO NOT include a verbal closer — the outro clip is the closer. NEVER say "click the link", "go to", any URL, hashtags, "DM me", or "fill out the form".
 - Target 45–60 words (≈ 15–20 seconds at a normal speaking pace). Tight is better.
 - DECLARATIVE TONE: end every sentence with a period or exclamation mark — NEVER a question mark. The TTS engine drifts into rising question intonation on short imperatives, so keep clauses confident and grounded.
+- NO commas anywhere in the script. If a thought needs a beat, end the sentence with a period and start a fresh one. Comma-separated clauses make the TTS run-on instead of pausing where it should.
 - NO em dashes. NO bracketed asides. NO stage directions.
+- When mentioning a numeric rating like "4.8 stars", keep the decimal point exactly as written — the period in "4.8" is essential for the TTS to read it as "four point eight" instead of "forty-eight".
 - WHAT TO COVER (lean into the unique value props — the script must feel like the AI middle is selling THIS specific service, not generic real estate):
   - Vetted-agent angle: Agent Match only connects you with proven top-performing agents who've been interviewed and reviewed. Not part-time, not random.
   - Specialty-matching angle: if you need an agent familiar with $0 down programs, USDA loans, down payment assistance, language matching, or any other specific situation, they connect you with someone who actually specializes in that. You don't have to figure it out yourself.
@@ -200,30 +202,42 @@ INFLUENCER-MIDDLE-SCRIPT RULES (this script is the AI-generated middle of a 9:16
 - The "caption" is the IG body text (3-5 sentences + 3-5 hashtags), exactly as for static posts. Hashtags on a NEW line at the end. Do not repeat the script verbatim in the caption.
 `.trim();
 
-interface RawInfluencerScript {
+interface RawInfluencerAngleScript {
+  angle: string;
   script: string;
   body: string;
 }
 
-const INFLUENCER_TOOL = {
-  name: "influencer_middle_result",
+const INFLUENCER_TOOL_V2 = {
+  name: "influencer_middle_results",
   description:
-    "Return the conversational middle script and IG caption for an influencer-mode video. Call this exactly once.",
+    "Return one conversational middle script per requested angle. Call this exactly once with one entry per angle.",
   input_schema: {
     type: "object" as const,
     properties: {
-      script: {
-        type: "string",
-        description:
-          "Voiceover middle script: 45-60 words, second-person, no hook, no closer, no URLs, no hashtags, no em dashes.",
-      },
-      body: {
-        type: "string",
-        description:
-          "IG caption body in the requested language: 3-5 sentences, then a newline and 3-5 hashtags. No URLs. No DM/CTA language.",
+      scripts: {
+        type: "array",
+        description: "One entry per requested angle, in the same order.",
+        items: {
+          type: "object",
+          properties: {
+            angle: { type: "string", description: "Echo back the angle key you were given." },
+            script: {
+              type: "string",
+              description:
+                "Voiceover middle script: 45-60 words, second-person, no hook, no closer, no URLs, no hashtags, no em dashes, no commas.",
+            },
+            body: {
+              type: "string",
+              description:
+                "IG caption body in the requested language: 3-5 sentences, then a newline and 3-5 hashtags. No URLs. No DM/CTA language.",
+            },
+          },
+          required: ["angle", "script", "body"],
+        },
       },
     },
-    required: ["script", "body"],
+    required: ["scripts"],
   },
 };
 
@@ -231,8 +245,14 @@ function buildInfluencerUserPrompt(
   language: Language,
   contentType: ContentType,
   avatarName: string,
+  angleKeys: string[],
 ): string {
   const spec = CONTENT_TYPE_SPECS[contentType];
+  const angles = spec.angles.filter((a) => angleKeys.includes(a.key));
+  const angleList = angles
+    .map((a, i) => `${i + 1}. angle="${a.key}"\n   brief: ${a.brief}`)
+    .join("\n");
+
   const refDocSection = spec.referenceDocument
     ? `\n\nREFERENCE DOCUMENT (rephrase ideas naturally, never copy verbatim, never invent claims beyond this):\n${spec.referenceDocument}\n`
     : "";
@@ -241,49 +261,66 @@ function buildInfluencerUserPrompt(
 Topic: ${spec.topic}
 Guardrails: ${spec.guardrails}${refDocSection}
 
-The avatar's name is "${avatarName}". They have already introduced Agent Match in a pre-recorded clip and will close out in a pre-recorded outro. Your job is the warm, conversational middle that elaborates on the value prop.
+The avatar's name is "${avatarName}". They have already introduced Agent Match in a pre-recorded clip and will close out in a pre-recorded outro. Your job is the warm, conversational middle that elaborates on the value prop. Each angle below should produce a DIFFERENT middle script focused on that angle's specific value-prop point — don't reword the same paragraph three times.
 
 ${INFLUENCER_VOICE_RULES}
 
-Return your result by calling the influencer_middle_result tool.`;
+Produce one middle script for each of these angles, preserving the angle key:
+${angleList}
+
+Return your results by calling the influencer_middle_results tool.`;
 }
 
-function extractInfluencerScript(resp: Anthropic.Messages.Message): RawInfluencerScript {
+function extractInfluencerScripts(resp: Anthropic.Messages.Message): RawInfluencerAngleScript[] {
   const tu = resp.content.find((b) => b.type === "tool_use");
   if (!tu || tu.type !== "tool_use") {
-    throw new Error("Claude did not call the influencer_middle_result tool");
+    throw new Error("Claude did not call the influencer_middle_results tool");
   }
-  const input = tu.input as { script?: string; body?: string };
-  if (typeof input.script !== "string" || typeof input.body !== "string") {
-    throw new Error("influencer_middle_result tool call missing 'script' or 'body'");
+  const input = tu.input as { scripts?: RawInfluencerAngleScript[] };
+  if (!Array.isArray(input.scripts) || input.scripts.length === 0) {
+    throw new Error("influencer_middle_results tool call missing 'scripts' array");
   }
-  return { script: input.script, body: input.body };
+  return input.scripts;
 }
 
-export async function generateInfluencerMiddleScript(
+export interface InfluencerScript {
+  angle: string;
+  script: string;
+  caption: string;
+}
+
+export async function generateInfluencerMiddleScripts(
   language: Language,
   contentType: ContentType,
   avatarName: string,
-): Promise<{ script: string; caption: string }> {
+  angleOverride?: string[],
+): Promise<InfluencerScript[]> {
+  // Reuse the narration-mode angle picker so the influencer flow gets the
+  // same "3 random non-CTA angles" behavior — each video then leans on a
+  // genuinely different value-prop point.
+  const angleKeys = pickVideoAngles(contentType, angleOverride);
+  if (angleKeys.length === 0) throw new Error("No angles selected");
+
   try {
     const resp = await client().messages.create({
       model: MODEL,
-      max_tokens: 2048,
+      max_tokens: 4096,
       system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
-      tools: [INFLUENCER_TOOL],
-      tool_choice: { type: "tool", name: INFLUENCER_TOOL.name },
+      tools: [INFLUENCER_TOOL_V2],
+      tool_choice: { type: "tool", name: INFLUENCER_TOOL_V2.name },
       messages: [
         {
           role: "user",
-          content: buildInfluencerUserPrompt(language, contentType, avatarName),
+          content: buildInfluencerUserPrompt(language, contentType, avatarName, angleKeys),
         },
       ],
     });
-    const raw = extractInfluencerScript(resp);
-    return {
-      script: stripDashes(raw.script).trim(),
-      caption: buildCaption(language, contentType, raw.body),
-    };
+    const raw = extractInfluencerScripts(resp);
+    return raw.map((r) => ({
+      angle: r.angle,
+      script: stripDashes(r.script).trim(),
+      caption: buildCaption(language, contentType, r.body),
+    }));
   } catch (e) {
     throw friendlyError(e);
   }

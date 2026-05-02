@@ -23,13 +23,20 @@ export async function startVideoBatch(
   return res.json();
 }
 
-// Influencer-mode script generation. Returns a single conversational
-// middle script + caption tied to the chosen avatar.
+// Influencer-mode script generation. Returns 3 conversational middle
+// scripts (one per angle from the good_agents content type), each tied
+// to the chosen avatar.
+export interface InfluencerScript {
+  angle: string;
+  script: string;
+  caption: string;
+}
+
 export async function startInfluencerScript(args: {
   language: Language;
   contentType: ContentType;
   avatarName: string;
-}): Promise<{ script: string; caption: string }> {
+}): Promise<InfluencerScript[]> {
   const res = await fetch("/api/video/start-influencer", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -40,7 +47,11 @@ export async function startInfluencerScript(args: {
       (await res.json().catch(() => ({}))).error ?? "influencer start failed",
     );
   }
-  return res.json();
+  const json = (await res.json()) as { scripts?: InfluencerScript[] };
+  if (!Array.isArray(json.scripts) || json.scripts.length === 0) {
+    throw new Error("influencer start returned no scripts");
+  }
+  return json.scripts;
 }
 
 export async function generateSourceImage(

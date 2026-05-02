@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { generateInfluencerMiddleScript } from "@/lib/videoClaude";
+import { generateInfluencerMiddleScripts } from "@/lib/videoClaude";
 import type { ContentType, Language } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -21,12 +21,15 @@ export async function POST(req: Request) {
       );
     }
 
-    const result = await generateInfluencerMiddleScript(
+    const scripts = await generateInfluencerMiddleScripts(
       body.language,
       body.contentType,
       body.avatarName,
     );
-    return NextResponse.json(result);
+    if (scripts.length === 0) {
+      return NextResponse.json({ error: "Claude returned no scripts" }, { status: 502 });
+    }
+    return NextResponse.json({ scripts });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "unknown error";
     return NextResponse.json({ error: msg }, { status: 500 });

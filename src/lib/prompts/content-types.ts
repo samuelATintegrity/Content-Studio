@@ -74,7 +74,7 @@ export const CONTENT_TYPE_SPECS: Record<ContentType, ContentTypeSpec> = {
   good_agents: {
     topic: "How we match homebuyers with the right agent (our mission and matching process)",
     guardrails:
-      "Use specifics from the reference document below; rephrase naturally, never copy verbatim. Do NOT invent numbers or claims beyond what the document says (the only quantitative claims allowed are 'top 10%' and '4.7 stars or higher'). Do NOT promise outcomes (sale prices, savings, timelines). The headline must contain 'agent' or 'agents'.",
+      "Use specifics from the reference document below; rephrase naturally, never copy verbatim. Do NOT invent numbers or claims beyond what the document says (the only quantitative claims allowed are 'top 10%' and '4.8 stars or higher'). Do NOT promise outcomes (sale prices, savings, timelines). The headline must contain 'agent' or 'agents'.",
     referenceDocument: `HOW WE MATCH YOU WITH THE RIGHT AGENT
 Different agents have different specialties. We review multiple factors to connect each homebuyer with the right fit.
 
@@ -91,7 +91,7 @@ Real estate varies significantly by price point, and not every agent operates in
 We prioritize agents who rank in the top 10% within their market and price range. This filters out part-time or inexperienced agents and ensures you're working with proven professionals.
 
 5. Proven Reviews
-We only match agents with an aggregate rating of 4.7 stars or higher across major platforms. This ensures a consistent track record of strong client experiences.
+We only match agents with an aggregate rating of 4.8 stars or higher across major platforms. This ensures a consistent track record of strong client experiences.
 
 6. Interviewed Before Introduction
 Before making an introduction, we speak directly with the agent. This ensures they are responsive, professional, and ready to help when you're connected.`,
@@ -101,7 +101,7 @@ Before making an introduction, we speak directly with the agent. This ensures th
       { key: "situation_goals", brief: "How we match agents to your situation (first-time, primary, investor) and goals.", headlineHint: "Agents for Your Goals" },
       { key: "price_match", brief: "Why a price-range fit matters and how we match agents who consistently work in your budget segment.", headlineHint: "Agent for Your Price" },
       { key: "top_performers", brief: "We prioritize agents who rank in the top 10% within their market and price range.", headlineHint: "Top 10% Agents Only" },
-      { key: "proven_reviews", brief: "We only match agents with an aggregate 4.7 stars or higher across major review platforms.", headlineHint: "4.7-Star Agents Only" },
+      { key: "proven_reviews", brief: "We only match agents with an aggregate 4.8 stars or higher across major review platforms.", headlineHint: "4.8-Star Agents Only" },
       { key: "pre_interviewed", brief: "Every agent is personally interviewed before we make an introduction.", headlineHint: "Pre-Interviewed Agents" },
       { key: "filters_part_time", brief: "Why our screening filters out part-time and inexperienced agents.", headlineHint: "No Part-Time Agents" },
       { key: "why_quality_matters", brief: "Why working with the right agent matters more than working with any agent.", headlineHint: "The Right Agent Matters" },
