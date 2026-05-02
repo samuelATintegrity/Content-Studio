@@ -5,8 +5,8 @@
 // "previously generated" pool, and by the New-image shuffle to skip
 // re-generating images the user has already paid for.
 
-const STORAGE_KEY = "static-image-library";
-const SCHEMA_VERSION = 1;
+import { getSlice, setSlice } from "./libraryStore";
+
 const SOFT_CAP = 500;
 
 export interface LibraryImage {
@@ -17,40 +17,14 @@ export interface LibraryImage {
   savedAt: number;
 }
 
-interface Stored {
-  version: number;
-  images: LibraryImage[];
-}
-
-function read(): Stored {
-  if (typeof window === "undefined") return { version: SCHEMA_VERSION, images: [] };
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { version: SCHEMA_VERSION, images: [] };
-    const parsed = JSON.parse(raw) as Partial<Stored>;
-    if (parsed.version !== SCHEMA_VERSION || !Array.isArray(parsed.images)) {
-      return { version: SCHEMA_VERSION, images: [] };
-    }
-    return parsed as Stored;
-  } catch {
-    return { version: SCHEMA_VERSION, images: [] };
-  }
-}
-
-function write(store: Stored): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
-  window.dispatchEvent(new CustomEvent("static-image-library-changed"));
-}
-
 export function listLibraryImages(): LibraryImage[] {
-  return read().images.slice().sort((a, b) => b.savedAt - a.savedAt);
+  return getSlice("images").slice().sort((a, b) => b.savedAt - a.savedAt);
 }
 
 export function addLibraryImage(input: Omit<LibraryImage, "id" | "savedAt">): LibraryImage {
-  const store = read();
+  const images = getSlice("images");
   // Dedupe by URL — if the same image was cached before, keep the older entry.
-  const existing = store.images.find((img) => img.url === input.url);
+  const existing = images.find((img) => img.url === input.url);
   if (existing) return existing;
 
   const image: LibraryImage = {
@@ -58,35 +32,28 @@ export function addLibraryImage(input: Omit<LibraryImage, "id" | "savedAt">): Li
     id: `img-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
     savedAt: Date.now(),
   };
-  store.images.push(image);
+  let next = [...images, image];
 
   // Soft cap — prune oldest. (No protected entries here; all are auto.)
-  if (store.images.length > SOFT_CAP) {
-    store.images.sort((a, b) => a.savedAt - b.savedAt);
-    store.images = store.images.slice(store.images.length - SOFT_CAP);
+  if (next.length > SOFT_CAP) {
+    next = next.slice().sort((a, b) => a.savedAt - b.savedAt).slice(next.length - SOFT_CAP);
   }
 
-  write(store);
+  setSlice("images", next);
   return image;
 }
 
 export function removeLibraryImage(id: string): void {
-  const store = read();
-  store.images = store.images.filter((img) => img.id !== id);
-  write(store);
+  const images = getSlice("images");
+  setSlice("images", images.filter((img) => img.id !== id));
 }
 
 export function subscribeImageLibrary(cb: () => void): () => void {
   if (typeof window === "undefined") return () => undefined;
   const handler = () => cb();
   window.addEventListener("static-image-library-changed", handler);
-  const storageHandler = (e: StorageEvent) => {
-    if (e.key === STORAGE_KEY) cb();
-  };
-  window.addEventListener("storage", storageHandler);
   return () => {
     window.removeEventListener("static-image-library-changed", handler);
-    window.removeEventListener("storage", storageHandler);
   };
 }
 

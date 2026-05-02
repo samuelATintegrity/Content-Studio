@@ -1,0 +1,225 @@
+"use client";
+
+// Shared cache for the user's clip library, saved sets, and image library.
+// Backed by an R2-hosted manifest at /api/library — what used to live in
+// localStorage now follows the password instead of the device. Reads are
+// served from an in-memory cache (seeded from a localStorage mirror for
+// instant first-paint), mutations are debounced + PUT to the server, and
+// window-focus refetches keep cross-device edits in sync.
+
+import type { LibraryClip } from "./clipLibrary";
+import type { SavedSet } from "./savedSets";
+import type { LibraryImage } from "./imageLibrary";
+
+const MANIFEST_VERSION = 1;
+const LOCAL_MIRROR_KEY = "content-studio-library-mirror";
+const WRITE_DEBOUNCE_MS = 600;
+
+// Legacy per-module localStorage keys, used only for one-time migration
+// the first time we boot against an empty server manifest.
+const LEGACY_KEY_CLIPS = "video-clip-library";
+const LEGACY_KEY_SETS = "video-source-sets";
+const LEGACY_KEY_IMAGES = "static-image-library";
+
+export interface Manifest {
+  version: number;
+  clips: LibraryClip[];
+  sets: SavedSet[];
+  images: LibraryImage[];
+}
+
+const EMPTY: Manifest = { version: MANIFEST_VERSION, clips: [], sets: [], images: [] };
+
+type Slice = "clips" | "sets" | "images";
+
+const SLICE_EVENT: Record<Slice, string> = {
+  clips: "video-clip-library-changed",
+  sets: "video-saved-sets-changed",
+  images: "static-image-library-changed",
+};
+
+let _state: Manifest = { ...EMPTY };
+let _bootstrapped = false;
+let _writeTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function getSlice<K extends Slice>(slice: K): Manifest[K] {
+  return _state[slice];
+}
+
+// Replace a slice, mirror to localStorage, fire that slice's change event,
+// and schedule a debounced server PUT.
+export function setSlice<K extends Slice>(slice: K, value: Manifest[K]): void {
+  _state = { ..._state, [slice]: value };
+  writeLocalMirror(_state);
+  emit(slice);
+  scheduleSync();
+}
+
+function emit(slice: Slice): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(SLICE_EVENT[slice]));
+}
+
+function emitAll(): void {
+  if (typeof window === "undefined") return;
+  for (const slice of Object.keys(SLICE_EVENT) as Slice[]) emit(slice);
+}
+
+function scheduleSync(): void {
+  if (typeof window === "undefined") return;
+  if (_writeTimer) clearTimeout(_writeTimer);
+  _writeTimer = setTimeout(() => {
+    _writeTimer = null;
+    void pushManifest(_state).catch((err) => {
+      console.error("[library] PUT /api/library failed", err);
+    });
+  }, WRITE_DEBOUNCE_MS);
+}
+
+async function fetchManifest(): Promise<Manifest | null> {
+  const res = await fetch("/api/library", { cache: "no-store" });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`/api/library GET ${res.status}`);
+  const json = (await res.json()) as Manifest;
+  return normalizeManifest(json);
+}
+
+async function pushManifest(state: Manifest): Promise<void> {
+  const res = await fetch("/api/library", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(state),
+  });
+  if (!res.ok) throw new Error(`/api/library PUT ${res.status}`);
+}
+
+function normalizeManifest(input: unknown): Manifest {
+  if (!input || typeof input !== "object") return { ...EMPTY };
+  const obj = input as Partial<Manifest>;
+  return {
+    version: typeof obj.version === "number" ? obj.version : MANIFEST_VERSION,
+    clips: Array.isArray(obj.clips) ? obj.clips : [],
+    sets: Array.isArray(obj.sets) ? obj.sets : [],
+    images: Array.isArray(obj.images) ? obj.images : [],
+  };
+}
+
+function readLocalMirror(): Manifest | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(LOCAL_MIRROR_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<Manifest>;
+    if (!parsed || typeof parsed !== "object") return null;
+    return normalizeManifest(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function writeLocalMirror(state: Manifest): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(LOCAL_MIRROR_KEY, JSON.stringify(state));
+  } catch {
+    // Quota errors etc. — the mirror is best-effort.
+  }
+}
+
+// One-time migration helper: read the old per-slice keys and fold them
+// into a Manifest. Returns an empty manifest if nothing is found, so the
+// caller can detect "had legacy data" by inspecting the slice lengths.
+function readLegacyLocalStorage(): Manifest {
+  const out: Manifest = { ...EMPTY };
+  if (typeof window === "undefined") return out;
+  // Each legacy module wrapped its array in { version, <slice> }.
+  const tryParse = <T,>(key: string, sliceKey: string): T[] => {
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw) as Record<string, unknown>;
+      const arr = parsed?.[sliceKey];
+      return Array.isArray(arr) ? (arr as T[]) : [];
+    } catch {
+      return [];
+    }
+  };
+  out.clips = tryParse<LibraryClip>(LEGACY_KEY_CLIPS, "clips");
+  out.sets = tryParse<SavedSet>(LEGACY_KEY_SETS, "sets");
+  out.images = tryParse<LibraryImage>(LEGACY_KEY_IMAGES, "images");
+  return out;
+}
+
+// Force-refetch from the server. Called on window focus + when the user
+// hits the manual refresh affordance. Silent on failure — we keep showing
+// whatever we already had.
+export async function refreshLibrary(): Promise<void> {
+  try {
+    const server = await fetchManifest();
+    if (!server) return;
+    _state = server;
+    writeLocalMirror(_state);
+    emitAll();
+  } catch (err) {
+    console.error("[library] refresh failed", err);
+  }
+}
+
+// Top-level bootstrap. Idempotent — call this once on app mount.
+//
+//   1. Hydrate from the localStorage mirror (instant paint).
+//   2. Fetch the server manifest.
+//   3. If the server has nothing AND the user has legacy per-slice data
+//      from the pre-shared-library era, migrate it up. Otherwise adopt
+//      the server state as truth.
+export async function bootstrapLibrary(): Promise<void> {
+  if (_bootstrapped) return;
+  _bootstrapped = true;
+
+  const mirror = readLocalMirror();
+  if (mirror) {
+    _state = mirror;
+    emitAll();
+  }
+
+  try {
+    const server = await fetchManifest();
+    if (server === null) {
+      const legacy = readLegacyLocalStorage();
+      const hasLegacy =
+        legacy.clips.length > 0 ||
+        legacy.sets.length > 0 ||
+        legacy.images.length > 0;
+      if (hasLegacy) {
+        _state = legacy;
+        writeLocalMirror(_state);
+        emitAll();
+        await pushManifest(_state);
+      }
+      // Otherwise the in-memory state stays at whatever the mirror gave
+      // us (or empty), and the server stays empty until the first write.
+      return;
+    }
+    _state = server;
+    writeLocalMirror(_state);
+    emitAll();
+  } catch (err) {
+    console.error("[library] bootstrap fetch failed", err);
+  }
+}
+
+// Refresh on tab focus so picking up where you left off on another device
+// doesn't require a hard reload. Cross-tab sync on the same machine flows
+// through the storage event.
+if (typeof window !== "undefined") {
+  window.addEventListener("focus", () => {
+    void refreshLibrary();
+  });
+  window.addEventListener("storage", (e) => {
+    if (e.key !== LOCAL_MIRROR_KEY) return;
+    const mirror = readLocalMirror();
+    if (!mirror) return;
+    _state = mirror;
+    emitAll();
+  });
+}

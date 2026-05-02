@@ -1,9 +1,9 @@
 "use client";
 
 import { listSavedSets, subscribeSavedSets } from "./savedSets";
-import type { Language, VideoSourcePromptIndex } from "./types";
+import { getSlice, setSlice } from "./libraryStore";
+import type { Language, MessageTheme, VideoSourcePromptIndex } from "./types";
 
-const STORAGE_KEY = "video-clip-library";
 const SCHEMA_VERSION = 1;
 const AUTO_CAP = 200;
 
@@ -40,6 +40,11 @@ export interface LibraryClip {
   // set. Existing clips without these fields behave as filler.
   role?: ClipRole;
   avatarName?: string;
+  // Influencer-mode messaging theme — which script topic this bookend was
+  // recorded for. Only meaningful for intro/outro clips. Existing clips
+  // without this field default to "agent_match" at filter time so the
+  // pre-DPA library still works.
+  messageTheme?: MessageTheme;
   // Influencer-mode caption cutoff. When this phrase appears in the
   // transcribed bookend audio, ALL words from the cutoff onward are
   // dropped from the burned captions. Used to clear the canvas right
@@ -54,24 +59,11 @@ interface Stored {
 }
 
 function read(): Stored {
-  if (typeof window === "undefined") return { version: SCHEMA_VERSION, clips: [] };
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { version: SCHEMA_VERSION, clips: [] };
-    const parsed = JSON.parse(raw) as Partial<Stored>;
-    if (parsed.version !== SCHEMA_VERSION || !Array.isArray(parsed.clips)) {
-      return { version: SCHEMA_VERSION, clips: [] };
-    }
-    return parsed as Stored;
-  } catch {
-    return { version: SCHEMA_VERSION, clips: [] };
-  }
+  return { version: SCHEMA_VERSION, clips: getSlice("clips") };
 }
 
 function write(store: Stored): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
-  window.dispatchEvent(new CustomEvent("video-clip-library-changed"));
+  setSlice("clips", store.clips);
 }
 
 export function listLibraryClips(): LibraryClip[] {
@@ -120,13 +112,8 @@ export function subscribeLibrary(cb: () => void): () => void {
   if (typeof window === "undefined") return () => undefined;
   const handler = () => cb();
   window.addEventListener("video-clip-library-changed", handler);
-  const storageHandler = (e: StorageEvent) => {
-    if (e.key === STORAGE_KEY) cb();
-  };
-  window.addEventListener("storage", storageHandler);
   return () => {
     window.removeEventListener("video-clip-library-changed", handler);
-    window.removeEventListener("storage", storageHandler);
   };
 }
 
@@ -149,6 +136,7 @@ export interface MergedClip {
   language?: ClipLanguage;
   role?: ClipRole;
   avatarName?: string;
+  messageTheme?: MessageTheme;
   captionCutoffPhrase?: string;
   savedAt: number;
 }
@@ -177,6 +165,7 @@ export function listMergedLibrary(): MergedClip[] {
       language: c.language,
       role: c.role,
       avatarName: c.avatarName,
+      messageTheme: c.messageTheme,
       captionCutoffPhrase: c.captionCutoffPhrase,
       savedAt: c.savedAt,
     });
