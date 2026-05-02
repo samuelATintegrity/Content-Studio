@@ -327,225 +327,199 @@ export async function compose(args: ComposeArgs): Promise<void> {
   await runFfmpeg(ffArgs, cwd);
 }
 
-// ── Influencer compose ──────────────────────────────────────────────
+// ── Influencer compose (segmented render) ──────────────────────────
 //
-// Layout: [intro video + intro audio] → [middle filler clips + AI TTS +
-// karaoke captions] → [outro video + outro audio]. No background music;
-// no logo card; no white hold; no head-trim on intro/outro (they have
-// their own natural framing). Middle clips still get the 0.15s warmup
-// trim used elsewhere.
+// To keep the outro's lip-sync deterministic regardless of the AI
+// middle's variable length, we render each segment to its own
+// intermediate mp4 and stitch them with the concat demuxer in a final
+// pass. AV sync is locked inside each per-segment ffmpeg invocation;
+// the final pass re-encodes once to burn captions and mix in whoosh
+// transitions + background music.
 
-export interface ComposeInfluencerArgs {
-  introPath: string;
-  middleClipPaths: string[];
-  outroPath: string;
-  introDurationS: number;
-  outroDurationS: number;
-  audioPath: string;       // AI middle TTS narration MP3
-  audioDurationS: number;
-  assPath: string;
-  fontsDir: string;
-  outPath: string;
-  // Optional whoosh transition SFX layered at intro→middle and
-  // middle→outro boundaries to mask the abrupt audio cut between the
-  // recorded bookends and the AI middle narration.
-  whooshPath?: string | null;
-  // Optional background music. Ducked low (0.15) and starts only at
-  // intro_end so the intro's recorded audio plays clean.
-  musicPath?: string | null;
-}
+import { writeFile } from "node:fs/promises";
 
-// Per-transition window pulled from the whoosh source file. The whoosh
-// is 5s end-to-end but we only want a transition-sized chunk. Centering
-// the file's t=0.4s on the segment cut gives ~0.4s of build-up before
-// the cut and ~0.7s of tail bleeding into the next segment, which masks
-// the abrupt audio change without overwhelming the next clip's content.
-const WHOOSH_TRIM_S = 1.1;
-const WHOOSH_PRE_CUT_S = 0.4;
 const WHOOSH_VOLUME = 0.7;
 const INFLUENCER_MUSIC_VOLUME = 0.15;
 const MUSIC_FADE_OUT_END_S = 0.8;
 
-function buildInfluencerFilterComplex(args: {
-  middleClipCount: number;
-  middlePerClipS: number;
-  middleVisualPadS: number;
-  introInputIndex: number;
-  middleInputBaseIndex: number;
-  outroInputIndex: number;
-  audioInputIndex: number;
-  audioDurationS: number;
+// Shared ffmpeg encoder flags so all segment intermediates share the
+// same codec params. Concat demuxer is happiest when inputs match.
+const SEGMENT_ENCODE_ARGS = [
+  "-c:v", "libx264",
+  "-preset", "veryfast",
+  "-crf", "23",
+  "-pix_fmt", "yuv420p",
+  "-r", "30",
+  "-c:a", "aac",
+  "-b:a", "128k",
+  "-ar", "44100",
+  "-ac", "2",
+  "-movflags", "+faststart",
+];
+
+// ── Pass 1: intro segment ──────────────────────────────────────────
+
+export interface ComposeIntroSegmentArgs {
+  introPath: string;
   introDurationS: number;
-  outroDurationS: number;
-  assRelPath: string;
-  fontsDir: string;
-  // null when the asset is missing — those layers are skipped.
-  whooshInputIndex: number | null;
-  musicInputIndex: number | null;
-}): string {
-  const {
-    middleClipCount, middlePerClipS, middleVisualPadS,
-    introInputIndex, middleInputBaseIndex, outroInputIndex,
-    audioInputIndex, audioDurationS, introDurationS, outroDurationS,
-    assRelPath, fontsDir, whooshInputIndex, musicInputIndex,
-  } = args;
-
-  const escapedAss = escapeForFilter(assRelPath);
-  const escapedFonts = escapeForFilter(fontsDir);
-
-  const chains: string[] = [];
-
-  // Intro segment: scale/crop to 9:16, trim to its natural duration, no
-  // head-trim — the avatar's recorded clip is the source of truth.
-  chains.push(
-    `[${introInputIndex}:v]scale=1080:1920:force_original_aspect_ratio=increase,` +
-      `crop=1080:1920,setsar=1,fps=30,` +
-      `trim=duration=${introDurationS.toFixed(6)},setpts=PTS-STARTPTS,format=yuv420p[v_intro]`,
-  );
-
-  // Middle clips: warmup head-trim + per-clip share of AI narration.
-  for (let i = 0; i < middleClipCount; i++) {
-    const inputIdx = middleInputBaseIndex + i;
-    chains.push(
-      `[${inputIdx}:v]trim=start=${CLIP_HEAD_TRIM_S.toFixed(6)}:duration=${middlePerClipS.toFixed(6)},setpts=PTS-STARTPTS,` +
-        `scale=1080:1920:force_original_aspect_ratio=increase,` +
-        `crop=1080:1920,setsar=1,fps=30,format=yuv420p[v_mid${i}]`,
-    );
-  }
-  const midConcatInputs = Array.from({ length: middleClipCount }, (_, i) => `[v_mid${i}]`).join("");
-  chains.push(`${midConcatInputs}concat=n=${middleClipCount}:v=1:a=0[v_mid_cat]`);
-
-  // If the AI middle audio is longer than the available visual share
-  // (clipCount × maxAvailablePerClip), freeze the last frame to fill the
-  // gap so the outro doesn't slide forward and desync from its audio.
-  const middleVisualLabel = middleVisualPadS > 0 ? "v_mid_padded" : "v_mid_cat";
-  if (middleVisualPadS > 0) {
-    chains.push(
-      `[v_mid_cat]tpad=stop_mode=clone:stop_duration=${middleVisualPadS.toFixed(3)}[v_mid_padded]`,
-    );
-  }
-
-  // Outro segment: same shape as intro.
-  chains.push(
-    `[${outroInputIndex}:v]scale=1080:1920:force_original_aspect_ratio=increase,` +
-      `crop=1080:1920,setsar=1,fps=30,` +
-      `trim=duration=${outroDurationS.toFixed(6)},setpts=PTS-STARTPTS,format=yuv420p[v_outro]`,
-  );
-
-  // Visual concat: intro → middle (visually padded) → outro. Subtitles are
-  // burned AFTER concat so a single ASS file with global timestamps drives
-  // captions across all three segments.
-  chains.push(
-    `[v_intro][${middleVisualLabel}][v_outro]concat=n=3:v=1:a=0[v_concat]`,
-  );
-  chains.push(
-    `[v_concat]subtitles=filename='${escapedAss}':fontsdir='${escapedFonts}',format=yuv420p,setsar=1[v_final]`,
-  );
-
-  // Audio track: intro audio → AI TTS middle (volume-attenuated for
-  // headroom) → outro audio. No music.
-  //
-  // `aresample=async=1:first_pts=0` runs FIRST on each bookend audio
-  // stream. It forces sample-accurate output starting at PTS 0 and
-  // resamples to 44100Hz, which sidesteps AAC priming + edit-list
-  // ambiguity in the source mp4s — the intro's audio stream is at
-  // 48000Hz and the outro's at 44100Hz with different priming sizes
-  // (1024 samples each, ~21ms vs ~23ms). Without `aresample=async=1`
-  // those priming-silence samples can leak through to the concat and
-  // shift the outro segment a couple of frames behind its video.
-  //
-  // atrim then caps at the target duration; apad whole_dur pads with
-  // silence if the trimmed audio is shorter (typical for the AI
-  // middle since we ceil-rounded the target up to a frame boundary).
-  // Together, every segment's audio is exactly target seconds long.
-  chains.push(
-    `[${introInputIndex}:a]aresample=async=1:first_pts=0,atrim=duration=${introDurationS.toFixed(6)},asetpts=PTS-STARTPTS,apad=whole_dur=${introDurationS.toFixed(6)},aformat=sample_rates=44100:channel_layouts=stereo[a_intro]`,
-  );
-  chains.push(
-    `[${audioInputIndex}:a]aresample=async=1:first_pts=0,atrim=duration=${audioDurationS.toFixed(6)},asetpts=PTS-STARTPTS,volume=${NARRATION_VOLUME.toFixed(3)},apad=whole_dur=${audioDurationS.toFixed(6)},aformat=sample_rates=44100:channel_layouts=stereo[a_mid]`,
-  );
-  chains.push(
-    `[${outroInputIndex}:a]aresample=async=1:first_pts=0,atrim=duration=${outroDurationS.toFixed(6)},asetpts=PTS-STARTPTS,apad=whole_dur=${outroDurationS.toFixed(6)},aformat=sample_rates=44100:channel_layouts=stereo[a_outro]`,
-  );
-  chains.push(`[a_intro][a_mid][a_outro]concat=n=3:v=0:a=1[a_voice]`);
-
-  // ── Optional layers (whoosh transitions + background music) ───────
-  // We mix whatever extra audio layers are available into the voice
-  // track via amix. amix's first input drives the output duration so
-  // [a_voice] (which spans the whole timeline) goes first.
-  const totalDurationS = introDurationS + audioDurationS + outroDurationS;
-  const middleStartS = introDurationS;
-  const outroStartS = introDurationS + audioDurationS;
-  const mixInputs: string[] = ["[a_voice]"];
-
-  // Whoosh #1 at intro→middle, whoosh #2 at middle→outro. asplit one
-  // input so we don't have to add the file twice. Each copy gets its
-  // own adelay so they land at different timeline positions.
-  if (whooshInputIndex !== null) {
-    const whoosh1DelayMs = Math.max(0, Math.round((middleStartS - WHOOSH_PRE_CUT_S) * 1000));
-    const whoosh2DelayMs = Math.max(0, Math.round((outroStartS - WHOOSH_PRE_CUT_S) * 1000));
-    chains.push(
-      `[${whooshInputIndex}:a]aresample=async=1:first_pts=0,atrim=duration=${WHOOSH_TRIM_S.toFixed(6)},asetpts=PTS-STARTPTS,volume=${WHOOSH_VOLUME.toFixed(3)},aformat=sample_rates=44100:channel_layouts=stereo,asplit=2[w_pre1][w_pre2]`,
-    );
-    chains.push(
-      `[w_pre1]adelay=${whoosh1DelayMs}|${whoosh1DelayMs}[a_whoosh1]`,
-    );
-    chains.push(
-      `[w_pre2]adelay=${whoosh2DelayMs}|${whoosh2DelayMs}[a_whoosh2]`,
-    );
-    mixInputs.push("[a_whoosh1]", "[a_whoosh2]");
-  }
-
-  // Music starts at intro_end and runs through to the very end of the
-  // outro, then fades out. The music file is looped at input level so
-  // shorter tracks tile across whatever timeline length we need.
-  if (musicInputIndex !== null) {
-    const musicDurationS = totalDurationS - middleStartS;
-    const musicFadeStartS = Math.max(0, musicDurationS - MUSIC_FADE_OUT_END_S);
-    const musicDelayMs = Math.max(0, Math.round(middleStartS * 1000));
-    chains.push(
-      `[${musicInputIndex}:a]aresample=async=1:first_pts=0,atrim=duration=${musicDurationS.toFixed(6)},asetpts=PTS-STARTPTS,volume=${INFLUENCER_MUSIC_VOLUME.toFixed(3)},afade=type=out:start_time=${musicFadeStartS.toFixed(6)}:duration=${MUSIC_FADE_OUT_END_S},aformat=sample_rates=44100:channel_layouts=stereo,adelay=${musicDelayMs}|${musicDelayMs}[a_music]`,
-    );
-    mixInputs.push("[a_music]");
-  }
-
-  if (mixInputs.length === 1) {
-    // Nothing to mix in — fall through to a passthrough rename.
-    chains.push(`[a_voice]anull[a_final]`);
-  } else {
-    // duration=first locks the final length to [a_voice]'s duration so
-    // delayed layers don't extend the timeline. normalize=0 preserves
-    // the volumes we set explicitly above.
-    chains.push(
-      `${mixInputs.join("")}amix=inputs=${mixInputs.length}:duration=first:normalize=0:dropout_transition=0[a_final]`,
-    );
-  }
-
-  return chains.join(";");
+  outPath: string;
 }
 
-export async function composeInfluencer(args: ComposeInfluencerArgs): Promise<void> {
-  if (args.middleClipPaths.length === 0) {
-    throw new Error("composeInfluencer: no middle clips provided");
+export async function composeIntroSegment(args: ComposeIntroSegmentArgs): Promise<void> {
+  if (args.introDurationS <= 0) {
+    throw new Error("composeIntroSegment: introDurationS must be > 0");
   }
-  if (args.introDurationS <= 0 || args.outroDurationS <= 0) {
-    throw new Error("composeInfluencer: intro and outro durations must be > 0");
+  const filter = [
+    // Video: scale/crop to 9:16, trim to floor-frame target. fps=30 with
+    // a frame-aligned trim gives a clean integer frame count.
+    `[0:v]scale=1080:1920:force_original_aspect_ratio=increase,` +
+      `crop=1080:1920,setsar=1,fps=30,` +
+      `trim=duration=${args.introDurationS.toFixed(6)},setpts=PTS-STARTPTS,format=yuv420p[v]`,
+    // Audio: aresample at the start to neutralize any source priming /
+    // edit-list quirks, then trim+pad to exactly introDurationS.
+    `[0:a]aresample=async=1:first_pts=0,atrim=duration=${args.introDurationS.toFixed(6)},asetpts=PTS-STARTPTS,apad=whole_dur=${args.introDurationS.toFixed(6)},aformat=sample_rates=44100:channel_layouts=stereo[a]`,
+  ].join(";");
+
+  await runFfmpeg(
+    [
+      "-hide_banner", "-loglevel", "error", "-y",
+      "-i", args.introPath,
+      "-filter_complex", filter,
+      "-map", "[v]", "-map", "[a]",
+      ...SEGMENT_ENCODE_ARGS,
+      args.outPath,
+    ],
+    dirname(args.outPath),
+  );
+}
+
+// ── Pass 2: middle segment ─────────────────────────────────────────
+
+export interface ComposeMiddleSegmentArgs {
+  middleClipPaths: string[];
+  audioPath: string;       // AI middle TTS narration MP3
+  audioDurationS: number;  // frame-aligned target (ceil of probed MP3)
+  outPath: string;
+}
+
+export async function composeMiddleSegment(args: ComposeMiddleSegmentArgs): Promise<void> {
+  if (args.middleClipPaths.length === 0) {
+    throw new Error("composeMiddleSegment: no middle clips provided");
+  }
+  if (args.audioDurationS <= 0) {
+    throw new Error("composeMiddleSegment: audioDurationS must be > 0");
   }
 
-  // Per-middle-clip duration: bound by source after head-trim, by AI TTS share.
+  // Per-clip duration: each clip plays for an equal share of the AI
+  // middle audio. Bounded by the source clip length post-head-trim so
+  // we never trim past what the source actually has.
   const maxAvailablePerClip = SOURCE_CLIP_DURATION_S - CLIP_HEAD_TRIM_S;
   const audioShare = args.audioDurationS / args.middleClipPaths.length;
   const middlePerClipS = Math.max(0.5, Math.min(maxAvailablePerClip, audioShare));
   const middleClipsLengthS = middlePerClipS * args.middleClipPaths.length;
-  // If audio is longer than what the source clips can cover, freeze the
-  // last frame to bridge the gap. Keeps the outro aligned with its audio.
+  // Safety net: if audio runs longer than what the clips can cover,
+  // freeze the last frame so the segment's audio and video lengths stay
+  // matched. With 8 × 4.85s capacity this almost never fires.
   const middleVisualPadS = Math.max(0, args.audioDurationS - middleClipsLengthS);
+
+  const inputs: string[] = [];
+  for (const clip of args.middleClipPaths) inputs.push("-i", clip);
+  const audioInputIndex = args.middleClipPaths.length;
+  inputs.push("-i", args.audioPath);
+
+  const chains: string[] = [];
+  for (let i = 0; i < args.middleClipPaths.length; i++) {
+    chains.push(
+      `[${i}:v]trim=start=${CLIP_HEAD_TRIM_S.toFixed(6)}:duration=${middlePerClipS.toFixed(6)},setpts=PTS-STARTPTS,` +
+        `scale=1080:1920:force_original_aspect_ratio=increase,` +
+        `crop=1080:1920,setsar=1,fps=30,format=yuv420p[v_mid${i}]`,
+    );
+  }
+  const midInputs = Array.from({ length: args.middleClipPaths.length }, (_, i) => `[v_mid${i}]`).join("");
+  chains.push(`${midInputs}concat=n=${args.middleClipPaths.length}:v=1:a=0[v_mid_cat]`);
+  if (middleVisualPadS > 0) {
+    chains.push(
+      `[v_mid_cat]tpad=stop_mode=clone:stop_duration=${middleVisualPadS.toFixed(6)}[v]`,
+    );
+  } else {
+    chains.push(`[v_mid_cat]null[v]`);
+  }
+  // Audio: aresample, trim, volume-attenuate for headroom, pad to target.
+  chains.push(
+    `[${audioInputIndex}:a]aresample=async=1:first_pts=0,atrim=duration=${args.audioDurationS.toFixed(6)},asetpts=PTS-STARTPTS,volume=${NARRATION_VOLUME.toFixed(3)},apad=whole_dur=${args.audioDurationS.toFixed(6)},aformat=sample_rates=44100:channel_layouts=stereo[a]`,
+  );
+
+  await runFfmpeg(
+    [
+      "-hide_banner", "-loglevel", "error", "-y",
+      ...inputs,
+      "-filter_complex", chains.join(";"),
+      "-map", "[v]", "-map", "[a]",
+      ...SEGMENT_ENCODE_ARGS,
+      args.outPath,
+    ],
+    dirname(args.outPath),
+  );
+}
+
+// ── Pass 3: outro segment ──────────────────────────────────────────
+
+export interface ComposeOutroSegmentArgs {
+  outroPath: string;
+  outroDurationS: number;
+  outPath: string;
+}
+
+export async function composeOutroSegment(args: ComposeOutroSegmentArgs): Promise<void> {
+  if (args.outroDurationS <= 0) {
+    throw new Error("composeOutroSegment: outroDurationS must be > 0");
+  }
+  // Same shape as the intro segment.
+  const filter = [
+    `[0:v]scale=1080:1920:force_original_aspect_ratio=increase,` +
+      `crop=1080:1920,setsar=1,fps=30,` +
+      `trim=duration=${args.outroDurationS.toFixed(6)},setpts=PTS-STARTPTS,format=yuv420p[v]`,
+    `[0:a]aresample=async=1:first_pts=0,atrim=duration=${args.outroDurationS.toFixed(6)},asetpts=PTS-STARTPTS,apad=whole_dur=${args.outroDurationS.toFixed(6)},aformat=sample_rates=44100:channel_layouts=stereo[a]`,
+  ].join(";");
+
+  await runFfmpeg(
+    [
+      "-hide_banner", "-loglevel", "error", "-y",
+      "-i", args.outroPath,
+      "-filter_complex", filter,
+      "-map", "[v]", "-map", "[a]",
+      ...SEGMENT_ENCODE_ARGS,
+      args.outPath,
+    ],
+    dirname(args.outPath),
+  );
+}
+
+// ── Pass 4: final stitch + captions + whoosh + music ───────────────
+
+export interface ComposeInfluencerFinalArgs {
+  segmentPaths: string[];        // [intro, middle, outro] in order
+  introDurationS: number;        // for whoosh #1 / music start positioning
+  middleAudioDurationS: number;  // for whoosh #2 positioning
+  outroDurationS: number;        // for music end + fade positioning
+  assPath: string;
+  fontsDir: string;
+  whooshPath?: string | null;
+  musicPath?: string | null;
+  outPath: string;
+}
+
+export async function composeInfluencerFinal(args: ComposeInfluencerFinalArgs): Promise<void> {
+  if (args.segmentPaths.length !== 3) {
+    throw new Error("composeInfluencerFinal: expected 3 segment paths");
+  }
 
   const cwd = dirname(args.assPath);
   const assRel = basename(args.assPath);
+  const escapedAss = escapeForFilter(assRel);
+  const escapedFonts = escapeForFilter(args.fontsDir);
 
-  // Best-effort optional layers. Files are checked here at the worker
-  // FS so a missing whoosh/music asset just renders without that layer.
+  // Best-effort optional layers.
   const whooshPath = args.whooshPath && (await fileExists(args.whooshPath))
     ? args.whooshPath
     : null;
@@ -553,74 +527,99 @@ export async function composeInfluencer(args: ComposeInfluencerArgs): Promise<vo
     ? args.musicPath
     : null;
 
-  // Inputs in this order:
-  //   intro, middleClip[0..N-1], outro, ttsAudio,
-  //   [whoosh (if any)], [music (looped, if any)]
-  const inputs: string[] = [];
-  inputs.push("-i", args.introPath);
-  const introInputIndex = 0;
+  // ffmpeg's concat demuxer reads a tiny text file listing the inputs.
+  // Paths must be relative to (or absolute for) the location where the
+  // demuxer reads them; we use absolute paths so cwd doesn't matter.
+  const concatListPath = join(cwd, "segments.txt");
+  const concatListBody = args.segmentPaths
+    .map((p) => `file '${p.replace(/'/g, "'\\''")}'`)
+    .join("\n") + "\n";
+  await writeFile(concatListPath, concatListBody, "utf8");
 
-  const middleInputBaseIndex = 1;
-  for (const clip of args.middleClipPaths) inputs.push("-i", clip);
-
-  const outroInputIndex = middleInputBaseIndex + args.middleClipPaths.length;
-  inputs.push("-i", args.outroPath);
-
-  const audioInputIndex = outroInputIndex + 1;
-  inputs.push("-i", args.audioPath);
-
-  let nextInputIndex = audioInputIndex + 1;
-  let whooshInputIndex: number | null = null;
-  if (whooshPath) {
-    whooshInputIndex = nextInputIndex;
-    inputs.push("-i", whooshPath);
-    nextInputIndex += 1;
-  }
-
-  let musicInputIndex: number | null = null;
-  if (musicPath) {
-    musicInputIndex = nextInputIndex;
-    // -stream_loop -1 tiles a short music track across the longer
-    // (middle + outro) timeline; atrim downstream caps the length.
-    inputs.push("-stream_loop", "-1", "-i", musicPath);
-    nextInputIndex += 1;
-  }
-
-  const filter = buildInfluencerFilterComplex({
-    middleClipCount: args.middleClipPaths.length,
-    middlePerClipS,
-    middleVisualPadS,
-    introInputIndex,
-    middleInputBaseIndex,
-    outroInputIndex,
-    audioInputIndex,
-    audioDurationS: args.audioDurationS,
-    introDurationS: args.introDurationS,
-    outroDurationS: args.outroDurationS,
-    assRelPath: assRel,
-    fontsDir: args.fontsDir,
-    whooshInputIndex,
-    musicInputIndex,
-  });
-
-  const ffArgs = [
-    "-hide_banner",
-    "-loglevel", "error",
-    "-y",
-    ...inputs,
-    "-filter_complex", filter,
-    "-map", "[v_final]",
-    "-map", "[a_final]",
-    "-c:v", "libx264",
-    "-preset", "veryfast",
-    "-crf", "23",
-    "-pix_fmt", "yuv420p",
-    "-c:a", "aac",
-    "-b:a", "128k",
-    "-r", "30",
-    "-movflags", "+faststart",
-    args.outPath,
+  // Inputs: 0 = concat demuxer (audio+video both at index 0), then the
+  // optional whoosh and music files.
+  const inputs: string[] = [
+    "-f", "concat", "-safe", "0", "-i", concatListPath,
   ];
+  let nextIdx = 1;
+  let whooshIdx: number | null = null;
+  if (whooshPath) {
+    whooshIdx = nextIdx;
+    inputs.push("-i", whooshPath);
+    nextIdx += 1;
+  }
+  let musicIdx: number | null = null;
+  if (musicPath) {
+    musicIdx = nextIdx;
+    // -stream_loop -1 tiles short music tracks across the (middle+outro)
+    // window; atrim downstream caps the length to the target.
+    inputs.push("-stream_loop", "-1", "-i", musicPath);
+    nextIdx += 1;
+  }
 
-  await runFfmpeg(ffArgs, cwd);
+  const middleStartS = args.introDurationS;
+  const outroStartS = args.introDurationS + args.middleAudioDurationS;
+
+  const chains: string[] = [];
+
+  // Video: burn captions on the concatenated stream.
+  chains.push(
+    `[0:v]subtitles=filename='${escapedAss}':fontsdir='${escapedFonts}',format=yuv420p,setsar=1[v_final]`,
+  );
+
+  // Voice track is whatever audio came out of the concat demuxer.
+  // amix's first input drives the output duration so the voice goes
+  // first. We still aresample defensively to lock the rate.
+  chains.push(`[0:a]aresample=async=1:first_pts=0,aformat=sample_rates=44100:channel_layouts=stereo[a_voice]`);
+  const mixInputs: string[] = ["[a_voice]"];
+
+  // Whoosh: split one input into two delayed copies. The new file is
+  // ~270ms with energy at t=0, so the file's start lands AT the cut
+  // (no pre-roll).
+  if (whooshIdx !== null) {
+    const whoosh1DelayMs = Math.max(0, Math.round(middleStartS * 1000));
+    const whoosh2DelayMs = Math.max(0, Math.round(outroStartS * 1000));
+    chains.push(
+      `[${whooshIdx}:a]aresample=async=1:first_pts=0,asetpts=PTS-STARTPTS,volume=${WHOOSH_VOLUME.toFixed(3)},aformat=sample_rates=44100:channel_layouts=stereo,asplit=2[w_pre1][w_pre2]`,
+    );
+    chains.push(`[w_pre1]adelay=${whoosh1DelayMs}|${whoosh1DelayMs}[a_whoosh1]`);
+    chains.push(`[w_pre2]adelay=${whoosh2DelayMs}|${whoosh2DelayMs}[a_whoosh2]`);
+    mixInputs.push("[a_whoosh1]", "[a_whoosh2]");
+  }
+
+  // Music: starts at intro end, runs through middle + outro, fades out
+  // the last MUSIC_FADE_OUT_END_S seconds of the outro.
+  if (musicIdx !== null) {
+    const musicDurationS = args.middleAudioDurationS + args.outroDurationS;
+    const musicFadeStartS = Math.max(0, musicDurationS - MUSIC_FADE_OUT_END_S);
+    const musicDelayMs = Math.max(0, Math.round(middleStartS * 1000));
+    chains.push(
+      `[${musicIdx}:a]aresample=async=1:first_pts=0,atrim=duration=${musicDurationS.toFixed(6)},asetpts=PTS-STARTPTS,volume=${INFLUENCER_MUSIC_VOLUME.toFixed(3)},afade=type=out:start_time=${musicFadeStartS.toFixed(6)}:duration=${MUSIC_FADE_OUT_END_S},aformat=sample_rates=44100:channel_layouts=stereo,adelay=${musicDelayMs}|${musicDelayMs}[a_music]`,
+    );
+    mixInputs.push("[a_music]");
+  }
+
+  if (mixInputs.length === 1) {
+    chains.push(`[a_voice]anull[a_final]`);
+  } else {
+    chains.push(
+      `${mixInputs.join("")}amix=inputs=${mixInputs.length}:duration=first:normalize=0:dropout_transition=0[a_final]`,
+    );
+  }
+
+  await runFfmpeg(
+    [
+      "-hide_banner", "-loglevel", "error", "-y",
+      ...inputs,
+      "-filter_complex", chains.join(";"),
+      "-map", "[v_final]", "-map", "[a_final]",
+      "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+      "-pix_fmt", "yuv420p",
+      "-c:a", "aac", "-b:a", "128k",
+      "-r", "30",
+      "-movflags", "+faststart",
+      args.outPath,
+    ],
+    cwd,
+  );
 }

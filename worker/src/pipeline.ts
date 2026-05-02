@@ -11,7 +11,13 @@ import {
 } from "./subtitles.js";
 import { voiceIdFor } from "./voices.js";
 import { downloadClips } from "./clipDownload.js";
-import { compose, composeInfluencer } from "./ffmpeg.js";
+import {
+  compose,
+  composeInfluencerFinal,
+  composeIntroSegment,
+  composeMiddleSegment,
+  composeOutroSegment,
+} from "./ffmpeg.js";
 import { pickMusicTrack, pickSoundEffect } from "./music.js";
 import { probeBookendDurationS, probeDurationS } from "./probe.js";
 import { applyCaptionCutoff, transcribeMediaFile } from "./transcribe.js";
@@ -223,29 +229,56 @@ async function runInfluencerPipeline(
   const assPath = join(workDir, "subs.ass");
   await writeFile(assPath, ass, "utf8");
 
-  // ── Stage: Render ───────────────────────────────────────────────────
-  setState(jobId, "rendering", 0.6);
+  // ── Stage: Render (segmented, 4 ffmpeg passes) ─────────────────────
+  // Each segment renders to its own intermediate mp4 with audio+video
+  // locked together at output time. The final pass concat-demuxes
+  // them, burns captions, and mixes whoosh + music. This isolates
+  // outro lip-sync from any timing variation in the middle's TTS.
   const finalPath = join(workDir, "final.mp4");
+  const introSegPath = join(workDir, "intro-segment.mp4");
+  const middleSegPath = join(workDir, "middle-segment.mp4");
+  const outroSegPath = join(workDir, "outro-segment.mp4");
+
+  setState(jobId, "rendering", 0.55);
+  await composeIntroSegment({
+    introPath,
+    introDurationS,
+    outPath: introSegPath,
+  });
+
+  setState(jobId, "rendering", 0.65);
+  await composeMiddleSegment({
+    middleClipPaths: middlePaths,
+    audioPath: tts.mp3Path,
+    audioDurationS: middleAudioDurationS,
+    outPath: middleSegPath,
+  });
+
+  setState(jobId, "rendering", 0.75);
+  await composeOutroSegment({
+    outroPath,
+    outroDurationS,
+    outPath: outroSegPath,
+  });
+
   // Pick a music track + the woosh transition SFX. Both are best-effort
   // — if the assets dir is missing the file, that audio layer is just
   // skipped (compose handles the nullable paths).
+  setState(jobId, "rendering", 0.85);
   const [musicPath, whooshPath] = await Promise.all([
     pickMusicTrack(),
     pickSoundEffect("woosh"),
   ]);
-  await composeInfluencer({
-    introPath,
-    middleClipPaths: middlePaths,
-    outroPath,
+  await composeInfluencerFinal({
+    segmentPaths: [introSegPath, middleSegPath, outroSegPath],
     introDurationS,
+    middleAudioDurationS,
     outroDurationS,
-    audioPath: tts.mp3Path,
-    audioDurationS: middleAudioDurationS,
     assPath,
     fontsDir: FONTS_DIR,
-    outPath: finalPath,
-    musicPath,
     whooshPath,
+    musicPath,
+    outPath: finalPath,
   });
 
   // ── Stage: Upload ───────────────────────────────────────────────────
