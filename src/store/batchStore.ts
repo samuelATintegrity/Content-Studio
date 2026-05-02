@@ -3,10 +3,12 @@
 import { create } from "zustand";
 import {
   DEFAULT_FORMAT,
+  DEFAULT_MESSAGE_THEME,
   type ContentType,
   type Format,
   type ImageSlot,
   type Language,
+  type MessageTheme,
   type Post,
   type VideoPost,
 } from "@/lib/types";
@@ -32,11 +34,14 @@ interface BatchState {
 
   // Influencer-mode state. subMode toggles the second pill in the sidebar
   // ("Narration · footage" vs "Influencer"); selectedAvatarName + intro/
-  // outro picks are scoped to the influencer flow only.
+  // outro picks are scoped to the influencer flow only. selectedMessageTheme
+  // chooses which scripted topic the influencer is delivering — each theme
+  // has its own pre-recorded intro/outro library.
   subMode: SubMode;
   selectedAvatarName: string | null;
   selectedIntroClipUrl: string | null;
   selectedOutroClipUrl: string | null;
+  selectedMessageTheme: MessageTheme;
 
   setFormat: (f: Format) => void;
   setLanguage: (l: Language) => void;
@@ -58,6 +63,7 @@ interface BatchState {
   setSelectedAvatarName: (name: string | null) => void;
   setSelectedIntroClipUrl: (url: string | null) => void;
   setSelectedOutroClipUrl: (url: string | null) => void;
+  setSelectedMessageTheme: (t: MessageTheme) => void;
 }
 
 export const useBatchStore = create<BatchState>((set) => ({
@@ -76,6 +82,7 @@ export const useBatchStore = create<BatchState>((set) => ({
   selectedAvatarName: null,
   selectedIntroClipUrl: null,
   selectedOutroClipUrl: null,
+  selectedMessageTheme: DEFAULT_MESSAGE_THEME,
 
   setFormat: (format) =>
     set((s) => ({
@@ -163,4 +170,13 @@ export const useBatchStore = create<BatchState>((set) => ({
     }),
   setSelectedIntroClipUrl: (url) => set({ selectedIntroClipUrl: url }),
   setSelectedOutroClipUrl: (url) => set({ selectedOutroClipUrl: url }),
+  // Switching message theme invalidates the intro/outro picks — each theme
+  // has its own bookend library, so the previously-selected clips would be
+  // wrong for the new topic.
+  setSelectedMessageTheme: (selectedMessageTheme) =>
+    set({
+      selectedMessageTheme,
+      selectedIntroClipUrl: null,
+      selectedOutroClipUrl: null,
+    }),
 }));

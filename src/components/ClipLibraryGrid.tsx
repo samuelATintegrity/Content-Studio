@@ -11,7 +11,12 @@ import {
   type ClipLanguage,
   type MergedClip,
 } from "@/lib/clipLibrary";
-import { LANGUAGE_LABELS, type Language } from "@/lib/types";
+import {
+  LANGUAGE_LABELS,
+  MESSAGE_THEME_LABELS,
+  type Language,
+  type MessageTheme,
+} from "@/lib/types";
 import { listSavedSets } from "@/lib/savedSets";
 import { deleteClipFromStorage, tagClip, uploadClip } from "@/lib/videoClient";
 import {
@@ -68,6 +73,7 @@ export function ClipLibraryGrid() {
   const subMode = useBatchStore((s) => s.subMode);
   const language = useBatchStore((s) => s.language);
   const selectedAvatarName = useBatchStore((s) => s.selectedAvatarName);
+  const selectedMessageTheme = useBatchStore((s) => s.selectedMessageTheme);
   const selectedIntroClipUrl = useBatchStore((s) => s.selectedIntroClipUrl);
   const selectedOutroClipUrl = useBatchStore((s) => s.selectedOutroClipUrl);
   const setSelectedIntroClipUrl = useBatchStore((s) => s.setSelectedIntroClipUrl);
@@ -161,27 +167,31 @@ export function ClipLibraryGrid() {
     return true;
   });
 
-  // Influencer-mode bookend pools, scoped to the active avatar + language.
-  // Filtered from the full library (not the search-filtered list) so the
-  // user always sees their available bookends regardless of text/tag filters.
-  const matchesAvatarLanguage = (c: MergedClip): boolean => {
+  // Influencer-mode bookend pools, scoped to the active avatar + language
+  // + message theme. Filtered from the full library (not the search-filtered
+  // list) so the user always sees their available bookends regardless of
+  // text/tag filters. Existing intro/outro clips with no messageTheme are
+  // treated as "agent_match" so the pre-DPA library keeps working.
+  const matchesBookendFilter = (c: MergedClip): boolean => {
     if (!selectedAvatarName) return false;
     if (c.avatarName !== selectedAvatarName) return false;
     // Bookends must be language-specific — "multi" doesn't make sense for
     // a recorded avatar speaking a particular language.
     if (c.language !== language) return false;
+    const clipTheme: MessageTheme = c.messageTheme ?? "agent_match";
+    if (clipTheme !== selectedMessageTheme) return false;
     return true;
   };
   const introClips = isInfluencer
-    ? clips.filter((c) => c.role === "intro" && matchesAvatarLanguage(c))
+    ? clips.filter((c) => c.role === "intro" && matchesBookendFilter(c))
     : [];
   const outroClips = isInfluencer
-    ? clips.filter((c) => c.role === "outro" && matchesAvatarLanguage(c))
+    ? clips.filter((c) => c.role === "outro" && matchesBookendFilter(c))
     : [];
 
   // Diagnostic counts: how many clips are tagged with this role at all
-  // (regardless of avatar/language match)? Used to surface a more useful
-  // empty-state message when the tagging is partially right.
+  // (regardless of avatar/language/theme match)? Used to surface a more
+  // useful empty-state message when the tagging is partially right.
   const totalIntros = isInfluencer
     ? clips.filter((c) => c.role === "intro").length
     : 0;
@@ -338,6 +348,7 @@ export function ClipLibraryGrid() {
         <BookendZones
           avatarName={selectedAvatarName}
           language={language}
+          messageTheme={selectedMessageTheme}
           introClips={introClips}
           outroClips={outroClips}
           totalIntros={totalIntros}
@@ -346,6 +357,8 @@ export function ClipLibraryGrid() {
           selectedOutroUrl={selectedOutroClipUrl}
           onPickIntro={setSelectedIntroClipUrl}
           onPickOutro={setSelectedOutroClipUrl}
+          onEdit={(clip) => onEdit(clip)}
+          onDelete={(clip) => onDelete(clip)}
         />
       )}
 
@@ -424,6 +437,7 @@ export function ClipLibraryGrid() {
 function BookendZones({
   avatarName,
   language,
+  messageTheme,
   introClips,
   outroClips,
   totalIntros,
@@ -432,9 +446,12 @@ function BookendZones({
   selectedOutroUrl,
   onPickIntro,
   onPickOutro,
+  onEdit,
+  onDelete,
 }: {
   avatarName: string | null;
   language: Language;
+  messageTheme: MessageTheme;
   introClips: MergedClip[];
   outroClips: MergedClip[];
   totalIntros: number;
@@ -443,6 +460,8 @@ function BookendZones({
   selectedOutroUrl: string | null;
   onPickIntro: (url: string | null) => void;
   onPickOutro: (url: string | null) => void;
+  onEdit: (clip: MergedClip) => void;
+  onDelete: (clip: MergedClip) => void;
 }) {
   if (!avatarName) {
     return (
@@ -452,6 +471,7 @@ function BookendZones({
     );
   }
   const baseLanguageLabel = LANGUAGE_LABELS[language] ?? language;
+  const themeLabel = MESSAGE_THEME_LABELS[messageTheme];
   return (
     <div className="flex flex-col gap-5">
       <BookendRow
@@ -460,9 +480,12 @@ function BookendZones({
         totalRoleClips={totalIntros}
         avatarName={avatarName}
         languageLabel={baseLanguageLabel}
+        themeLabel={themeLabel}
         roleLabel="intro"
         selectedUrl={selectedIntroUrl}
         onPick={onPickIntro}
+        onEdit={onEdit}
+        onDelete={onDelete}
       />
       <BookendRow
         label="Outro"
@@ -470,9 +493,12 @@ function BookendZones({
         totalRoleClips={totalOutros}
         avatarName={avatarName}
         languageLabel={baseLanguageLabel}
+        themeLabel={themeLabel}
         roleLabel="outro"
         selectedUrl={selectedOutroUrl}
         onPick={onPickOutro}
+        onEdit={onEdit}
+        onDelete={onDelete}
       />
     </div>
   );
@@ -484,33 +510,39 @@ function BookendRow({
   totalRoleClips,
   avatarName,
   languageLabel,
+  themeLabel,
   roleLabel,
   selectedUrl,
   onPick,
+  onEdit,
+  onDelete,
 }: {
   label: string;
   clips: MergedClip[];
   totalRoleClips: number;
   avatarName: string;
   languageLabel: string;
+  themeLabel: string;
   roleLabel: string;
   selectedUrl: string | null;
   onPick: (url: string | null) => void;
+  onEdit: (clip: MergedClip) => void;
+  onDelete: (clip: MergedClip) => void;
 }) {
-  // Diagnostic empty-state: when nothing matches avatar+language but there
-  // ARE clips with this role somewhere, the user has a tagging mismatch
-  // (wrong avatar or wrong language). Surface the count + the most likely
+  // Diagnostic empty-state: when nothing matches avatar+language+theme but
+  // there ARE clips with this role somewhere, the user has a tagging
+  // mismatch on one of those three axes. Surface the count + the likely
   // fix instead of a generic "nothing here" message.
   const orphanCount = totalRoleClips - clips.length;
   let emptyMessage: string;
   if (totalRoleClips === 0) {
     emptyMessage =
-      `No ${roleLabel}s tagged yet. Upload a clip and use the pencil icon to set Role=${label} and Avatar=${avatarName}.`;
+      `No ${roleLabel}s tagged yet. Upload a clip and use the pencil icon to set Role=${label}, Avatar=${avatarName}, and Message theme=${themeLabel}.`;
   } else if (orphanCount > 0) {
     emptyMessage =
-      `Found ${orphanCount} ${roleLabel}-tagged clip${orphanCount === 1 ? "" : "s"} that don't match the active avatar (${avatarName}) and language (${languageLabel}). Open each via the pencil icon and confirm Avatar=${avatarName} and Language=${languageLabel}.`;
+      `Found ${orphanCount} ${roleLabel}-tagged clip${orphanCount === 1 ? "" : "s"} that don't match the active avatar (${avatarName}), language (${languageLabel}), and message theme (${themeLabel}). Open each via the pencil icon and confirm all three.`;
   } else {
-    emptyMessage = `No ${roleLabel}s for ${avatarName} in ${languageLabel}.`;
+    emptyMessage = `No ${roleLabel}s for ${avatarName} in ${languageLabel} for ${themeLabel}.`;
   }
   return (
     <div>
@@ -532,6 +564,12 @@ function BookendRow({
               onClick={() =>
                 onPick(selectedUrl === c.videoUrl ? null : c.videoUrl)
               }
+              onEdit={
+                c.kind === "saved" ? undefined : () => onEdit(c)
+              }
+              onDelete={
+                c.kind === "saved" ? undefined : () => onDelete(c)
+              }
             />
           ))}
         </div>
@@ -544,10 +582,14 @@ function BookendTile({
   clip,
   selected,
   onClick,
+  onEdit,
+  onDelete,
 }: {
   clip: MergedClip;
   selected: boolean;
   onClick: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   function onEnter() {
@@ -577,7 +619,7 @@ function BookendTile({
       }}
       onMouseEnter={onEnter}
       onMouseLeave={onLeave}
-      className={`relative aspect-[9/16] rounded-2xl overflow-hidden border bg-neutral-100 dark:bg-neutral-900 cursor-pointer transition ${
+      className={`group relative aspect-[9/16] rounded-2xl overflow-hidden border bg-neutral-100 dark:bg-neutral-900 cursor-pointer transition ${
         selected
           ? "border-emerald-500 ring-2 ring-emerald-500/40"
           : "border-neutral-200 dark:border-neutral-900 hover:border-neutral-400 dark:hover:border-neutral-700"
@@ -592,6 +634,38 @@ function BookendTile({
         preload="metadata"
         className="absolute inset-0 w-full h-full object-cover"
       />
+      {onDelete && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          className="absolute top-2 left-2 w-7 h-7 rounded-full bg-black/60 hover:bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition z-10"
+          title="Remove from library"
+        >
+          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      )}
+      {onEdit && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onEdit();
+          }}
+          className="absolute top-2 left-11 w-7 h-7 rounded-full bg-black/60 hover:bg-neutral-700 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition z-10"
+          title="Edit clip details"
+        >
+          <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 20h9" />
+            <path d="M16.5 3.5a2.121 2.121 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5z" />
+          </svg>
+        </button>
+      )}
       {selected && (
         <div className="absolute top-2 right-2 w-7 h-7 rounded-full bg-emerald-500 text-white text-[10px] font-bold flex items-center justify-center shadow">
           ✓

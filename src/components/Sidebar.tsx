@@ -6,9 +6,11 @@ import {
   CONTENT_TYPE_LABELS,
   FORMAT_LABELS,
   LANGUAGE_LABELS,
+  MESSAGE_THEME_LABELS,
   type ContentType,
   type Format,
   type Language,
+  type MessageTheme,
 } from "@/lib/types";
 import {
   deleteSavedSet,
@@ -28,6 +30,8 @@ const CONTENT_TYPES: ContentType[] = [
   "language_match",
   "good_agents",
 ];
+
+const MESSAGE_THEMES: MessageTheme[] = ["agent_match", "dpa"];
 
 // Content types that don't make sense in certain (language, format)
 // combinations. English skips language_match (the audience already
@@ -52,11 +56,13 @@ export function Sidebar() {
     contentType,
     subMode,
     selectedAvatarName,
+    selectedMessageTheme,
     setFormat,
     setLanguage,
     setContentType,
     setSubMode,
     setSelectedAvatarName,
+    setSelectedMessageTheme,
   } = useBatchStore();
 
   // If the user's current content type becomes invisible after a language
@@ -138,10 +144,27 @@ export function Sidebar() {
         </div>
       </Section>
 
-      {/* Influencer mode locks content type to "good_agents" (the
-          matching-mission script) — the avatar's on-camera intro is the
-          hook, so we don't surface a topic picker. */}
-      {!(format === "video" && subMode === "influencer") && (
+      {/* Influencer mode replaces the Content type picker with a Message
+          theme picker — the avatar's on-camera intro/outro is the hook +
+          closer, so the user picks which scripted topic the influencer is
+          delivering instead of a content angle. Each theme has its own
+          pre-recorded bookend library. */}
+      {format === "video" && subMode === "influencer" ? (
+        <Section title="Message">
+          <div className="flex flex-col gap-2">
+            {MESSAGE_THEMES.map((t) => (
+              <Pill
+                key={t}
+                selected={selectedMessageTheme === t}
+                onClick={() => setSelectedMessageTheme(t)}
+                align="left"
+              >
+                {MESSAGE_THEME_LABELS[t]}
+              </Pill>
+            ))}
+          </div>
+        </Section>
+      ) : (
         <Section title="Content type">
           <div className="flex flex-col gap-2">
             {contentTypes.map((c) => (

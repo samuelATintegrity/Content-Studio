@@ -31,6 +31,7 @@ import { tagClip } from "@/lib/videoClient";
 import { PICKED_CLIP_COUNT } from "@/lib/videoPrompts";
 import type {
   ImageSlot,
+  MessageTheme,
   VideoPost,
   VideoSourcePromptIndex,
 } from "@/lib/types";
@@ -714,6 +715,7 @@ export async function generateInfluencerBatch(args: {
   introClipUrl: string;
   middleClipUrls: string[];
   outroClipUrl: string;
+  messageTheme: MessageTheme;
 }): Promise<void> {
   const avatar = getAvatar(args.avatarName);
   if (!avatar) {
@@ -734,9 +736,11 @@ export async function generateInfluencerBatch(args: {
     setImageSlots,
     clearClipSelection,
   } = store;
-  // Influencer mode is locked to the Good Agents (matching mission)
-  // content type — the on-camera intro is the hook and the middle script
-  // explains why Agent Match's matching process is worth using.
+  // Influencer mode locks the narration content type to good_agents (the
+  // matching-mission script) when the active message theme is agent_match.
+  // For the dpa theme, generateInfluencerMiddleScripts internally swaps
+  // the prompt + caption content type to edu_dpa_local — but it still
+  // accepts a contentType argument for backward compat.
   const contentType = "good_agents" as const;
 
   if (!avatar.supportedLanguages.includes(language)) {
@@ -766,6 +770,7 @@ export async function generateInfluencerBatch(args: {
     avatarName: avatar.name,
     introClipUrl: args.introClipUrl,
     outroClipUrl: args.outroClipUrl,
+    messageTheme: args.messageTheme,
   }));
   setVideoPosts(placeholderPosts);
   clearClipSelection();
@@ -784,6 +789,7 @@ export async function generateInfluencerBatch(args: {
       language,
       contentType,
       avatarName: avatar.name,
+      messageTheme: args.messageTheme,
     });
     if (scripts.length === 0) {
       throw new Error("Influencer script generation returned no scripts");
@@ -908,6 +914,10 @@ export async function regenerateOneVideo(postId: string): Promise<void> {
         introClipUrl: post.introClipUrl,
         middleClipUrls,
         outroClipUrl: post.outroClipUrl,
+        // Older posts (from before MessageTheme existed) have no theme
+        // stamped — fall back to agent_match so they regenerate the same
+        // matching-mission script they were originally rendered against.
+        messageTheme: post.messageTheme ?? "agent_match",
       });
     } catch (e) {
       useBatchStore.getState().updateVideoPost(postId, {

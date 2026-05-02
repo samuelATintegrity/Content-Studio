@@ -24,6 +24,7 @@ export function GenerateFAB() {
   const selectedAvatarName = useBatchStore((s) => s.selectedAvatarName);
   const selectedIntroClipUrl = useBatchStore((s) => s.selectedIntroClipUrl);
   const selectedOutroClipUrl = useBatchStore((s) => s.selectedOutroClipUrl);
+  const selectedMessageTheme = useBatchStore((s) => s.selectedMessageTheme);
   const isVideo = format === "video";
   const isInfluencer = isVideo && subMode === "influencer";
   const selectedCount = selectedClipUrls.length;
@@ -82,6 +83,7 @@ export function GenerateFAB() {
         introClipUrl: selectedIntroClipUrl,
         middleClipUrls: selectedClipUrls,
         outroClipUrl: selectedOutroClipUrl,
+        messageTheme: selectedMessageTheme,
       });
       return;
     }

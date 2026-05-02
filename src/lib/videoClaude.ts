@@ -2,7 +2,12 @@ import Anthropic from "@anthropic-ai/sdk";
 import { SYSTEM_PROMPT } from "./prompts/system";
 import { CONTENT_TYPE_SPECS } from "./prompts/content-types";
 import { buildCaption, stripDashes } from "./copy";
-import { LANGUAGE_LABELS, type ContentType, type Language } from "./types";
+import {
+  LANGUAGE_LABELS,
+  type ContentType,
+  type Language,
+  type MessageTheme,
+} from "./types";
 
 // Video script generator. The voice rules from the static SYSTEM_PROMPT carry
 // over (compliance, "we" not "I", no em dashes, no URLs in body), with extra
@@ -242,6 +247,40 @@ const INFLUENCER_TOOL_V2 = {
   },
 };
 
+// DPA-theme angle pool. The influencer recommends Agent Match's matching
+// service for buyers who need help with the down payment — the scripts
+// rotate through these emphases so the 3 batch videos don't say the same
+// thing three times.
+const DPA_ANGLES: Array<{ key: string; brief: string }> = [
+  {
+    key: "dpa_program_breadth",
+    brief:
+      "Lead with the breadth of programs Agent Match's network handles — $0-down USDA / VA, down payment assistance, local-bank zero-down. The promise is: whatever flavor of help you need, they'll match you with a team that knows it.",
+  },
+  {
+    key: "dpa_save_time",
+    brief:
+      "Lead with the time-and-frustration save — buyers waste weeks calling agents and lenders who don't actually do these programs. Agent Match skips that hunt by routing you straight to a team that already specializes in your situation.",
+  },
+  {
+    key: "dpa_specialist_match",
+    brief:
+      "Lead with the specialist-match angle — Agent Match doesn't hand you a generic list, they connect you with one team that already runs $0-down / DPA deals every week. The right specialist beats a generic agent for these programs.",
+  },
+];
+
+const DPA_REFERENCE_TEMPLATE = `
+The influencer's recorded INTRO is roughly: "If you're looking to buy a home but need help with the down payment, you've gotta start with Agent Match."
+
+The recorded OUTRO is roughly: "So if you want to know your options but don't know where to start, click the link and they'll connect you today."
+
+The AI middle should bridge those two cleanly. The canonical message you're paraphrasing for the middle is:
+
+"They'll connect you with the best team for whatever program you need. Whether that's a zero-down USDA or VA loan, a down payment assistance program, or a local bank zero-down program. They do the connection so you don't waste time looking for the wrong team."
+
+Each of the 3 angles below should produce a DIFFERENT middle script that lands on its specific emphasis — don't just paraphrase the canonical message verbatim three times, and don't restate the intro or outro.
+`.trim();
+
 function buildInfluencerUserPrompt(
   language: Language,
   contentType: ContentType,
@@ -263,6 +302,31 @@ Topic: ${spec.topic}
 Guardrails: ${spec.guardrails}${refDocSection}
 
 The avatar "${avatarName}" is a real-estate INFLUENCER recommending Agent Match to their audience — they are NOT part of the Agent Match team and do not work there. They've introduced Agent Match in a pre-recorded clip and will close out in a pre-recorded outro. Your job is the warm, conversational middle that elaborates on the value prop in the influencer's voice. Refer to Agent Match in the third person ("they", "their team", "Agent Match") — never "we" or "our". Each angle below should produce a DIFFERENT middle script focused on that angle's specific value-prop point — don't reword the same paragraph three times.
+
+${INFLUENCER_VOICE_RULES}
+
+Produce one middle script for each of these angles, preserving the angle key:
+${angleList}
+
+Return your results by calling the influencer_middle_results tool.`;
+}
+
+function buildDpaInfluencerUserPrompt(
+  language: Language,
+  avatarName: string,
+): string {
+  const angleList = DPA_ANGLES.map(
+    (a, i) => `${i + 1}. angle="${a.key}"\n   brief: ${a.brief}`,
+  ).join("\n");
+
+  return `Language: ${LANGUAGE_LABELS[language]}
+Topic: $0-down / down-payment-assistance education — the influencer is telling buyers who need help with the down payment that Agent Match will match them with a team that runs these programs every day.
+Guardrails: Stay generic on program mechanics. Names of program categories ($0-down USDA, VA, DPA, local-bank zero-down) are fine; specific dollar amounts, percentages, timelines, or step-by-step processes are NOT. Always hand off to a specialist.
+
+REFERENCE (paraphrase the spirit, never copy verbatim, never invent claims beyond this):
+${DPA_REFERENCE_TEMPLATE}
+
+The avatar "${avatarName}" is a real-estate INFLUENCER recommending Agent Match to their audience — they are NOT part of the Agent Match team. They've introduced Agent Match in a pre-recorded intro clip and will close out in a pre-recorded outro clip. Your job is the warm, conversational MIDDLE that bridges the two and elaborates on the value prop in the influencer's voice. Refer to Agent Match in the third person ("they", "their team", "Agent Match") — never "we" or "our". Each angle below should produce a DIFFERENT middle script focused on that angle's specific value-prop point.
 
 ${INFLUENCER_VOICE_RULES}
 
@@ -294,13 +358,28 @@ export async function generateInfluencerMiddleScripts(
   language: Language,
   contentType: ContentType,
   avatarName: string,
+  messageTheme: MessageTheme,
   angleOverride?: string[],
 ): Promise<InfluencerScript[]> {
-  // Reuse the narration-mode angle picker so the influencer flow gets the
-  // same "3 random non-CTA angles" behavior — each video then leans on a
-  // genuinely different value-prop point.
-  const angleKeys = pickVideoAngles(contentType, angleOverride);
+  // The agent_match theme reuses the narration-mode angle picker so the
+  // 3 videos lean on different value-prop points from good_agents. The dpa
+  // theme has its own fixed 3-angle pool (program breadth / save-time /
+  // specialist match) baked into this file.
+  const isDpa = messageTheme === "dpa";
+  const angleKeys = isDpa
+    ? DPA_ANGLES.map((a) => a.key)
+    : pickVideoAngles(contentType, angleOverride);
   if (angleKeys.length === 0) throw new Error("No angles selected");
+
+  // The IG caption builder looks up content-type config (URL, form line,
+  // hashtags). The dpa theme writes about down-payment programs, so route
+  // the caption through edu_dpa_local for the right framing — the user's
+  // existing dpa caption assets live there.
+  const captionContentType: ContentType = isDpa ? "edu_dpa_local" : contentType;
+
+  const userPrompt = isDpa
+    ? buildDpaInfluencerUserPrompt(language, avatarName)
+    : buildInfluencerUserPrompt(language, contentType, avatarName, angleKeys);
 
   try {
     const resp = await client().messages.create({
@@ -309,18 +388,13 @@ export async function generateInfluencerMiddleScripts(
       system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
       tools: [INFLUENCER_TOOL_V2],
       tool_choice: { type: "tool", name: INFLUENCER_TOOL_V2.name },
-      messages: [
-        {
-          role: "user",
-          content: buildInfluencerUserPrompt(language, contentType, avatarName, angleKeys),
-        },
-      ],
+      messages: [{ role: "user", content: userPrompt }],
     });
     const raw = extractInfluencerScripts(resp);
     return raw.map((r) => ({
       angle: r.angle,
       script: stripDashes(r.script).trim(),
-      caption: buildCaption(language, contentType, r.body),
+      caption: buildCaption(language, captionContentType, r.body),
     }));
   } catch (e) {
     throw friendlyError(e);

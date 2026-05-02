@@ -3,6 +3,7 @@
 import type {
   ContentType,
   Language,
+  MessageTheme,
   VideoSourcePromptIndex,
   VideoStartResponse,
   VideoStatusResponse,
@@ -36,6 +37,7 @@ export async function startInfluencerScript(args: {
   language: Language;
   contentType: ContentType;
   avatarName: string;
+  messageTheme: MessageTheme;
 }): Promise<InfluencerScript[]> {
   const res = await fetch("/api/video/start-influencer", {
     method: "POST",

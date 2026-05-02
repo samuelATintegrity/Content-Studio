@@ -132,6 +132,19 @@ export type VideoJobState =
 
 export type VideoMode = "narration" | "influencer";
 
+// Influencer-mode messaging theme. Each theme has its own pre-recorded
+// intro/outro clips and its own middle-script generation prompt. Existing
+// agent_match clips are the matching-mission script ("connect with the
+// best"); dpa is the down-payment-assistance/$0-down angle.
+export type MessageTheme = "agent_match" | "dpa";
+
+export const MESSAGE_THEME_LABELS: Record<MessageTheme, string> = {
+  agent_match: "Agent Match mission",
+  dpa: "$0 down / DPA",
+};
+
+export const DEFAULT_MESSAGE_THEME: MessageTheme = "agent_match";
+
 export interface VideoPost {
   id: string;
   angle: string;
@@ -148,6 +161,7 @@ export interface VideoPost {
   avatarName?: string;
   introClipUrl?: string;
   outroClipUrl?: string;
+  messageTheme?: MessageTheme;
 }
 
 // /api/video/start now only returns the 3 scripts. Render dispatch happens

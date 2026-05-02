@@ -8,6 +8,7 @@ import {
   type LibraryClip,
 } from "@/lib/clipLibrary";
 import { AVATARS } from "@/lib/avatars";
+import { MESSAGE_THEME_LABELS, type MessageTheme } from "@/lib/types";
 
 // Same six categories the picker groups by — the modal exposes them as
 // quick-toggle chips so users can always slot a clip into the right
@@ -46,8 +47,11 @@ interface InitialClip {
   tags?: string[];
   role?: ClipRole;
   avatarName?: string;
+  messageTheme?: MessageTheme;
   captionCutoffPhrase?: string;
 }
+
+const MESSAGE_THEMES: MessageTheme[] = ["agent_match", "dpa"];
 
 export function ClipMetadataModal({
   clip,
@@ -64,6 +68,11 @@ export function ClipMetadataModal({
   const [tagInput, setTagInput] = useState("");
   const [role, setRole] = useState<RoleSelection>(clip.role ?? "filler");
   const [avatarName, setAvatarName] = useState<string>(clip.avatarName ?? "");
+  // Default existing intro/outro clips to "agent_match" so the pre-DPA
+  // library keeps working without a manual re-tag pass.
+  const [messageTheme, setMessageTheme] = useState<MessageTheme>(
+    clip.messageTheme ?? "agent_match",
+  );
   const [captionCutoffPhrase, setCaptionCutoffPhrase] = useState<string>(
     clip.captionCutoffPhrase ?? "",
   );
@@ -114,6 +123,7 @@ export function ClipMetadataModal({
     // back into the general filler pool.
     const persistedRole = role === "filler" ? undefined : role;
     const persistedAvatar = persistedRole && avatarName ? avatarName : undefined;
+    const persistedTheme = persistedRole ? messageTheme : undefined;
     const persistedCutoff =
       persistedRole && captionCutoffPhrase.trim()
         ? captionCutoffPhrase.trim()
@@ -124,6 +134,7 @@ export function ClipMetadataModal({
       tags,
       role: persistedRole,
       avatarName: persistedAvatar,
+      messageTheme: persistedTheme,
       captionCutoffPhrase: persistedCutoff,
     });
     onClose();
@@ -285,6 +296,33 @@ export function ClipMetadataModal({
           )}
 
           {role !== "filler" && (
+            <div className="flex flex-col gap-1.5">
+              <span className="text-[11px] uppercase tracking-[0.16em] text-neutral-500 font-semibold">
+                Message theme
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {MESSAGE_THEMES.map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setMessageTheme(t)}
+                    className={`text-[11px] px-2.5 py-1.5 rounded-full border transition ${
+                      messageTheme === t
+                        ? "bg-neutral-900 dark:bg-white border-neutral-900 dark:border-white text-white dark:text-neutral-900 font-semibold"
+                        : "bg-neutral-50 dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                    }`}
+                  >
+                    {MESSAGE_THEME_LABELS[t]}
+                  </button>
+                ))}
+              </div>
+              <span className="text-[10px] text-neutral-500 leading-snug">
+                Which scripted topic this bookend was recorded for. Each theme
+                has its own intro/outro library in the picker.
+              </span>
+            </div>
+          )}
+
+          {role !== "filler" && (
             <label className="flex flex-col gap-1.5">
               <span className="text-[11px] uppercase tracking-[0.16em] text-neutral-500 font-semibold">
                 Caption cutoff phrase{" "}
@@ -391,6 +429,7 @@ export function libraryClipToInitial(c: LibraryClip): InitialClip {
     tags: c.tags,
     role: c.role,
     avatarName: c.avatarName,
+    messageTheme: c.messageTheme,
     captionCutoffPhrase: c.captionCutoffPhrase,
   };
 }
