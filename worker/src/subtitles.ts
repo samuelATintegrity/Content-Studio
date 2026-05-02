@@ -50,12 +50,16 @@ function fmtTime(sec: number): string {
   return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
 }
 
-// Strip punctuation and uppercase. Audio side keeps the original text — this
-// transform applies only to what's drawn on screen.
+// Uppercase + strip select punctuation for the on-screen text. Audio
+// side keeps the original word for prosody. We KEEP periods (so "4.8
+// stars" renders correctly and sentence ends look natural) and KEEP
+// apostrophes (so contractions like "you're", "they'll", "it's"
+// don't read as "YOURE", "THEYLL", "ITS"). Commas stay stripped —
+// the influencer voice rules already ban commas in the spoken script.
 function visualText(word: string): string {
   return word
     .toUpperCase()
-    .replace(/[.,!?;:'"`()[\]{}]/g, "")
+    .replace(/[,!?;:"`()[\]{}]/g, "")
     .replace(/[—–]/g, "");
 }
 
