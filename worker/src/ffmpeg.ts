@@ -346,7 +346,25 @@ export interface ComposeInfluencerArgs {
   assPath: string;
   fontsDir: string;
   outPath: string;
+  // Optional whoosh transition SFX layered at intro→middle and
+  // middle→outro boundaries to mask the abrupt audio cut between the
+  // recorded bookends and the AI middle narration.
+  whooshPath?: string | null;
+  // Optional background music. Ducked low (0.15) and starts only at
+  // intro_end so the intro's recorded audio plays clean.
+  musicPath?: string | null;
 }
+
+// Per-transition window pulled from the whoosh source file. The whoosh
+// is 5s end-to-end but we only want a transition-sized chunk. Centering
+// the file's t=0.4s on the segment cut gives ~0.4s of build-up before
+// the cut and ~0.7s of tail bleeding into the next segment, which masks
+// the abrupt audio change without overwhelming the next clip's content.
+const WHOOSH_TRIM_S = 1.1;
+const WHOOSH_PRE_CUT_S = 0.4;
+const WHOOSH_VOLUME = 0.7;
+const INFLUENCER_MUSIC_VOLUME = 0.15;
+const MUSIC_FADE_OUT_END_S = 0.8;
 
 function buildInfluencerFilterComplex(args: {
   middleClipCount: number;
@@ -361,12 +379,15 @@ function buildInfluencerFilterComplex(args: {
   outroDurationS: number;
   assRelPath: string;
   fontsDir: string;
+  // null when the asset is missing — those layers are skipped.
+  whooshInputIndex: number | null;
+  musicInputIndex: number | null;
 }): string {
   const {
     middleClipCount, middlePerClipS, middleVisualPadS,
     introInputIndex, middleInputBaseIndex, outroInputIndex,
     audioInputIndex, audioDurationS, introDurationS, outroDurationS,
-    assRelPath, fontsDir,
+    assRelPath, fontsDir, whooshInputIndex, musicInputIndex,
   } = args;
 
   const escapedAss = escapeForFilter(assRelPath);
@@ -446,7 +467,59 @@ function buildInfluencerFilterComplex(args: {
   chains.push(
     `[${outroInputIndex}:a]aresample=async=1:first_pts=0,atrim=duration=${outroDurationS.toFixed(6)},asetpts=PTS-STARTPTS,apad=whole_dur=${outroDurationS.toFixed(6)},aformat=sample_rates=44100:channel_layouts=stereo[a_outro]`,
   );
-  chains.push(`[a_intro][a_mid][a_outro]concat=n=3:v=0:a=1[a_final]`);
+  chains.push(`[a_intro][a_mid][a_outro]concat=n=3:v=0:a=1[a_voice]`);
+
+  // ── Optional layers (whoosh transitions + background music) ───────
+  // We mix whatever extra audio layers are available into the voice
+  // track via amix. amix's first input drives the output duration so
+  // [a_voice] (which spans the whole timeline) goes first.
+  const totalDurationS = introDurationS + audioDurationS + outroDurationS;
+  const middleStartS = introDurationS;
+  const outroStartS = introDurationS + audioDurationS;
+  const mixInputs: string[] = ["[a_voice]"];
+
+  // Whoosh #1 at intro→middle, whoosh #2 at middle→outro. asplit one
+  // input so we don't have to add the file twice. Each copy gets its
+  // own adelay so they land at different timeline positions.
+  if (whooshInputIndex !== null) {
+    const whoosh1DelayMs = Math.max(0, Math.round((middleStartS - WHOOSH_PRE_CUT_S) * 1000));
+    const whoosh2DelayMs = Math.max(0, Math.round((outroStartS - WHOOSH_PRE_CUT_S) * 1000));
+    chains.push(
+      `[${whooshInputIndex}:a]aresample=async=1:first_pts=0,atrim=duration=${WHOOSH_TRIM_S.toFixed(6)},asetpts=PTS-STARTPTS,volume=${WHOOSH_VOLUME.toFixed(3)},aformat=sample_rates=44100:channel_layouts=stereo,asplit=2[w_pre1][w_pre2]`,
+    );
+    chains.push(
+      `[w_pre1]adelay=${whoosh1DelayMs}|${whoosh1DelayMs}[a_whoosh1]`,
+    );
+    chains.push(
+      `[w_pre2]adelay=${whoosh2DelayMs}|${whoosh2DelayMs}[a_whoosh2]`,
+    );
+    mixInputs.push("[a_whoosh1]", "[a_whoosh2]");
+  }
+
+  // Music starts at intro_end and runs through to the very end of the
+  // outro, then fades out. The music file is looped at input level so
+  // shorter tracks tile across whatever timeline length we need.
+  if (musicInputIndex !== null) {
+    const musicDurationS = totalDurationS - middleStartS;
+    const musicFadeStartS = Math.max(0, musicDurationS - MUSIC_FADE_OUT_END_S);
+    const musicDelayMs = Math.max(0, Math.round(middleStartS * 1000));
+    chains.push(
+      `[${musicInputIndex}:a]aresample=async=1:first_pts=0,atrim=duration=${musicDurationS.toFixed(6)},asetpts=PTS-STARTPTS,volume=${INFLUENCER_MUSIC_VOLUME.toFixed(3)},afade=type=out:start_time=${musicFadeStartS.toFixed(6)}:duration=${MUSIC_FADE_OUT_END_S},aformat=sample_rates=44100:channel_layouts=stereo,adelay=${musicDelayMs}|${musicDelayMs}[a_music]`,
+    );
+    mixInputs.push("[a_music]");
+  }
+
+  if (mixInputs.length === 1) {
+    // Nothing to mix in — fall through to a passthrough rename.
+    chains.push(`[a_voice]anull[a_final]`);
+  } else {
+    // duration=first locks the final length to [a_voice]'s duration so
+    // delayed layers don't extend the timeline. normalize=0 preserves
+    // the volumes we set explicitly above.
+    chains.push(
+      `${mixInputs.join("")}amix=inputs=${mixInputs.length}:duration=first:normalize=0:dropout_transition=0[a_final]`,
+    );
+  }
 
   return chains.join(";");
 }
@@ -471,7 +544,18 @@ export async function composeInfluencer(args: ComposeInfluencerArgs): Promise<vo
   const cwd = dirname(args.assPath);
   const assRel = basename(args.assPath);
 
-  // Inputs in this order: intro, middleClip[0..N-1], outro, ttsAudio.
+  // Best-effort optional layers. Files are checked here at the worker
+  // FS so a missing whoosh/music asset just renders without that layer.
+  const whooshPath = args.whooshPath && (await fileExists(args.whooshPath))
+    ? args.whooshPath
+    : null;
+  const musicPath = args.musicPath && (await fileExists(args.musicPath))
+    ? args.musicPath
+    : null;
+
+  // Inputs in this order:
+  //   intro, middleClip[0..N-1], outro, ttsAudio,
+  //   [whoosh (if any)], [music (looped, if any)]
   const inputs: string[] = [];
   inputs.push("-i", args.introPath);
   const introInputIndex = 0;
@@ -484,6 +568,23 @@ export async function composeInfluencer(args: ComposeInfluencerArgs): Promise<vo
 
   const audioInputIndex = outroInputIndex + 1;
   inputs.push("-i", args.audioPath);
+
+  let nextInputIndex = audioInputIndex + 1;
+  let whooshInputIndex: number | null = null;
+  if (whooshPath) {
+    whooshInputIndex = nextInputIndex;
+    inputs.push("-i", whooshPath);
+    nextInputIndex += 1;
+  }
+
+  let musicInputIndex: number | null = null;
+  if (musicPath) {
+    musicInputIndex = nextInputIndex;
+    // -stream_loop -1 tiles a short music track across the longer
+    // (middle + outro) timeline; atrim downstream caps the length.
+    inputs.push("-stream_loop", "-1", "-i", musicPath);
+    nextInputIndex += 1;
+  }
 
   const filter = buildInfluencerFilterComplex({
     middleClipCount: args.middleClipPaths.length,
@@ -498,6 +599,8 @@ export async function composeInfluencer(args: ComposeInfluencerArgs): Promise<vo
     outroDurationS: args.outroDurationS,
     assRelPath: assRel,
     fontsDir: args.fontsDir,
+    whooshInputIndex,
+    musicInputIndex,
   });
 
   const ffArgs = [

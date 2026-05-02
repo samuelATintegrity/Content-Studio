@@ -12,7 +12,7 @@ import {
 import { voiceIdFor } from "./voices.js";
 import { downloadClips } from "./clipDownload.js";
 import { compose, composeInfluencer } from "./ffmpeg.js";
-import { pickMusicTrack } from "./music.js";
+import { pickMusicTrack, pickSoundEffect } from "./music.js";
 import { probeBookendDurationS, probeDurationS } from "./probe.js";
 import { applyCaptionCutoff, transcribeMediaFile } from "./transcribe.js";
 import type { RenderRequest } from "./types.js";
@@ -226,6 +226,13 @@ async function runInfluencerPipeline(
   // ── Stage: Render ───────────────────────────────────────────────────
   setState(jobId, "rendering", 0.6);
   const finalPath = join(workDir, "final.mp4");
+  // Pick a music track + the woosh transition SFX. Both are best-effort
+  // — if the assets dir is missing the file, that audio layer is just
+  // skipped (compose handles the nullable paths).
+  const [musicPath, whooshPath] = await Promise.all([
+    pickMusicTrack(),
+    pickSoundEffect("woosh"),
+  ]);
   await composeInfluencer({
     introPath,
     middleClipPaths: middlePaths,
@@ -237,6 +244,8 @@ async function runInfluencerPipeline(
     assPath,
     fontsDir: FONTS_DIR,
     outPath: finalPath,
+    musicPath,
+    whooshPath,
   });
 
   // ── Stage: Upload ───────────────────────────────────────────────────
