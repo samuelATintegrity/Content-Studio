@@ -182,7 +182,8 @@ export async function generateVideoScripts(
 
 const INFLUENCER_VOICE_RULES = `
 INFLUENCER-MIDDLE-SCRIPT RULES (this script is the AI-generated middle of a 9:16 video; the intro and outro are pre-recorded videos of an influencer talking on camera):
-- Voice: conversational AND energetic, second person ("you", "your"), warm and excited like you're telling a friend about something genuinely good. Read aloud by an AI voice in the influencer's avatar voice. Use contractions ("it's", "they'll", "you're"). Short, punchy sentences — not long lecture-y ones.
+- PERSPECTIVE — IMPORTANT: the influencer is a third-party endorser, NOT an Agent Match employee. Refer to Agent Match in the THIRD person — say "they", "their team", "Agent Match". NEVER say "we", "us", or "our team". This OVERRIDES the system prompt's "we / our team" guidance, which assumes a company voice; here the speaker is recommending Agent Match to their audience as an outsider.
+- Voice: conversational AND energetic, second person to the viewer ("you", "your"), warm and excited like you're telling a friend about something genuinely good. Read aloud by an AI voice in the influencer's avatar voice. Use contractions ("it's", "they'll", "you're"). Short, punchy sentences — not long lecture-y ones.
 - DO NOT include a hook opener — the intro clip is the hook. Start mid-conversation as if the avatar just finished saying "you've gotta check out Agent Match".
 - DO NOT include a verbal closer — the outro clip is the closer. NEVER say "click the link", "go to", any URL, hashtags, "DM me", or "fill out the form".
 - Target 45–60 words (≈ 15–20 seconds at a normal speaking pace). Tight is better.
@@ -261,7 +262,7 @@ function buildInfluencerUserPrompt(
 Topic: ${spec.topic}
 Guardrails: ${spec.guardrails}${refDocSection}
 
-The avatar's name is "${avatarName}". They have already introduced Agent Match in a pre-recorded clip and will close out in a pre-recorded outro. Your job is the warm, conversational middle that elaborates on the value prop. Each angle below should produce a DIFFERENT middle script focused on that angle's specific value-prop point — don't reword the same paragraph three times.
+The avatar "${avatarName}" is a real-estate INFLUENCER recommending Agent Match to their audience — they are NOT part of the Agent Match team and do not work there. They've introduced Agent Match in a pre-recorded clip and will close out in a pre-recorded outro. Your job is the warm, conversational middle that elaborates on the value prop in the influencer's voice. Refer to Agent Match in the third person ("they", "their team", "Agent Match") — never "we" or "our". Each angle below should produce a DIFFERENT middle script focused on that angle's specific value-prop point — don't reword the same paragraph three times.
 
 ${INFLUENCER_VOICE_RULES}
 

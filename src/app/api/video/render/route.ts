@@ -17,6 +17,10 @@ interface Body {
   introCaptionCutoffPhrase?: string;
   outroClipUrl?: string;
   outroCaptionCutoffPhrase?: string;
+  // Per-render deterministic music selection (worker picks
+  // music[abs(idx) % count]). App sets it across a batch so the 3
+  // influencer renders pick 3 distinct music files.
+  musicShuffleIndex?: number;
 }
 
 export async function POST(req: Request) {
@@ -56,6 +60,7 @@ export async function POST(req: Request) {
       introCaptionCutoffPhrase: body.introCaptionCutoffPhrase,
       outroClipUrl: body.outroClipUrl,
       outroCaptionCutoffPhrase: body.outroCaptionCutoffPhrase,
+      musicShuffleIndex: body.musicShuffleIndex,
     });
     return NextResponse.json({ jobId });
   } catch (e) {

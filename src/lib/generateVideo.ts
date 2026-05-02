@@ -309,6 +309,9 @@ interface InfluencerEntryPayload {
   middleClipUrls: string[];
   outroClipUrl: string;
   outroCaptionCutoffPhrase?: string;
+  // batchSeed + entry-index, so each render in a batch picks a
+  // different music file from the worker's music dir.
+  musicShuffleIndex: number;
 }
 
 interface RenderQueueEntry {
@@ -339,6 +342,7 @@ function dispatchEntry(queue: RenderQueue, entry: RenderQueueEntry): void {
         middleClipUrls: entry.influencer.middleClipUrls,
         outroClipUrl: entry.influencer.outroClipUrl,
         outroCaptionCutoffPhrase: entry.influencer.outroCaptionCutoffPhrase,
+        musicShuffleIndex: entry.influencer.musicShuffleIndex,
       })
     : startVideoRender({
         script: entry.script,
@@ -789,6 +793,11 @@ export async function generateInfluencerBatch(args: {
     // Claude actually returned (always 3 in practice — this is just a
     // safety net so the UI never references a non-existent script).
     const usableCount = Math.min(scripts.length, placeholderPosts.length);
+    // Per-batch seed shifts the music selection across the 3 renders.
+    // batchSeed + 0/1/2 maps to 3 distinct music files at the worker
+    // (modulo the music dir count). The seed itself varies per batch
+    // so different batches pick different music sets.
+    const musicBatchSeed = Math.floor(Math.random() * 1_000_000);
     const renderEntries: RenderQueueEntry[] = [];
     for (let i = 0; i < usableCount; i++) {
       const post = placeholderPosts[i]!;
@@ -813,6 +822,7 @@ export async function generateInfluencerBatch(args: {
           middleClipUrls: shuffle(args.middleClipUrls),
           outroClipUrl: args.outroClipUrl,
           outroCaptionCutoffPhrase: outroClip?.captionCutoffPhrase,
+          musicShuffleIndex: musicBatchSeed + i,
         },
       });
     }

@@ -10,8 +10,26 @@ const ASSETS_DIR = process.env.ASSETS_DIR ?? "/app/assets";
 const MUSIC_DIR = process.env.MUSIC_DIR ?? join(ASSETS_DIR, "music");
 const SFX_DIR = process.env.SFX_DIR ?? join(ASSETS_DIR, "Sound effects");
 
-export async function pickMusicTrack(): Promise<string | null> {
-  return pickRandomMp3(MUSIC_DIR);
+export async function pickMusicTrack(shuffleIndex?: number): Promise<string | null> {
+  // When shuffleIndex is provided, pick deterministically from the
+  // alphabetically-sorted music list. The app uses batchSeed + 0/1/2
+  // across the 3 influencer renders so each render in a batch gets a
+  // different file. Without an index, fall back to random selection
+  // (used by narration mode and any future single-render flows).
+  let entries: string[];
+  try {
+    entries = await readdir(MUSIC_DIR);
+  } catch {
+    return null;
+  }
+  const mp3s = entries.filter((e) => e.toLowerCase().endsWith(".mp3")).sort();
+  if (mp3s.length === 0) return null;
+  if (typeof shuffleIndex === "number" && Number.isFinite(shuffleIndex)) {
+    const idx = ((Math.trunc(shuffleIndex) % mp3s.length) + mp3s.length) % mp3s.length;
+    return join(MUSIC_DIR, mp3s[idx]!);
+  }
+  const choice = mp3s[Math.floor(Math.random() * mp3s.length)]!;
+  return join(MUSIC_DIR, choice);
 }
 
 // Find a sound effect by name fragment (case-insensitive substring match

@@ -37,6 +37,7 @@ export async function enqueueRender(args: {
   introCaptionCutoffPhrase?: string;
   outroClipUrl?: string;
   outroCaptionCutoffPhrase?: string;
+  musicShuffleIndex?: number;
 }): Promise<string> {
   if (!Array.isArray(args.clipUrls) || args.clipUrls.length === 0) {
     throw new Error("enqueueRender: clipUrls is required");

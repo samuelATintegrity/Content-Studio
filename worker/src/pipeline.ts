@@ -263,10 +263,13 @@ async function runInfluencerPipeline(
 
   // Pick a music track + the woosh transition SFX. Both are best-effort
   // — if the assets dir is missing the file, that audio layer is just
-  // skipped (compose handles the nullable paths).
+  // skipped (compose handles the nullable paths). musicShuffleIndex,
+  // when provided, makes the music pick deterministic so the 3 renders
+  // in an influencer batch each get a different file (the app passes
+  // batchSeed + 0/1/2).
   setState(jobId, "rendering", 0.85);
   const [musicPath, whooshPath] = await Promise.all([
-    pickMusicTrack(),
+    pickMusicTrack(req.musicShuffleIndex),
     pickSoundEffect("woosh"),
   ]);
   await composeInfluencerFinal({

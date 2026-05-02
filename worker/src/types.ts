@@ -45,13 +45,19 @@ export interface RenderRequest {
   // own karaoke captions. captionCutoffPhrase, when set on a bookend,
   // drops captions from that phrase onward (e.g. to clear the canvas
   // before a brand mention so the editor can drop a title card on top).
-  // No background music in this mode.
   mode?: RenderMode;
   voiceId?: string;
   introClipUrl?: string;
   introCaptionCutoffPhrase?: string;
   outroClipUrl?: string;
   outroCaptionCutoffPhrase?: string;
+  // Deterministic music selection. The worker picks
+  // music[abs(musicShuffleIndex) % music_file_count]. The app sets
+  // index = batchSeed + 0/1/2 across the 3 renders in an influencer
+  // batch so each render gets a different file from the music dir,
+  // and a fresh batchSeed per batch varies which 3 files are picked.
+  // Falls back to random when undefined.
+  musicShuffleIndex?: number;
 }
 
 export interface RenderResponse {

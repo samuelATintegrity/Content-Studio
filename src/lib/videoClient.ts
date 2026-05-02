@@ -130,6 +130,7 @@ export async function startInfluencerRender(args: {
   middleClipUrls: string[];
   outroClipUrl: string;
   outroCaptionCutoffPhrase?: string;
+  musicShuffleIndex?: number;
 }): Promise<{ jobId: string }> {
   const res = await fetch("/api/video/render", {
     method: "POST",
@@ -145,6 +146,7 @@ export async function startInfluencerRender(args: {
       introCaptionCutoffPhrase: args.introCaptionCutoffPhrase,
       outroClipUrl: args.outroClipUrl,
       outroCaptionCutoffPhrase: args.outroCaptionCutoffPhrase,
+      musicShuffleIndex: args.musicShuffleIndex,
     }),
   });
   if (!res.ok) {
