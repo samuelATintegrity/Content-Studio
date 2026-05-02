@@ -30,11 +30,25 @@ import { addLibraryClip, listMergedLibrary, updateLibraryClip } from "@/lib/clip
 import { tagClip } from "@/lib/videoClient";
 import { PICKED_CLIP_COUNT } from "@/lib/videoPrompts";
 import type {
+  ContentType,
   ImageSlot,
   MessageTheme,
   VideoPost,
   VideoSourcePromptIndex,
 } from "@/lib/types";
+
+// Narration mode now picks one of two messaging themes (agent_match,
+// dpa) just like the influencer flow. The render route still wants a
+// content-type field for caption framing — derive it from the theme.
+function narrationContentTypeFor(theme: MessageTheme): ContentType {
+  return theme === "dpa" ? "edu_dpa_local" : "good_agents";
+}
+
+// All narration renders run through Sarah's avatar voice now. Falls
+// back to the language-default env var if the avatar is somehow missing.
+function narrationVoiceId(): string | undefined {
+  return getAvatar("Sarah")?.voiceId;
+}
 
 // Best-effort: mirror an animated clip (and its source image, when present)
 // to R2 and add it to the flat clip library. Failures are swallowed — the
@@ -84,6 +98,10 @@ interface PendingBatch {
   scripts: Array<{ angle: string; script: string; caption: string }>;
   language: ReturnType<typeof useBatchStore.getState>["language"];
   contentType: ReturnType<typeof useBatchStore.getState>["contentType"];
+  // Narration mode batches stamp this on each VideoPost so per-card regen
+  // re-rolls into the same theme. Undefined for static / influencer
+  // dispatches that route through their own paths.
+  messageTheme?: MessageTheme;
   // slotIndex → final animated/picked clip URL. Render dispatches when this
   // has an entry for every slot index in [0, slotCount).
   videoUrls: Map<number, string>;
@@ -142,7 +160,10 @@ function buildMixedSlots(pickedClipUrls: string[]): ImageSlot[] {
 //      and waits for the user. (See approveImage / rejectImage below.)
 export async function generateVideoBatch(): Promise<void> {
   const store = useBatchStore.getState();
-  const { language, contentType, setLoading, setError, setVideoPosts, setImageSlots } = store;
+  const { language, selectedMessageTheme, setLoading, setError, setVideoPosts, setImageSlots } = store;
+  // Narration content-type now follows the message theme (used for caption
+  // copy + render-route metadata only — the script flavor is theme-driven).
+  const contentType = narrationContentTypeFor(selectedMessageTheme);
 
   setLoading(true);
   setError(null);
@@ -156,6 +177,7 @@ export async function generateVideoBatch(): Promise<void> {
     scripts: [],
     language,
     contentType,
+    messageTheme: selectedMessageTheme,
     videoUrls: new Map(),
     slotCount: initialSlots.length,
     scriptsResolved: false,
@@ -164,7 +186,7 @@ export async function generateVideoBatch(): Promise<void> {
 
   // Fire script generation in parallel with image gen. Both must resolve
   // before we can dispatch the 3 renders.
-  const scriptsPromise = startVideoBatch(language, contentType)
+  const scriptsPromise = startVideoBatch(language, selectedMessageTheme)
     .then((res) => {
       const p = _pending;
       if (!p || p.batchId !== batchId) return;
@@ -327,6 +349,10 @@ interface RenderQueue {
   contentType: ReturnType<typeof useBatchStore.getState>["contentType"];
   clipUrls: string[];
   entries: RenderQueueEntry[];
+  // For narration-mode queues, the avatar voice override that should
+  // ride along with every render in the batch (today: Sarah's voice ID).
+  // Undefined for influencer queues (those carry their voice per-entry).
+  narrationVoiceId?: string;
 }
 const _renderQueues = new Map<string, RenderQueue>();
 
@@ -350,6 +376,7 @@ function dispatchEntry(queue: RenderQueue, entry: RenderQueueEntry): void {
         language: queue.language,
         contentType: queue.contentType,
         clipUrls: queue.clipUrls,
+        voiceId: queue.narrationVoiceId,
       });
   promise
     .then(({ jobId }) => {
@@ -424,6 +451,9 @@ function maybeDispatchRenders(batchId: string): void {
     jobId: null,
     state: "waiting_images",
     progress: 0,
+    // Stamp the theme on each post so per-card regen stays in the same
+    // theme without round-tripping to the store.
+    messageTheme: p.messageTheme,
   }));
   store.setVideoPosts(initial);
 
@@ -434,6 +464,7 @@ function maybeDispatchRenders(batchId: string): void {
     language: p.language,
     contentType: p.contentType,
     clipUrls,
+    narrationVoiceId: narrationVoiceId(),
     entries: initial.map((post) => ({
       postId: post.id,
       script: post.script,
@@ -454,7 +485,8 @@ function maybeDispatchRenders(batchId: string): void {
 // + render dispatch. Costs only Claude + ElevenLabs + Railway compute.
 export async function useSavedSet(set: SavedSet): Promise<void> {
   const store = useBatchStore.getState();
-  const { language, contentType, setLoading, setError, setVideoPosts, setImageSlots } = store;
+  const { language, selectedMessageTheme, setLoading, setError, setVideoPosts, setImageSlots } = store;
+  const contentType = narrationContentTypeFor(selectedMessageTheme);
 
   setLoading(true);
   setError(null);
@@ -489,6 +521,7 @@ export async function useSavedSet(set: SavedSet): Promise<void> {
     scripts: [],
     language,
     contentType,
+    messageTheme: selectedMessageTheme,
     videoUrls: new Map(),
     slotCount: slots.length,
     scriptsResolved: false,
@@ -502,7 +535,7 @@ export async function useSavedSet(set: SavedSet): Promise<void> {
     }
   }
 
-  const scriptsPromise = startVideoBatch(language, contentType)
+  const scriptsPromise = startVideoBatch(language, selectedMessageTheme)
     .then((res) => {
       const p = _pending;
       if (!p || p.batchId !== batchId) return;
@@ -536,7 +569,8 @@ export async function renderWithPickedClips(clipUrls: string[]): Promise<void> {
   }
 
   const store = useBatchStore.getState();
-  const { language, contentType, setLoading, setError, setVideoPosts, setImageSlots, clearClipSelection } = store;
+  const { language, selectedMessageTheme, setLoading, setError, setVideoPosts, setImageSlots, clearClipSelection } = store;
+  const contentType = narrationContentTypeFor(selectedMessageTheme);
 
   setLoading(true);
   setError(null);
@@ -563,6 +597,7 @@ export async function renderWithPickedClips(clipUrls: string[]): Promise<void> {
     scripts: [],
     language,
     contentType,
+    messageTheme: selectedMessageTheme,
     videoUrls: new Map(),
     slotCount: clipUrls.length,
     pickedClipUrls: clipUrls,
@@ -572,7 +607,7 @@ export async function renderWithPickedClips(clipUrls: string[]): Promise<void> {
 
   clearClipSelection();
 
-  const scriptsPromise = startVideoBatch(language, contentType)
+  const scriptsPromise = startVideoBatch(language, selectedMessageTheme)
     .then((res) => {
       const p = _pending;
       if (!p || p.batchId !== batchId) return;
@@ -602,7 +637,8 @@ export async function generateMixedBatch(pickedClipUrls: string[]): Promise<void
   }
 
   const store = useBatchStore.getState();
-  const { language, contentType, setLoading, setError, setVideoPosts, setImageSlots, clearClipSelection } = store;
+  const { language, selectedMessageTheme, setLoading, setError, setVideoPosts, setImageSlots, clearClipSelection } = store;
+  const contentType = narrationContentTypeFor(selectedMessageTheme);
 
   setLoading(true);
   setError(null);
@@ -617,6 +653,7 @@ export async function generateMixedBatch(pickedClipUrls: string[]): Promise<void
     scripts: [],
     language,
     contentType,
+    messageTheme: selectedMessageTheme,
     videoUrls: new Map(),
     slotCount: initialSlots.length,
     scriptsResolved: false,
@@ -632,7 +669,7 @@ export async function generateMixedBatch(pickedClipUrls: string[]): Promise<void
 
   clearClipSelection();
 
-  const scriptsPromise = startVideoBatch(language, contentType)
+  const scriptsPromise = startVideoBatch(language, selectedMessageTheme)
     .then((res) => {
       const p = _pending;
       if (!p || p.batchId !== batchId) return;
@@ -950,11 +987,16 @@ export async function regenerateOneVideo(postId: string): Promise<void> {
   });
 
   try {
+    // Older posts (pre-MessageTheme) lack a stamped theme — default to
+    // agent_match so they regenerate into the same script flavor they
+    // were originally rendered against.
+    const theme: MessageTheme = post.messageTheme ?? "agent_match";
     const fresh = await regenVideo({
       language: state.language,
-      contentType: state.contentType,
+      messageTheme: theme,
       angleKey: post.angle,
       clipUrls,
+      voiceId: narrationVoiceId(),
     });
     useBatchStore.getState().updateVideoPost(postId, {
       script: fresh.script,

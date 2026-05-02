@@ -72,7 +72,11 @@ export async function runPipeline(jobId: string, req: RenderRequest): Promise<vo
 
     // ── Stage: TTS ────────────────────────────────────────────────────
     setState(jobId, "tts", 0.1);
-    const tts = await synthesize(req.script, voiceIdFor(req.language), workDir);
+    // Honor an explicit voiceId from the client (e.g. narration now routes
+    // through Sarah's avatar voice). Falls back to the language-default
+    // env var so any older programmatic enqueue still works.
+    const narrationVoiceId = req.voiceId ?? voiceIdFor(req.language);
+    const tts = await synthesize(req.script, narrationVoiceId, workDir);
     if (tts.durationS <= 0) {
       throw new Error("ElevenLabs returned zero-duration audio");
     }

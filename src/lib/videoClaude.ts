@@ -15,29 +15,45 @@ import {
 
 const MODEL = "claude-sonnet-4-6";
 
-const VIDEO_VOICE_RULES = `
-VIDEO-SPECIFIC RULES (this is for a 9:16 short-form video with voiceover narration):
-- The "script" is read aloud by an AI voice. It MUST sound natural when spoken — short clauses, conversational rhythm.
-- Hook in the FIRST 6 WORDS of the script. The opener must grab attention immediately (a question, a myth-bust, a bold fact, a vivid statement).
-- Target 60-75 words for the script (≈ 20-25 seconds at a normal speaking pace). Tight is better than loose.
-- DO NOT use a personal-story or persona opener. Banned phrasings: "Meet [Name]", "[Name] bought…", "When [Name]…", "Let me tell you about…", "I had a client…", "Imagine if you…". The video should explain a topic, not narrate a fictional individual's journey.
-- The script MUST end with this exact closer (in the requested language, translated naturally): "Click the link to get connected today." Don't add anything after it.
-- NO URLs, NO hashtags, NO "fill out the form", NO "DM me" anywhere in the SCRIPT — the only CTA is the closer above.
-- NO numbers spelled as digits where it sounds awkward ("two thousand" reads better than "2000" sometimes — use your judgment).
-- NO em dashes anywhere. NO bracketed asides. NO stage directions like "(pause)".
-- DECLARATIVE TONE: every sentence in the script must end with a period (or exclamation mark for emphasis) — NEVER a question mark. Statements only. The TTS engine drifts into rising question intonation on short imperatives, so keep clauses confident and grounded. If you want to pose a thought, phrase it as a statement ("Most buyers don't know this." NOT "Did you know?"). The closer especially must read flat and final.
-- STAY HIGH-LEVEL — DO NOT GO INTO THE WEEDS: the script's job is to introduce the topic and get the viewer excited to learn more, NOT to educate them fully. The viewer should come away thinking "this option exists, I might qualify, the right team can help me figure out the details" — never "here's exactly how it works."
-  - NEVER state specific timelines (no "60-90 days", "30 days to close", "in 6 weeks"). If timing comes up, say "the timeline is more straightforward than most people think" or hand off to the team.
-  - NEVER state specific dollar amounts (the only allowed money phrasing is the framing "$0 down"; no specific grant sizes, fees, closing costs, etc.).
-  - NEVER state specific percentages (interest rates, down-payment percentages, minimum credit scores, income-limit percentages).
-  - NEVER walk through a step-by-step process. Big-picture only.
-  - When real constraints exist (income limits, area limits, fund availability, credit considerations), name them GENERICALLY: "area and income limits apply", "credit considerations apply", "funds are limited each year".
-  - Always hand off to a professional rather than explaining the mechanics: "the right team can talk you through whether this fits your situation", "an expert can walk you through what fits", etc. THEN the closer.
-  - This rule overrides the angle's brief. If the angle brief mentions a timeline, fees, percentages, minimum scores, or income-limit specifics, IGNORE those specifics in the narration — keep the angle's TOPIC but stay high-level. The IG caption (body field) can carry slightly more nuance, but still no invented numbers.
-  - Mental template (don't copy verbatim, but match the shape): "[Hook / myth-bust]. [The basic idea in 1–2 sentences]. [Generic constraints: 'X and Y apply']. The right team can [help / discuss your options]. Click the link to get connected today."
-- The "caption" is the IG body text (3-5 sentences + 3-5 hashtags), exactly as for static posts. Hashtags on a NEW line at the end.
-- Do not repeat the script verbatim in the caption — the caption complements the video, it doesn't transcribe it.
+// Narration mode now uses the same third-person endorser tone as the
+// influencer flow — but since there's no on-camera intro/outro, the
+// script itself carries the hook AND the closer. Per-theme bookend
+// templates are appended below in buildNarrationUserPrompt.
+const NARRATION_VOICE_RULES = `
+NARRATION-VIDEO RULES (this is for a 9:16 short-form video with voiceover narration; there is NO on-camera person — the script is the entire talk track from hook to closer):
+- PERSPECTIVE — IMPORTANT: the narrator is a third-party endorser, NOT an Agent Match employee. Refer to Agent Match in the THIRD person — say "they", "their team", "Agent Match". NEVER say "we", "us", or "our team". This OVERRIDES the system prompt's "we / our team" guidance.
+- Voice: conversational AND energetic, second person to the viewer ("you", "your"), warm and excited like you're telling a friend about something genuinely good. Read aloud by an AI voice. Use contractions ("it's", "they'll", "you're"). Short, punchy sentences — not long lecture-y ones.
+- STRUCTURE: every script MUST be hook + body + closer, in one continuous narration.
+- The script MUST open with the theme's HOOK (see below) — minor word variation OK, but the framing and intent stay.
+- The script MUST end with the theme's CLOSER (see below) — minor word variation OK. Don't add anything after the closer.
+- The BODY between hook and closer is 1–3 short sentences delivering the angle's specific value prop. Third-person endorser tone ("here's what I love about Agent Match", "what's cool about them is", "here's something most people don't realize", etc.). Don't pad. Punchy is better.
+- Target 70–95 words for the full script (≈ 22–30 seconds at a normal speaking pace).
+- DECLARATIVE TONE: end every sentence with a period or exclamation mark — NEVER a question mark. The TTS engine drifts into rising question intonation on short imperatives, so keep clauses confident and grounded.
+- NO commas anywhere in the script. If a thought needs a beat, end the sentence with a period and start a fresh one. Comma-separated clauses make the TTS run-on instead of pausing where it should.
+- NO em dashes. NO bracketed asides. NO stage directions. NO URLs anywhere except the framing in the closer ("click on the link"). NO hashtags. NO "DM me", "fill out the form".
+- When mentioning a numeric rating like "4.8 stars", keep the decimal point exactly as written — the period in "4.8" is essential for the TTS to read it as "four point eight" instead of "forty-eight".
+- STAY HIGH-LEVEL — DO NOT GO INTO THE WEEDS:
+  - NEVER state specific timelines, dollar amounts, percentages, or step-by-step processes (the only exception is the framing "$0 down" since it's the program name, not a quote, plus the documented "top 10%" and "4.8 stars or higher" claims when relevant).
+  - When real constraints exist (income limits, area limits, fund availability, credit considerations), name them GENERICALLY: "area and income limits apply", "credit considerations apply".
+  - Always hand off to a professional rather than explaining mechanics — the closer is the natural hand-off, but inside the body you can also say "the right specialist can talk you through whether this fits".
+- The "body" field is the IG caption body text (3-5 sentences + 3-5 hashtags), exactly as for static posts. Hashtags on a NEW line at the end. Do not repeat the script verbatim in the caption — the caption complements the video, it doesn't transcribe it.
 `.trim();
+
+// Per-theme hook + closer for narration. The narrator MUST open with
+// (a minor variation of) the hook and end with (a minor variation of)
+// the closer. These are the lines the user shipped after vetting them
+// against real renders, so we hand-feed them rather than letting Claude
+// invent variants from scratch.
+const NARRATION_BOOKENDS: Record<MessageTheme, { hook: string; closer: string }> = {
+  agent_match: {
+    hook: "If you're looking to buy a home, you've gotta check out Agent Match.",
+    closer: "So if you're looking to buy and don't know where to start, click on the link and get connected. Today.",
+  },
+  dpa: {
+    hook: "If you're looking to buy a home but need help with the down payment, then you've gotta start with Agent Match.",
+    closer: "So if you're ready to see your options, click the link and get connected. Today.",
+  },
+};
 
 interface RawVideoScript {
   angle: string;
@@ -105,25 +121,70 @@ function pickVideoAngles(contentType: ContentType, override?: string[]): string[
   return shuffled.slice(0, 3);
 }
 
-function buildUserPrompt(language: Language, contentType: ContentType, angleKeys: string[]): string {
-  const spec = CONTENT_TYPE_SPECS[contentType];
-  const angles = spec.angles.filter((a) => angleKeys.includes(a.key));
+// Map a narration message theme to the content type whose copy assets
+// (URL, form line, hashtags, caption framing) should drive the IG body
+// + caption rendering. Same idea as the influencer DPA path.
+function captionContentTypeFor(theme: MessageTheme): ContentType {
+  return theme === "dpa" ? "edu_dpa_local" : "good_agents";
+}
 
+function buildAgentMatchNarrationUserPrompt(
+  language: Language,
+  angleKeys: string[],
+): string {
+  const spec = CONTENT_TYPE_SPECS["good_agents"];
+  const angles = spec.angles.filter((a) => angleKeys.includes(a.key));
   const angleList = angles
     .map((a, i) => `${i + 1}. angle="${a.key}"\n   brief: ${a.brief}`)
     .join("\n");
 
   const refDocSection = spec.referenceDocument
-    ? `\n\nREFERENCE DOCUMENT (rephrase ideas naturally, never copy verbatim, never invent claims beyond this):\n${spec.referenceDocument}\n`
+    ? `\n\nREFERENCE DOCUMENT (rephrase ideas naturally, never copy verbatim, never invent claims beyond this — "top 10%" and "4.8 stars or higher" are the only quantitative claims allowed):\n${spec.referenceDocument}\n`
     : "";
+
+  const { hook, closer } = NARRATION_BOOKENDS.agent_match;
 
   return `Language: ${LANGUAGE_LABELS[language]}
 Topic: ${spec.topic}
 Guardrails: ${spec.guardrails}${refDocSection}
 
-${VIDEO_VOICE_RULES}
+THEME-SPECIFIC HOOK (open with a close variation of this exact line):
+"${hook}"
 
-Produce one video for each of these angles, preserving the angle key:
+THEME-SPECIFIC CLOSER (end with a close variation of this exact line):
+"${closer}"
+
+${NARRATION_VOICE_RULES}
+
+Produce one full narration script for each of these angles. Each script must include the hook + a body that lands on this angle + the closer. Preserve the angle key:
+${angleList}
+
+Return your results by calling the video_results tool.`;
+}
+
+function buildDpaNarrationUserPrompt(language: Language): string {
+  const angleList = DPA_ANGLES.map(
+    (a, i) => `${i + 1}. angle="${a.key}"\n   brief: ${a.brief}`,
+  ).join("\n");
+
+  const { hook, closer } = NARRATION_BOOKENDS.dpa;
+
+  return `Language: ${LANGUAGE_LABELS[language]}
+Topic: $0-down / down-payment-assistance education — the narrator is recommending Agent Match to buyers who need help with the down payment because Agent Match's network specializes in these programs.
+Guardrails: Stay generic on program mechanics. Names of program categories ($0-down USDA, VA, DPA, local-bank zero-down) are fine; specific dollar amounts, percentages, timelines, or step-by-step processes are NOT. Always hand off to a specialist.
+
+REFERENCE (paraphrase the spirit, never copy verbatim, never invent claims beyond this):
+${DPA_REFERENCE_TEMPLATE}
+
+THEME-SPECIFIC HOOK (open with a close variation of this exact line):
+"${hook}"
+
+THEME-SPECIFIC CLOSER (end with a close variation of this exact line):
+"${closer}"
+
+${NARRATION_VOICE_RULES}
+
+Produce one full narration script for each of these angles. Each script must include the hook + a body that lands on this angle + the closer. Preserve the angle key:
 ${angleList}
 
 Return your results by calling the video_results tool.`;
@@ -155,11 +216,25 @@ function finalize(raw: RawVideoScript[], language: Language, contentType: Conten
 
 export async function generateVideoScripts(
   language: Language,
-  contentType: ContentType,
+  messageTheme: MessageTheme,
   angleOverride?: string[],
 ): Promise<VideoScript[]> {
-  const angleKeys = pickVideoAngles(contentType, angleOverride);
+  // Theme-driven narration scripts. agent_match samples 3 angles from the
+  // good_agents pool (so each batch hits a different value-prop point);
+  // dpa uses the fixed 3-angle DPA pool baked into this file.
+  const isDpa = messageTheme === "dpa";
+  const angleKeys = isDpa
+    ? (angleOverride && angleOverride.length > 0
+        ? DPA_ANGLES.map((a) => a.key).filter((k) => angleOverride.includes(k))
+        : DPA_ANGLES.map((a) => a.key))
+    : pickVideoAngles("good_agents", angleOverride);
   if (angleKeys.length === 0) throw new Error("No angles selected");
+
+  const userPrompt = isDpa
+    ? buildDpaNarrationUserPrompt(language)
+    : buildAgentMatchNarrationUserPrompt(language, angleKeys);
+
+  const captionContentType = captionContentTypeFor(messageTheme);
 
   try {
     const resp = await client().messages.create({
@@ -168,10 +243,10 @@ export async function generateVideoScripts(
       system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
       tools: [VIDEO_TOOL],
       tool_choice: { type: "tool", name: VIDEO_TOOL.name },
-      messages: [{ role: "user", content: buildUserPrompt(language, contentType, angleKeys) }],
+      messages: [{ role: "user", content: userPrompt }],
     });
     const raw = extractScripts(resp);
-    return finalize(raw, language, contentType);
+    return finalize(raw, language, captionContentType);
   } catch (e) {
     throw friendlyError(e);
   }

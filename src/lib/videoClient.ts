@@ -11,12 +11,12 @@ import type {
 
 export async function startVideoBatch(
   language: Language,
-  contentType: ContentType,
+  messageTheme: MessageTheme,
 ): Promise<VideoStartResponse> {
   const res = await fetch("/api/video/start", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ language, contentType }),
+    body: JSON.stringify({ language, messageTheme }),
   });
   if (!res.ok) {
     throw new Error((await res.json().catch(() => ({}))).error ?? "video start failed");
@@ -108,6 +108,10 @@ export async function startVideoRender(args: {
   language: Language;
   contentType: ContentType;
   clipUrls: string[];
+  // Optional override for the language-default narration voice. Set
+  // when the narration flow wants to render in a specific avatar's
+  // voice (today: Sarah for the new endorser style).
+  voiceId?: string;
 }): Promise<{ jobId: string }> {
   const res = await fetch("/api/video/render", {
     method: "POST",
@@ -242,9 +246,10 @@ export async function deleteClipFromStorage(urls: string[]): Promise<{ deleted: 
 
 export async function regenVideo(args: {
   language: Language;
-  contentType: ContentType;
+  messageTheme: MessageTheme;
   angleKey: string;
   clipUrls: string[];
+  voiceId?: string;
 }): Promise<{ angle: string; script: string; caption: string; jobId: string }> {
   const res = await fetch("/api/video/regen", {
     method: "POST",

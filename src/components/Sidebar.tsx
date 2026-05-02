@@ -151,12 +151,11 @@ export function Sidebar() {
         </div>
       </Section>
 
-      {/* Influencer mode replaces the Content type picker with a Message
-          theme picker — the avatar's on-camera intro/outro is the hook +
-          closer, so the user picks which scripted topic the influencer is
-          delivering instead of a content angle. Each theme has its own
-          pre-recorded bookend library. */}
-      {format === "video" && subMode === "influencer" ? (
+      {/* Video mode (both narration and influencer sub-modes) uses the
+          Message theme picker. Narration consolidated from 5 content types
+          to these 2 themes; influencer was already locked to them. Static
+          mode keeps the full 5-content-type picker below. */}
+      {format === "video" ? (
         <Section title="Message">
           <div className="flex flex-col gap-2">
             {MESSAGE_THEMES.map((t) => (
