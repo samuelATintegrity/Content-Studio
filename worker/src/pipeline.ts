@@ -13,7 +13,7 @@ import { voiceIdFor } from "./voices.js";
 import { downloadClips } from "./clipDownload.js";
 import { compose, composeInfluencer } from "./ffmpeg.js";
 import { pickMusicTrack } from "./music.js";
-import { probeDurationS } from "./probe.js";
+import { probeBookendDurationS, probeDurationS } from "./probe.js";
 import { applyCaptionCutoff, transcribeMediaFile } from "./transcribe.js";
 import type { RenderRequest } from "./types.js";
 import type { WordTiming } from "./elevenlabs.js";
@@ -148,11 +148,9 @@ async function runInfluencerPipeline(
   // can be earlier than the MP3's actual end (the file usually has a
   // small tail of breath/decay/silence past the last spoken word). If we
   // sized the middle segment by `tts.durationS` we'd chop the tail off
-  // ("voiceover cut early") AND the audio/video lengths would diverge
-  // slightly, pushing the outro out of sync. Use the actual file
-  // duration as the canonical middle audio length; keep `tts.words` for
-  // caption timing since those word timestamps stay valid within the file.
-  const middleAudioDurationS = await probeDurationS(tts.mp3Path);
+  // ("voiceover cut early"). Probe the actual MP3 file for the canonical
+  // middle audio length; tts.words still drives caption timing.
+  const probedMiddleAudioS = await probeDurationS(tts.mp3Path);
 
   // ── Stage: Footage download (intro + middle + outro) ───────────────
   setState(jobId, "footage", 0.3);
@@ -168,10 +166,33 @@ async function runInfluencerPipeline(
   const outroPath = outroClips[0]!.filePath;
   const middlePaths = middleClips.map((c) => c.filePath);
 
-  const [introDurationS, outroDurationS] = await Promise.all([
-    probeDurationS(introPath),
-    probeDurationS(outroPath),
+  // Frame-align ALL durations to 30fps boundaries before passing to ffmpeg.
+  // The fps=30 filter rounds non-frame-aligned trim durations to whole
+  // frames internally, which causes audio (sample-precise) and video
+  // (frame-precise) to drift by up to ~33ms per segment — across
+  // intro+8 middle clips+outro that accumulates into visible AV desync.
+  // Floor for bookends so we never trim past either stream's natural
+  // length. Ceil for the middle so the audio's tail isn't lost; we'll
+  // pad the audio with silence at the end via apad to cover the rounding.
+  const FPS = 30;
+  const floorFrame = (s: number): number => Math.floor(s * FPS) / FPS;
+  const ceilFrame = (s: number): number => Math.ceil(s * FPS) / FPS;
+
+  // Bookends: probe the shorter of (video stream, audio stream), then
+  // floor to the nearest 30fps frame boundary.
+  const [probedIntroS, probedOutroS] = await Promise.all([
+    probeBookendDurationS(introPath),
+    probeBookendDurationS(outroPath),
   ]);
+  const introDurationS = floorFrame(probedIntroS);
+  const outroDurationS = floorFrame(probedOutroS);
+
+  // Middle: round per-clip up to a frame boundary, then 8 × per-clip is
+  // automatically frame-aligned too. Audio is padded with silence to
+  // match the (slightly longer) total visual length.
+  const middlePerClipFrames = Math.max(1, Math.ceil((probedMiddleAudioS / 8) * FPS));
+  const middlePerClipS = middlePerClipFrames / FPS;
+  const middleAudioDurationS = middlePerClipS * 8;
 
   // ── Stage: Transcribe bookends + build merged ASS ──────────────────
   // Run intro + outro STT in parallel. STT failures fall back to no

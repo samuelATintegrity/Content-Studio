@@ -153,7 +153,7 @@ function buildFilterComplex(args: {
     chains.push(
       `[${outroImageInputIndex}:v]scale=1080:1920:force_original_aspect_ratio=decrease,` +
         `pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=${ffBg},setsar=1,fps=30,` +
-        `trim=duration=${outroDurationS.toFixed(3)},setpts=PTS-STARTPTS,format=yuv420p[voutro_base]`,
+        `trim=duration=${outroDurationS.toFixed(6)},setpts=PTS-STARTPTS,format=yuv420p[voutro_base]`,
     );
     chains.push(`[voutro_base]split=2[voutro_a][voutro_b]`);
     chains.push(`[voutro_a]boxblur=luma_radius=${OUTRO_BLUR_RADIUS}:luma_power=1[voutro_blur]`);
@@ -165,7 +165,7 @@ function buildFilterComplex(args: {
     );
   } else {
     chains.push(
-      `color=c=${ffBg}:s=1080x1920:d=${outroDurationS.toFixed(3)}:r=30,format=yuv420p,fps=30,setsar=1,` +
+      `color=c=${ffBg}:s=1080x1920:d=${outroDurationS.toFixed(6)}:r=30,format=yuv420p,fps=30,setsar=1,` +
         `fade=type=in:duration=${OUTRO_FADE_IN_S}:color=white[voutro]`,
     );
   }
@@ -379,14 +379,14 @@ function buildInfluencerFilterComplex(args: {
   chains.push(
     `[${introInputIndex}:v]scale=1080:1920:force_original_aspect_ratio=increase,` +
       `crop=1080:1920,setsar=1,fps=30,` +
-      `trim=duration=${introDurationS.toFixed(3)},setpts=PTS-STARTPTS,format=yuv420p[v_intro]`,
+      `trim=duration=${introDurationS.toFixed(6)},setpts=PTS-STARTPTS,format=yuv420p[v_intro]`,
   );
 
   // Middle clips: warmup head-trim + per-clip share of AI narration.
   for (let i = 0; i < middleClipCount; i++) {
     const inputIdx = middleInputBaseIndex + i;
     chains.push(
-      `[${inputIdx}:v]trim=start=${CLIP_HEAD_TRIM_S.toFixed(3)}:duration=${middlePerClipS.toFixed(3)},setpts=PTS-STARTPTS,` +
+      `[${inputIdx}:v]trim=start=${CLIP_HEAD_TRIM_S.toFixed(6)}:duration=${middlePerClipS.toFixed(6)},setpts=PTS-STARTPTS,` +
         `scale=1080:1920:force_original_aspect_ratio=increase,` +
         `crop=1080:1920,setsar=1,fps=30,format=yuv420p[v_mid${i}]`,
     );
@@ -408,7 +408,7 @@ function buildInfluencerFilterComplex(args: {
   chains.push(
     `[${outroInputIndex}:v]scale=1080:1920:force_original_aspect_ratio=increase,` +
       `crop=1080:1920,setsar=1,fps=30,` +
-      `trim=duration=${outroDurationS.toFixed(3)},setpts=PTS-STARTPTS,format=yuv420p[v_outro]`,
+      `trim=duration=${outroDurationS.toFixed(6)},setpts=PTS-STARTPTS,format=yuv420p[v_outro]`,
   );
 
   // Visual concat: intro → middle (visually padded) → outro. Subtitles are
@@ -421,18 +421,24 @@ function buildInfluencerFilterComplex(args: {
     `[v_concat]subtitles=filename='${escapedAss}':fontsdir='${escapedFonts}',format=yuv420p,setsar=1[v_final]`,
   );
 
-  // Audio track: intro audio (from intro file, unity gain) → AI TTS middle
-  // (slightly under unity for headroom) → outro audio (unity gain). No music.
-  // Trim narration to its real length so trailing silence doesn't extend
-  // the timeline past the visual middle.
+  // Audio track: intro audio → AI TTS middle (volume-attenuated for
+  // headroom) → outro audio. No music.
+  //
+  // For each segment: atrim caps at the target duration; apad whole_dur
+  // pads with silence if the source audio is shorter than target. With
+  // both, every segment's audio is exactly target seconds long, which
+  // is what keeps the outro audio locked to outro video after concat.
+  // Without apad, the AI middle MP3 (which ends a few ms before the
+  // ceil-rounded frame-aligned target) would leave the audio segment
+  // shorter than the visual segment and the outro would drift forward.
   chains.push(
-    `[${introInputIndex}:a]atrim=duration=${introDurationS.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_rates=44100:channel_layouts=stereo[a_intro]`,
+    `[${introInputIndex}:a]atrim=duration=${introDurationS.toFixed(6)},asetpts=PTS-STARTPTS,apad=whole_dur=${introDurationS.toFixed(6)},aformat=sample_rates=44100:channel_layouts=stereo[a_intro]`,
   );
   chains.push(
-    `[${audioInputIndex}:a]atrim=duration=${audioDurationS.toFixed(3)},asetpts=PTS-STARTPTS,volume=${NARRATION_VOLUME.toFixed(3)},aformat=sample_rates=44100:channel_layouts=stereo[a_mid]`,
+    `[${audioInputIndex}:a]atrim=duration=${audioDurationS.toFixed(6)},asetpts=PTS-STARTPTS,volume=${NARRATION_VOLUME.toFixed(3)},apad=whole_dur=${audioDurationS.toFixed(6)},aformat=sample_rates=44100:channel_layouts=stereo[a_mid]`,
   );
   chains.push(
-    `[${outroInputIndex}:a]atrim=duration=${outroDurationS.toFixed(3)},asetpts=PTS-STARTPTS,aformat=sample_rates=44100:channel_layouts=stereo[a_outro]`,
+    `[${outroInputIndex}:a]atrim=duration=${outroDurationS.toFixed(6)},asetpts=PTS-STARTPTS,apad=whole_dur=${outroDurationS.toFixed(6)},aformat=sample_rates=44100:channel_layouts=stereo[a_outro]`,
   );
   chains.push(`[a_intro][a_mid][a_outro]concat=n=3:v=0:a=1[a_final]`);
 
