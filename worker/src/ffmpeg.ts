@@ -424,21 +424,27 @@ function buildInfluencerFilterComplex(args: {
   // Audio track: intro audio → AI TTS middle (volume-attenuated for
   // headroom) → outro audio. No music.
   //
-  // For each segment: atrim caps at the target duration; apad whole_dur
-  // pads with silence if the source audio is shorter than target. With
-  // both, every segment's audio is exactly target seconds long, which
-  // is what keeps the outro audio locked to outro video after concat.
-  // Without apad, the AI middle MP3 (which ends a few ms before the
-  // ceil-rounded frame-aligned target) would leave the audio segment
-  // shorter than the visual segment and the outro would drift forward.
+  // `aresample=async=1:first_pts=0` runs FIRST on each bookend audio
+  // stream. It forces sample-accurate output starting at PTS 0 and
+  // resamples to 44100Hz, which sidesteps AAC priming + edit-list
+  // ambiguity in the source mp4s — the intro's audio stream is at
+  // 48000Hz and the outro's at 44100Hz with different priming sizes
+  // (1024 samples each, ~21ms vs ~23ms). Without `aresample=async=1`
+  // those priming-silence samples can leak through to the concat and
+  // shift the outro segment a couple of frames behind its video.
+  //
+  // atrim then caps at the target duration; apad whole_dur pads with
+  // silence if the trimmed audio is shorter (typical for the AI
+  // middle since we ceil-rounded the target up to a frame boundary).
+  // Together, every segment's audio is exactly target seconds long.
   chains.push(
-    `[${introInputIndex}:a]atrim=duration=${introDurationS.toFixed(6)},asetpts=PTS-STARTPTS,apad=whole_dur=${introDurationS.toFixed(6)},aformat=sample_rates=44100:channel_layouts=stereo[a_intro]`,
+    `[${introInputIndex}:a]aresample=async=1:first_pts=0,atrim=duration=${introDurationS.toFixed(6)},asetpts=PTS-STARTPTS,apad=whole_dur=${introDurationS.toFixed(6)},aformat=sample_rates=44100:channel_layouts=stereo[a_intro]`,
   );
   chains.push(
-    `[${audioInputIndex}:a]atrim=duration=${audioDurationS.toFixed(6)},asetpts=PTS-STARTPTS,volume=${NARRATION_VOLUME.toFixed(3)},apad=whole_dur=${audioDurationS.toFixed(6)},aformat=sample_rates=44100:channel_layouts=stereo[a_mid]`,
+    `[${audioInputIndex}:a]aresample=async=1:first_pts=0,atrim=duration=${audioDurationS.toFixed(6)},asetpts=PTS-STARTPTS,volume=${NARRATION_VOLUME.toFixed(3)},apad=whole_dur=${audioDurationS.toFixed(6)},aformat=sample_rates=44100:channel_layouts=stereo[a_mid]`,
   );
   chains.push(
-    `[${outroInputIndex}:a]atrim=duration=${outroDurationS.toFixed(6)},asetpts=PTS-STARTPTS,apad=whole_dur=${outroDurationS.toFixed(6)},aformat=sample_rates=44100:channel_layouts=stereo[a_outro]`,
+    `[${outroInputIndex}:a]aresample=async=1:first_pts=0,atrim=duration=${outroDurationS.toFixed(6)},asetpts=PTS-STARTPTS,apad=whole_dur=${outroDurationS.toFixed(6)},aformat=sample_rates=44100:channel_layouts=stereo[a_outro]`,
   );
   chains.push(`[a_intro][a_mid][a_outro]concat=n=3:v=0:a=1[a_final]`);
 
