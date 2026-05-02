@@ -339,8 +339,16 @@ export async function compose(args: ComposeArgs): Promise<void> {
 import { writeFile } from "node:fs/promises";
 
 const WHOOSH_VOLUME = 0.7;
+// Push whoosh #2 (middle→outro transition) slightly after the actual cut.
+// At the visual concat boundary the whoosh felt ~3 frames early; landing
+// it just inside the outro masks the cut better. Whoosh #1 (intro→middle)
+// fires at the boundary since the intro is short and the user didn't
+// flag drift there.
+const WHOOSH_OUTRO_POST_CUT_S = 0.1;
 const INFLUENCER_MUSIC_VOLUME = 0.15;
-const MUSIC_FADE_OUT_END_S = 0.8;
+// Music fades out across the LAST MUSIC_FADE_OUT_S seconds of the middle
+// segment (constant declared at the top of this file for narration mode)
+// so the fade ends at the moment the outro begins. Outro plays clean.
 
 // Shared ffmpeg encoder flags so all segment intermediates share the
 // same codec params. Concat demuxer is happiest when inputs match.
@@ -500,8 +508,7 @@ export async function composeOutroSegment(args: ComposeOutroSegmentArgs): Promis
 export interface ComposeInfluencerFinalArgs {
   segmentPaths: string[];        // [intro, middle, outro] in order
   introDurationS: number;        // for whoosh #1 / music start positioning
-  middleAudioDurationS: number;  // for whoosh #2 positioning
-  outroDurationS: number;        // for music end + fade positioning
+  middleAudioDurationS: number;  // for whoosh #2 positioning + music end
   assPath: string;
   fontsDir: string;
   whooshPath?: string | null;
@@ -574,11 +581,12 @@ export async function composeInfluencerFinal(args: ComposeInfluencerFinalArgs): 
   const mixInputs: string[] = ["[a_voice]"];
 
   // Whoosh: split one input into two delayed copies. The new file is
-  // ~270ms with energy at t=0, so the file's start lands AT the cut
-  // (no pre-roll).
+  // ~270ms with energy at t=0. Whoosh #1 lands AT the intro→middle cut;
+  // whoosh #2 lands WHOOSH_OUTRO_POST_CUT_S after the middle→outro cut
+  // because the boundary one felt early in user testing.
   if (whooshIdx !== null) {
     const whoosh1DelayMs = Math.max(0, Math.round(middleStartS * 1000));
-    const whoosh2DelayMs = Math.max(0, Math.round(outroStartS * 1000));
+    const whoosh2DelayMs = Math.max(0, Math.round((outroStartS + WHOOSH_OUTRO_POST_CUT_S) * 1000));
     chains.push(
       `[${whooshIdx}:a]aresample=async=1:first_pts=0,asetpts=PTS-STARTPTS,volume=${WHOOSH_VOLUME.toFixed(3)},aformat=sample_rates=44100:channel_layouts=stereo,asplit=2[w_pre1][w_pre2]`,
     );
@@ -587,14 +595,15 @@ export async function composeInfluencerFinal(args: ComposeInfluencerFinalArgs): 
     mixInputs.push("[a_whoosh1]", "[a_whoosh2]");
   }
 
-  // Music: starts at intro end, runs through middle + outro, fades out
-  // the last MUSIC_FADE_OUT_END_S seconds of the outro.
+  // Music: starts at intro end, runs ONLY through the middle segment,
+  // fades out across MUSIC_FADE_OUT_S so the fade ends right at the
+  // outro start. The outro plays clean with no music underneath.
   if (musicIdx !== null) {
-    const musicDurationS = args.middleAudioDurationS + args.outroDurationS;
-    const musicFadeStartS = Math.max(0, musicDurationS - MUSIC_FADE_OUT_END_S);
+    const musicDurationS = args.middleAudioDurationS;
+    const musicFadeStartS = Math.max(0, musicDurationS - MUSIC_FADE_OUT_S);
     const musicDelayMs = Math.max(0, Math.round(middleStartS * 1000));
     chains.push(
-      `[${musicIdx}:a]aresample=async=1:first_pts=0,atrim=duration=${musicDurationS.toFixed(6)},asetpts=PTS-STARTPTS,volume=${INFLUENCER_MUSIC_VOLUME.toFixed(3)},afade=type=out:start_time=${musicFadeStartS.toFixed(6)}:duration=${MUSIC_FADE_OUT_END_S},aformat=sample_rates=44100:channel_layouts=stereo,adelay=${musicDelayMs}|${musicDelayMs}[a_music]`,
+      `[${musicIdx}:a]aresample=async=1:first_pts=0,atrim=duration=${musicDurationS.toFixed(6)},asetpts=PTS-STARTPTS,volume=${INFLUENCER_MUSIC_VOLUME.toFixed(3)},afade=type=out:start_time=${musicFadeStartS.toFixed(6)}:duration=${MUSIC_FADE_OUT_S},aformat=sample_rates=44100:channel_layouts=stereo,adelay=${musicDelayMs}|${musicDelayMs}[a_music]`,
     );
     mixInputs.push("[a_music]");
   }

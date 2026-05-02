@@ -273,7 +273,6 @@ async function runInfluencerPipeline(
     segmentPaths: [introSegPath, middleSegPath, outroSegPath],
     introDurationS,
     middleAudioDurationS,
-    outroDurationS,
     assPath,
     fontsDir: FONTS_DIR,
     whooshPath,
