@@ -10,6 +10,7 @@
 import type { LibraryClip } from "./clipLibrary";
 import type { SavedSet } from "./savedSets";
 import type { LibraryImage } from "./imageLibrary";
+import type { MusicTrack } from "./musicLibrary";
 
 const MANIFEST_VERSION = 1;
 const LOCAL_MIRROR_KEY = "content-studio-library-mirror";
@@ -26,16 +27,24 @@ export interface Manifest {
   clips: LibraryClip[];
   sets: SavedSet[];
   images: LibraryImage[];
+  tracks: MusicTrack[];
 }
 
-const EMPTY: Manifest = { version: MANIFEST_VERSION, clips: [], sets: [], images: [] };
+const EMPTY: Manifest = {
+  version: MANIFEST_VERSION,
+  clips: [],
+  sets: [],
+  images: [],
+  tracks: [],
+};
 
-type Slice = "clips" | "sets" | "images";
+type Slice = "clips" | "sets" | "images" | "tracks";
 
 const SLICE_EVENT: Record<Slice, string> = {
   clips: "video-clip-library-changed",
   sets: "video-saved-sets-changed",
   images: "static-image-library-changed",
+  tracks: "music-library-changed",
 };
 
 let _state: Manifest = { ...EMPTY };
@@ -101,6 +110,7 @@ function normalizeManifest(input: unknown): Manifest {
     clips: Array.isArray(obj.clips) ? obj.clips : [],
     sets: Array.isArray(obj.sets) ? obj.sets : [],
     images: Array.isArray(obj.images) ? obj.images : [],
+    tracks: Array.isArray(obj.tracks) ? obj.tracks : [],
   };
 }
 

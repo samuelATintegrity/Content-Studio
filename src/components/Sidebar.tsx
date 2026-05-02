@@ -20,6 +20,11 @@ import {
 } from "@/lib/savedSets";
 import { useSavedSet } from "@/lib/generateVideo";
 import { avatarsForLanguage } from "@/lib/avatars";
+import { MusicLibraryModal } from "./MusicLibraryModal";
+import {
+  listMusicTracks,
+  subscribeMusicLibrary,
+} from "@/lib/musicLibrary";
 
 const FORMATS: Format[] = ["static", "video"];
 const LANGS: Language[] = ["en", "tl", "es", "zh"];
@@ -133,6 +138,8 @@ export function Sidebar() {
       )}
 
       {format === "video" && subMode === "narration" && <SavedSetsSection />}
+
+      {format === "video" && <MusicLibrarySection />}
 
       <Section title="Language">
         <div className="grid grid-cols-2 gap-2">
@@ -305,6 +312,29 @@ function SavedSetsSection() {
           </div>
         ))}
       </div>
+    </Section>
+  );
+}
+
+function MusicLibrarySection() {
+  const [open, setOpen] = useState(false);
+  const [count, setCount] = useState<number>(() => listMusicTracks().length);
+  useEffect(
+    () => subscribeMusicLibrary(() => setCount(listMusicTracks().length)),
+    [],
+  );
+  return (
+    <Section title="Music">
+      <button
+        onClick={() => setOpen(true)}
+        className="w-full px-3 py-2 rounded-2xl text-[12px] border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition flex items-center justify-between"
+      >
+        <span className="font-medium">Manage tracks</span>
+        <span className="text-[11px] text-neutral-500 tabular-nums">
+          {count} {count === 1 ? "track" : "tracks"}
+        </span>
+      </button>
+      {open && <MusicLibraryModal onClose={() => setOpen(false)} />}
     </Section>
   );
 }
