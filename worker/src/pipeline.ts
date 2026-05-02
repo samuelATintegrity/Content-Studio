@@ -144,6 +144,16 @@ async function runInfluencerPipeline(
     throw new Error("ElevenLabs returned zero-duration audio");
   }
 
+  // ElevenLabs returns alignment timestamps where the last word's `endS`
+  // can be earlier than the MP3's actual end (the file usually has a
+  // small tail of breath/decay/silence past the last spoken word). If we
+  // sized the middle segment by `tts.durationS` we'd chop the tail off
+  // ("voiceover cut early") AND the audio/video lengths would diverge
+  // slightly, pushing the outro out of sync. Use the actual file
+  // duration as the canonical middle audio length; keep `tts.words` for
+  // caption timing since those word timestamps stay valid within the file.
+  const middleAudioDurationS = await probeDurationS(tts.mp3Path);
+
   // ── Stage: Footage download (intro + middle + outro) ───────────────
   setState(jobId, "footage", 0.3);
   const introDir = await mkdtemp(join(workDir, "intro-"));
@@ -175,15 +185,16 @@ async function runInfluencerPipeline(
   // Time offsets in the final concatenated video:
   //   intro:  0
   //   middle: introDurationS
-  //   outro:  introDurationS + ttsDurationS  (the audio drives the middle
-  //           length; visual is padded to match — see ffmpeg)
+  //   outro:  introDurationS + middleAudioDurationS
+  // (audio drives the middle length; visual is split into 8 equal clips
+  // adding up to the same number — see composeInfluencer)
   const ass = buildMultiSegmentAssSubtitles(
     [
       { words: introWords, offsetS: 0 },
       { words: tts.words, offsetS: introDurationS },
       {
         words: outroWords,
-        offsetS: introDurationS + tts.durationS,
+        offsetS: introDurationS + middleAudioDurationS,
       },
     ],
     SUBTITLE_STYLE,
@@ -201,7 +212,7 @@ async function runInfluencerPipeline(
     introDurationS,
     outroDurationS,
     audioPath: tts.mp3Path,
-    audioDurationS: tts.durationS,
+    audioDurationS: middleAudioDurationS,
     assPath,
     fontsDir: FONTS_DIR,
     outPath: finalPath,
@@ -211,7 +222,7 @@ async function runInfluencerPipeline(
   setState(jobId, "uploading", 0.9);
   const url = await uploadVideo(finalPath, `videos/${jobId}.mp4`);
 
-  const totalDurationS = introDurationS + tts.durationS + outroDurationS;
+  const totalDurationS = introDurationS + middleAudioDurationS + outroDurationS;
   updateJob(jobId, {
     state: "ready",
     progress: 1,
