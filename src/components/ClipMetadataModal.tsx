@@ -206,7 +206,7 @@ export function ClipMetadataModal({
                 <button
                   key={l.key}
                   onClick={() => setLanguage(l.key)}
-                  className={`text-[11px] px-2.5 py-1.5 rounded-full border transition ${
+                  className={`text-[11px] px-2.5 py-2 lg:py-1.5 rounded-full border transition ${
                     language === l.key
                       ? "bg-neutral-900 dark:bg-white border-neutral-900 dark:border-white text-white dark:text-neutral-900 font-semibold"
                       : "bg-neutral-50 dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
@@ -229,7 +229,7 @@ export function ClipMetadataModal({
                   <button
                     key={c.key}
                     onClick={() => toggleCategory(c.key)}
-                    className={`text-[11px] px-2.5 py-1.5 rounded-full border transition ${
+                    className={`text-[11px] px-2.5 py-2 lg:py-1.5 rounded-full border transition ${
                       active
                         ? "bg-emerald-500 border-emerald-500 text-white"
                         : "bg-neutral-50 dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
@@ -254,7 +254,7 @@ export function ClipMetadataModal({
                 <button
                   key={r}
                   onClick={() => setRole(r)}
-                  className={`text-[11px] px-2.5 py-1.5 rounded-full border transition capitalize ${
+                  className={`text-[11px] px-2.5 py-2 lg:py-1.5 rounded-full border transition capitalize ${
                     role === r
                       ? "bg-neutral-900 dark:bg-white border-neutral-900 dark:border-white text-white dark:text-neutral-900 font-semibold"
                       : "bg-neutral-50 dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
@@ -281,7 +281,7 @@ export function ClipMetadataModal({
                     <button
                       key={a.name}
                       onClick={() => setAvatarName(a.name)}
-                      className={`text-[11px] px-2.5 py-1.5 rounded-full border transition ${
+                      className={`text-[11px] px-2.5 py-2 lg:py-1.5 rounded-full border transition ${
                         avatarName === a.name
                           ? "bg-neutral-900 dark:bg-white border-neutral-900 dark:border-white text-white dark:text-neutral-900 font-semibold"
                           : "bg-neutral-50 dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
@@ -305,7 +305,7 @@ export function ClipMetadataModal({
                   <button
                     key={t}
                     onClick={() => setMessageTheme(t)}
-                    className={`text-[11px] px-2.5 py-1.5 rounded-full border transition ${
+                    className={`text-[11px] px-2.5 py-2 lg:py-1.5 rounded-full border transition ${
                       messageTheme === t
                         ? "bg-neutral-900 dark:bg-white border-neutral-900 dark:border-white text-white dark:text-neutral-900 font-semibold"
                         : "bg-neutral-50 dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"

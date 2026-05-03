@@ -205,7 +205,7 @@ export function AiClipModal({
           </div>
         ) : (
           <div className="p-6 flex flex-col gap-4 overflow-y-auto">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {imageUrl && (
                 <div className="rounded-2xl overflow-hidden border border-neutral-200 dark:border-neutral-900 aspect-[9/16] bg-neutral-100 dark:bg-neutral-900">
                   {/* eslint-disable-next-line @next/next/no-img-element */}

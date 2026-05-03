@@ -321,7 +321,7 @@ export function ClipLibraryGrid() {
                   <button
                     key={tag}
                     onClick={() => toggleTag(tag)}
-                    className={`text-[10px] px-2.5 py-1 rounded-full border transition tabular-nums ${
+                    className={`text-[10px] px-2.5 py-1.5 lg:py-1 rounded-full border transition tabular-nums ${
                       active
                         ? "bg-emerald-500 border-emerald-500 text-white"
                         : "bg-neutral-50 dark:bg-neutral-900 border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 hover:bg-neutral-100 dark:hover:bg-neutral-800"
@@ -334,7 +334,7 @@ export function ClipLibraryGrid() {
               {activeTags.size > 0 && (
                 <button
                   onClick={() => setActiveTags(new Set())}
-                  className="text-[10px] px-2.5 py-1 rounded-full text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200 transition"
+                  className="text-[10px] px-2.5 py-1.5 lg:py-1 rounded-full text-neutral-500 hover:text-neutral-800 dark:hover:text-neutral-200 transition"
                 >
                   Clear tags
                 </button>
@@ -641,7 +641,7 @@ function BookendTile({
             e.stopPropagation();
             onDelete();
           }}
-          className="absolute top-2 left-2 w-7 h-7 rounded-full bg-black/60 hover:bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition z-10"
+          className="absolute top-2 left-2 w-7 h-7 rounded-full bg-black/60 hover:bg-red-500 text-white flex items-center justify-center opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition z-10"
           title="Remove from library"
         >
           <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -657,7 +657,7 @@ function BookendTile({
             e.stopPropagation();
             onEdit();
           }}
-          className="absolute top-2 left-11 w-7 h-7 rounded-full bg-black/60 hover:bg-neutral-700 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition z-10"
+          className="absolute top-2 left-11 w-7 h-7 rounded-full bg-black/60 hover:bg-neutral-700 text-white flex items-center justify-center opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition z-10"
           title="Edit clip details"
         >
           <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -844,7 +844,7 @@ function ClipTile({
             e.stopPropagation();
             onDelete();
           }}
-          className="absolute top-2 left-2 w-7 h-7 rounded-full bg-black/60 hover:bg-red-500 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
+          className="absolute top-2 left-2 w-7 h-7 rounded-full bg-black/60 hover:bg-red-500 text-white flex items-center justify-center opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition"
           title="Remove from library"
         >
           <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -860,7 +860,7 @@ function ClipTile({
             e.stopPropagation();
             onEdit();
           }}
-          className="absolute top-2 left-11 w-7 h-7 rounded-full bg-black/60 hover:bg-neutral-700 text-white flex items-center justify-center opacity-0 group-hover:opacity-100 transition"
+          className="absolute top-2 left-11 w-7 h-7 rounded-full bg-black/60 hover:bg-neutral-700 text-white flex items-center justify-center opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition"
           title="Edit clip details"
         >
           <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

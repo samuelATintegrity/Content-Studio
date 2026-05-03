@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { LibraryBootstrap } from "@/components/LibraryBootstrap";
@@ -16,6 +16,16 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Content Studio",
   description: "Real estate social media content generator — static posts",
+};
+
+// Mobile viewport: full-width device, allow user pinch-zoom (don't lock
+// it — the audio caption preview and clip thumbnails benefit from
+// occasional zoom). viewportFit=cover lets the FAB respect notched
+// safe-area insets via env(safe-area-inset-bottom).
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

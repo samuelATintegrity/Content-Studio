@@ -253,7 +253,7 @@ export function PostCard({ post }: { post: Post }) {
           <>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={post.imageDataUrl} alt={post.angle} className="w-full h-full object-cover" />
-            <div className="absolute top-2.5 right-2.5 flex gap-1.5 opacity-0 group-hover/image:opacity-100 transition focus-within:opacity-100">
+            <div className="absolute top-2.5 right-2.5 flex gap-1.5 opacity-100 lg:opacity-0 lg:group-hover/image:opacity-100 transition focus-within:opacity-100">
               <button
                 onClick={() => setEditingPhoto(true)}
                 disabled={!post.photoUrl}
@@ -316,7 +316,7 @@ export function PostCard({ post }: { post: Post }) {
           </div>
           <button
             onClick={copyCaption}
-            className="absolute top-0 right-0 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-neutral-900/90 dark:bg-neutral-100 text-white dark:text-neutral-900 backdrop-blur-md opacity-0 group-hover/caption:opacity-100 transition focus:opacity-100"
+            className="absolute top-0 right-0 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-neutral-900/90 dark:bg-neutral-100 text-white dark:text-neutral-900 backdrop-blur-md opacity-100 lg:opacity-0 lg:group-hover/caption:opacity-100 transition focus:opacity-100"
             title="Copy caption to clipboard"
           >
             {captionCopied ? "Copied" : "Copy"}

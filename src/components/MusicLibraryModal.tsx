@@ -158,7 +158,7 @@ export function MusicLibraryModal({ onClose }: { onClose: () => void }) {
                   />
                   <button
                     onClick={() => onDelete(track)}
-                    className="opacity-0 group-hover:opacity-100 transition text-neutral-400 hover:text-red-500"
+                    className="opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition text-neutral-400 hover:text-red-500"
                     title="Delete"
                   >
                     <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

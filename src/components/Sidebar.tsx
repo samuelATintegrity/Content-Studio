@@ -54,7 +54,16 @@ function visibleContentTypes(language: Language, format: Format): ContentType[] 
   return allowed;
 }
 
-export function Sidebar() {
+// Sidebar is the persistent picker on desktop and a slide-out drawer on
+// mobile. The page passes drawerOpen + onClose so the parent can render
+// a backdrop behind it; on lg+ those props are ignored (desktop sidebar
+// is always visible inline).
+interface SidebarProps {
+  drawerOpen?: boolean;
+  onClose?: () => void;
+}
+
+export function Sidebar({ drawerOpen = false, onClose }: SidebarProps = {}) {
   const {
     format,
     language,
@@ -69,6 +78,17 @@ export function Sidebar() {
     setSelectedAvatarName,
     setSelectedMessageTheme,
   } = useBatchStore();
+
+  // Esc closes the mobile drawer. No-op on desktop since onClose is a
+  // no-op prop.
+  useEffect(() => {
+    if (!drawerOpen || !onClose) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose?.();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [drawerOpen, onClose]);
 
   // If the user's current content type becomes invisible after a language
   // or format swap (e.g. switching to video when zero_down_generic was
@@ -85,18 +105,45 @@ export function Sidebar() {
   const aspectBadge = format === "video" ? "9:16" : "4:5";
 
   return (
-    <aside className="w-80 shrink-0 border-r border-neutral-200 dark:border-neutral-900 bg-white dark:bg-neutral-950 px-7 py-8 flex flex-col gap-8 h-screen overflow-y-auto">
-      <header className="flex items-baseline justify-between">
-        <div>
-          <h1 className="text-[15px] font-semibold tracking-tight">Content Studio</h1>
-          <p className="text-[11px] text-neutral-500 mt-0.5">
-            Real estate · {format === "video" ? "short-form video" : "static posts"}
-          </p>
-        </div>
-        <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-400 dark:text-neutral-600 font-semibold">
-          {aspectBadge}
-        </span>
-      </header>
+    <>
+      {/* Backdrop — only on mobile when the drawer is open. Tap to close. */}
+      {drawerOpen && (
+        <div
+          className="fixed inset-0 z-30 bg-black/50 lg:hidden"
+          onClick={onClose}
+          aria-hidden="true"
+        />
+      )}
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 w-80 shrink-0 border-r border-neutral-200 dark:border-neutral-900 bg-white dark:bg-neutral-950 px-7 py-8 flex flex-col gap-8 h-screen overflow-y-auto transform transition-transform duration-200 lg:relative lg:translate-x-0 ${
+          drawerOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+        }`}
+        aria-hidden={!drawerOpen ? undefined : false}
+      >
+        <header className="flex items-baseline justify-between gap-3">
+          <div>
+            <h1 className="text-[15px] font-semibold tracking-tight">Content Studio</h1>
+            <p className="text-[11px] text-neutral-500 mt-0.5">
+              Real estate · {format === "video" ? "short-form video" : "static posts"}
+            </p>
+          </div>
+          <span className="text-[10px] uppercase tracking-[0.16em] text-neutral-400 dark:text-neutral-600 font-semibold">
+            {aspectBadge}
+          </span>
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close menu"
+              className="lg:hidden -mr-2 p-2 rounded-xl text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100 hover:bg-neutral-100 dark:hover:bg-neutral-900 transition"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18" />
+                <line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          )}
+        </header>
 
       <div className="h-px bg-neutral-100 dark:bg-neutral-900" />
 
@@ -186,7 +233,8 @@ export function Sidebar() {
           </div>
         </Section>
       )}
-    </aside>
+      </aside>
+    </>
   );
 }
 
@@ -300,7 +348,7 @@ function SavedSetsSection() {
             </button>
             <button
               onClick={() => onDelete(set)}
-              className="opacity-0 group-hover:opacity-100 transition text-neutral-400 hover:text-red-500"
+              className="opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition text-neutral-400 hover:text-red-500"
               title="Delete"
             >
               <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -362,7 +410,7 @@ function Pill({
   align?: "left" | "center";
   onClick?: () => void;
 }) {
-  const base = `w-full px-3.5 py-2.5 rounded-2xl text-[13px] border transition leading-snug ${
+  const base = `w-full px-3.5 py-3 lg:py-2.5 rounded-2xl text-[13px] border transition leading-snug ${
     align === "left" ? "text-left" : "text-center"
   }`;
   const variant = selected

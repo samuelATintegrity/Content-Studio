@@ -68,12 +68,22 @@ export function VideoCard({ post }: { post: VideoPost }) {
           {post.caption}
         </p>
         {!isWorking && (
-          <button
-            onClick={copyCaption}
-            className="absolute inset-0 m-3 rounded-2xl bg-neutral-900/85 dark:bg-white/85 backdrop-blur-sm text-white dark:text-neutral-900 text-xs font-semibold tracking-tight opacity-0 group-hover/caption:opacity-100 transition flex items-center justify-center"
-          >
-            {captionCopied ? "Copied" : "Copy caption"}
-          </button>
+          <>
+            {/* Desktop: full overlay revealed on hover. */}
+            <button
+              onClick={copyCaption}
+              className="hidden lg:flex absolute inset-0 m-3 rounded-2xl bg-neutral-900/85 dark:bg-white/85 backdrop-blur-sm text-white dark:text-neutral-900 text-xs font-semibold tracking-tight opacity-0 group-hover/caption:opacity-100 transition items-center justify-center"
+            >
+              {captionCopied ? "Copied" : "Copy caption"}
+            </button>
+            {/* Mobile: small persistent corner button so the caption stays readable. */}
+            <button
+              onClick={copyCaption}
+              className="lg:hidden absolute top-2 right-2 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-neutral-900/85 dark:bg-white/85 backdrop-blur-sm text-white dark:text-neutral-900"
+            >
+              {captionCopied ? "Copied" : "Copy"}
+            </button>
+          </>
         )}
       </div>
     </div>
@@ -120,7 +130,7 @@ function ReadyVideo({
         playsInline
         className="absolute inset-0 w-full h-full object-cover"
       />
-      <div className="absolute top-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition pointer-events-none group-hover:pointer-events-auto">
+      <div className="absolute top-3 right-3 flex gap-2 opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition pointer-events-auto lg:pointer-events-none lg:group-hover:pointer-events-auto">
         <a
           href={url}
           download

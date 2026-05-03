@@ -118,7 +118,7 @@ export function GenerateFAB() {
     <button
       onClick={onClick}
       disabled={disabled}
-      className="fixed bottom-6 right-6 z-30 px-6 py-3.5 rounded-full bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-900 text-sm font-semibold tracking-tight shadow-[0_8px_24px_-6px_rgba(0,0,0,0.35)] hover:shadow-[0_12px_32px_-8px_rgba(0,0,0,0.45)] transition disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2.5"
+      className="fixed right-6 z-30 px-6 py-3.5 rounded-full bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-900 text-sm font-semibold tracking-tight shadow-[0_8px_24px_-6px_rgba(0,0,0,0.35)] hover:shadow-[0_12px_32px_-8px_rgba(0,0,0,0.45)] transition disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2.5 bottom-[max(1.5rem,env(safe-area-inset-bottom))]"
     >
       {loading ? (
         <>

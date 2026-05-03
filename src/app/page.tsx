@@ -1,11 +1,13 @@
 "use client";
 
+import { useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { PostCard } from "@/components/PostCard";
 import { VideoCard } from "@/components/VideoCard";
 import { ImageSetPanel } from "@/components/ImageSetPanel";
 import { GenerateFAB } from "@/components/GenerateFAB";
 import { ClipLibraryGrid } from "@/components/ClipLibraryGrid";
+import { MobileHeader } from "@/components/MobileHeader";
 import { useBatchStore } from "@/store/batchStore";
 
 export default function Home() {
@@ -16,39 +18,45 @@ export default function Home() {
   const hasVideoPosts = videoPosts.length > 0;
   const showStaticEmpty = !isVideo && !hasStaticPosts && !loading;
   const showVideoEmpty = isVideo && !hasImageSet && !loading;
+  // Mobile drawer state — desktop ignores this entirely (Sidebar uses
+  // lg:translate-x-0 to stay pinned regardless).
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   return (
     <div className="flex h-screen w-full bg-neutral-100 dark:bg-black text-neutral-900 dark:text-neutral-100">
-      <Sidebar />
-      <main className="flex-1 overflow-y-auto">
-        <div className="px-8 py-9 pb-28 max-w-[1900px] mx-auto">
-          {error && (
-            <div className="mb-6 px-4 py-3.5 rounded-2xl bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 text-sm font-medium tracking-tight">
-              {error}
-            </div>
-          )}
-          {showStaticEmpty && <EmptyState video={false} />}
-          {showVideoEmpty && <EmptyState video={true} />}
-          {loading && !hasStaticPosts && !hasImageSet && <LoadingState video={isVideo} />}
+      <Sidebar drawerOpen={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <MobileHeader onMenuClick={() => setDrawerOpen(true)} />
+        <main className="flex-1 overflow-y-auto">
+          <div className="px-4 sm:px-8 py-6 sm:py-9 pb-28 max-w-[1900px] mx-auto">
+            {error && (
+              <div className="mb-6 px-4 py-3.5 rounded-2xl bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 text-sm font-medium tracking-tight">
+                {error}
+              </div>
+            )}
+            {showStaticEmpty && <EmptyState video={false} />}
+            {showVideoEmpty && <EmptyState video={true} />}
+            {loading && !hasStaticPosts && !hasImageSet && <LoadingState video={isVideo} />}
 
-          {!isVideo && hasStaticPosts && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6 auto-rows-fr">
-              {posts.map((p) => (
-                <PostCard key={p.id} post={p} />
-              ))}
-            </div>
-          )}
+            {!isVideo && hasStaticPosts && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6 auto-rows-fr">
+                {posts.map((p) => (
+                  <PostCard key={p.id} post={p} />
+                ))}
+              </div>
+            )}
 
-          {isVideo && hasImageSet && <ImageSetPanel />}
-          {isVideo && hasVideoPosts && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-6 auto-rows-fr">
-              {videoPosts.map((v) => (
-                <VideoCard key={v.id} post={v} />
-              ))}
-            </div>
-          )}
-        </div>
-      </main>
+            {isVideo && hasImageSet && <ImageSetPanel />}
+            {isVideo && hasVideoPosts && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-3 gap-6 auto-rows-fr">
+                {videoPosts.map((v) => (
+                  <VideoCard key={v.id} post={v} />
+                ))}
+              </div>
+            )}
+          </div>
+        </main>
+      </div>
       <GenerateFAB />
     </div>
   );
