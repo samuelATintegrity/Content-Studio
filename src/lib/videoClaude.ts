@@ -24,8 +24,8 @@ NARRATION-VIDEO RULES (this is for a 9:16 short-form video with voiceover narrat
 - PERSPECTIVE — IMPORTANT: the narrator is a third-party endorser, NOT an Agent Match employee. Refer to Agent Match in the THIRD person — say "they", "their team", "Agent Match". NEVER say "we", "us", or "our team". This OVERRIDES the system prompt's "we / our team" guidance.
 - Voice: conversational AND energetic, second person to the viewer ("you", "your"), warm and excited like you're telling a friend about something genuinely good. Read aloud by an AI voice. Use contractions ("it's", "they'll", "you're"). Short, punchy sentences — not long lecture-y ones.
 - STRUCTURE: every script MUST be hook + body + closer, in one continuous narration.
-- The script MUST open with the theme's HOOK (see below) — minor word variation OK, but the framing and intent stay.
-- The script MUST end with the theme's CLOSER (see below) — minor word variation OK. Don't add anything after the closer.
+- The HOOK opens the script. Write a fresh one for every script — see the hook examples below for tone + intent, but vary the wording across the 3 scripts in the batch (don't reuse the same opening sentence twice). Every hook must mention "Agent Match" by name in the first sentence or two.
+- The CLOSER ends the script. Write a fresh one for every script — see the closer examples below for tone + intent, but vary across the 3 scripts. Every closer must end on a CTA pointing the viewer to click the link / get connected / get matched. Don't add anything after the closer.
 - The BODY between hook and closer is 1–3 short sentences delivering the angle's specific value prop. Third-person endorser tone ("here's what I love about Agent Match", "what's cool about them is", "here's something most people don't realize", etc.). Don't pad. Punchy is better.
 - Target 70–95 words for the full script (≈ 22–30 seconds at a normal speaking pace).
 - DECLARATIVE TONE: end every sentence with a period or exclamation mark — NEVER a question mark. The TTS engine drifts into rising question intonation on short imperatives, so keep clauses confident and grounded.
@@ -39,19 +39,41 @@ NARRATION-VIDEO RULES (this is for a 9:16 short-form video with voiceover narrat
 - The "body" field is the IG caption body text (3-5 sentences + 3-5 hashtags), exactly as for static posts. Hashtags on a NEW line at the end. Do not repeat the script verbatim in the caption — the caption complements the video, it doesn't transcribe it.
 `.trim();
 
-// Per-theme hook + closer for narration. The narrator MUST open with
-// (a minor variation of) the hook and end with (a minor variation of)
-// the closer. These are the lines the user shipped after vetting them
-// against real renders, so we hand-feed them rather than letting Claude
-// invent variants from scratch.
-const NARRATION_BOOKENDS: Record<MessageTheme, { hook: string; closer: string }> = {
+// Per-theme hook + closer EXAMPLES for narration. Unlike the influencer
+// flow (which has a recorded face on camera), narration mode has no
+// hard-coded bookends — Claude writes its own hook and closer for each
+// script. These pools exist purely to anchor tone + intent. The prompt
+// asks Claude to vary openers and closers across the 3 scripts in a
+// batch so the user doesn't get three videos with identical first
+// sentences.
+interface BookendExamples {
+  hooks: string[];
+  closers: string[];
+}
+const NARRATION_BOOKEND_EXAMPLES: Record<MessageTheme, BookendExamples> = {
   agent_match: {
-    hook: "If you're looking to buy a home, you've gotta check out Agent Match.",
-    closer: "So if you're looking to buy and don't know where to start, click on the link and get connected. Today.",
+    hooks: [
+      "If you're looking to buy a home, you've gotta check out Agent Match.",
+      "Buying a home soon? Then you need to know about Agent Match.",
+      "Finding the right real estate agent is half the battle. That's where Agent Match comes in.",
+    ],
+    closers: [
+      "So if you're looking to buy and don't know where to start, click on the link and get connected. Today.",
+      "If this is the year you finally buy, click the link and let Agent Match find your team.",
+      "Stop guessing on agents. Click the link below and let Agent Match do the work.",
+    ],
   },
   dpa: {
-    hook: "If you're looking to buy a home but need help with the down payment, then you've gotta start with Agent Match.",
-    closer: "So if you're ready to see your options, click the link and get connected. Today.",
+    hooks: [
+      "If you're looking to buy a home but need help with the down payment, then you've gotta start with Agent Match.",
+      "Buying a home with little or no money down is real. Here's where you start. Agent Match.",
+      "Down payment got you stuck? Agent Match is the move.",
+    ],
+    closers: [
+      "So if you're ready to see your options, click the link and get connected. Today.",
+      "Don't waste another week calling the wrong people. Click the link and get matched today.",
+      "Click the link below and let Agent Match find you the right team for your situation.",
+    ],
   },
 };
 
@@ -128,6 +150,22 @@ function captionContentTypeFor(theme: MessageTheme): ContentType {
   return theme === "dpa" ? "edu_dpa_local" : "good_agents";
 }
 
+// Render the hook + closer guidance block for narration prompts. Each
+// theme has a small example pool; we surface them as references and
+// explicitly tell Claude to write a fresh hook + closer per script and
+// vary across the 3 scripts in the batch (so the user doesn't see three
+// videos open and close with identical sentences).
+function buildBookendGuidance(theme: MessageTheme): string {
+  const examples = NARRATION_BOOKEND_EXAMPLES[theme];
+  const hookExamples = examples.hooks.map((h) => `  • "${h}"`).join("\n");
+  const closerExamples = examples.closers.map((c) => `  • "${c}"`).join("\n");
+  return `HOOK GUIDANCE (write a fresh opener for each script — DO NOT copy these verbatim, vary the wording across the 3 scripts in this batch). Every hook MUST mention "Agent Match" by name in the first sentence or two:
+${hookExamples}
+
+CLOSER GUIDANCE (write a fresh closer for each script — DO NOT copy these verbatim, vary across the 3 scripts). Every closer MUST end on a CTA telling the viewer to click the link and get connected / get matched:
+${closerExamples}`;
+}
+
 function buildAgentMatchNarrationUserPrompt(
   language: Language,
   angleKeys: string[],
@@ -142,21 +180,15 @@ function buildAgentMatchNarrationUserPrompt(
     ? `\n\nREFERENCE DOCUMENT (rephrase ideas naturally, never copy verbatim, never invent claims beyond this — "top 10%" and "4.8 stars or higher" are the only quantitative claims allowed):\n${spec.referenceDocument}\n`
     : "";
 
-  const { hook, closer } = NARRATION_BOOKENDS.agent_match;
-
   return `Language: ${LANGUAGE_LABELS[language]}
 Topic: ${spec.topic}
 Guardrails: ${spec.guardrails}${refDocSection}
 
-THEME-SPECIFIC HOOK (open with a close variation of this exact line):
-"${hook}"
-
-THEME-SPECIFIC CLOSER (end with a close variation of this exact line):
-"${closer}"
+${buildBookendGuidance("agent_match")}
 
 ${NARRATION_VOICE_RULES}
 
-Produce one full narration script for each of these angles. Each script must include the hook + a body that lands on this angle + the closer. Preserve the angle key:
+Produce one full narration script for each of these angles. Each script must follow the hook + body + closer structure. The body lands on the angle's specific value-prop point; the hook + closer are yours to write fresh. Preserve the angle key:
 ${angleList}
 
 Return your results by calling the video_results tool.`;
@@ -167,8 +199,6 @@ function buildDpaNarrationUserPrompt(language: Language): string {
     (a, i) => `${i + 1}. angle="${a.key}"\n   brief: ${a.brief}`,
   ).join("\n");
 
-  const { hook, closer } = NARRATION_BOOKENDS.dpa;
-
   return `Language: ${LANGUAGE_LABELS[language]}
 Topic: $0-down / down-payment-assistance education — the narrator is recommending Agent Match to buyers who need help with the down payment because Agent Match's network specializes in these programs.
 Guardrails: Stay generic on program mechanics. Names of program categories ($0-down USDA, VA, DPA, local-bank zero-down) are fine; specific dollar amounts, percentages, timelines, or step-by-step processes are NOT. Always hand off to a specialist.
@@ -176,15 +206,11 @@ Guardrails: Stay generic on program mechanics. Names of program categories ($0-d
 REFERENCE (paraphrase the spirit, never copy verbatim, never invent claims beyond this):
 ${DPA_REFERENCE_TEMPLATE}
 
-THEME-SPECIFIC HOOK (open with a close variation of this exact line):
-"${hook}"
-
-THEME-SPECIFIC CLOSER (end with a close variation of this exact line):
-"${closer}"
+${buildBookendGuidance("dpa")}
 
 ${NARRATION_VOICE_RULES}
 
-Produce one full narration script for each of these angles. Each script must include the hook + a body that lands on this angle + the closer. Preserve the angle key:
+Produce one full narration script for each of these angles. Each script must follow the hook + body + closer structure. The body lands on the angle's specific value-prop point; the hook + closer are yours to write fresh. Preserve the angle key:
 ${angleList}
 
 Return your results by calling the video_results tool.`;
