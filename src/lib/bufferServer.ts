@@ -75,18 +75,25 @@ export async function listBufferProfiles(): Promise<BufferProfile[]> {
   return (await res.json()) as BufferProfile[];
 }
 
-// Create a Buffer "update" (queued post) on one or more profiles. Buffer
-// stages the post in the user's drafts/queue per-profile; the user opens
-// Buffer to schedule + publish. Video URL must be publicly accessible
-// (R2 URLs work). Throws on Buffer-side error.
+// Schedule mode for Buffer updates:
+//   "now"       → post immediately
+//   "queue"     → add to the top of each profile's auto-queue (next slot)
+//   "scheduled" → custom timestamp (scheduledAt, unix seconds)
+//   "draft"     → land in the user's drafts (default; user schedules later)
+export type BufferScheduleMode = "now" | "queue" | "scheduled" | "draft";
+
+// Create a Buffer "update" (queued post) on one or more profiles. Video
+// URL must be publicly accessible (R2 URLs work). Throws on Buffer-side
+// error. Schedule semantics handled via Buffer's `now` / `top` /
+// `scheduled_at` form fields per the API spec.
 export async function createBufferUpdate(args: {
   profileIds: string[];
   text: string;
   videoUrl: string;
   thumbnailUrl?: string;
-  // When true, post is added to the queue at Buffer's next available slot.
-  // Default: false → post stays in drafts so the user must schedule + send.
-  shareNow?: boolean;
+  scheduleMode?: BufferScheduleMode;
+  // Required when scheduleMode === "scheduled". Unix seconds (UTC).
+  scheduledAtSec?: number;
 }): Promise<{ updateIds: string[] }> {
   if (args.profileIds.length === 0) {
     throw new Error("createBufferUpdate: at least one profileId required");
@@ -99,9 +106,19 @@ export async function createBufferUpdate(args: {
   form.append("media[video]", args.videoUrl);
   if (args.thumbnailUrl) form.append("media[thumbnail]", args.thumbnailUrl);
   form.append("media[link]", args.videoUrl);
-  if (args.shareNow) form.append("now", "true");
-  // Otherwise the post lands in the "drafts" tab; the user reviews + schedules
-  // in Buffer's UI.
+
+  const mode = args.scheduleMode ?? "draft";
+  if (mode === "now") {
+    form.append("now", "true");
+  } else if (mode === "queue") {
+    form.append("top", "true");
+  } else if (mode === "scheduled") {
+    if (!args.scheduledAtSec || !Number.isFinite(args.scheduledAtSec)) {
+      throw new Error("scheduledAtSec required when scheduleMode === 'scheduled'");
+    }
+    form.append("scheduled_at", String(Math.floor(args.scheduledAtSec)));
+  }
+  // mode === "draft": no extra fields → Buffer stages it in drafts.
 
   const res = await fetch(
     `${BUFFER_API_BASE}/updates/create.json?access_token=${encodeURIComponent(token)}`,
@@ -124,4 +141,98 @@ export async function createBufferUpdate(args: {
     throw new Error(json.message ?? "Buffer returned an unsuccessful response");
   }
   return { updateIds: json.updates.map((u) => u.id) };
+}
+
+// A pending (scheduled or queued) Buffer update enriched with the
+// profile's display info so the UI can render "X · facebook · @page-name"
+// without a second round-trip.
+export interface PendingBufferUpdate {
+  id: string;
+  text: string;
+  scheduledAtSec: number | null;
+  status: string;
+  service: string;            // facebook | instagram | tiktok
+  profileId: string;
+  profileUsername?: string;
+  videoThumbnailUrl?: string;
+}
+
+// List every pending update across the configured profile IDs. Buffer's
+// /profiles/:id/updates/pending.json is per-profile, so we fan out and
+// merge. Empty profileIds returns an empty list (callers should pass the
+// flattened map).
+export async function listPendingUpdates(profileIds: string[]): Promise<PendingBufferUpdate[]> {
+  if (profileIds.length === 0) return [];
+  const token = getBufferAccessToken();
+  const profiles = await listBufferProfiles().catch(() => [] as BufferProfile[]);
+  const usernameById = new Map(profiles.map((p) => [p.id, p.formatted_username ?? p.service_username] as const));
+  const serviceById = new Map(profiles.map((p) => [p.id, p.service] as const));
+
+  const tasks = profileIds.map(async (pid) => {
+    const url = `${BUFFER_API_BASE}/profiles/${encodeURIComponent(pid)}/updates/pending.json?access_token=${encodeURIComponent(token)}&count=50`;
+    const res = await fetch(url, { method: "GET", cache: "no-store" });
+    if (!res.ok) return [] as PendingBufferUpdate[];
+    const json = (await res.json()) as {
+      updates?: Array<{
+        id: string;
+        text?: string;
+        scheduled_at?: number | null;
+        status?: string;
+        media?: { thumbnail?: string };
+      }>;
+    };
+    const updates = Array.isArray(json.updates) ? json.updates : [];
+    return updates.map<PendingBufferUpdate>((u) => ({
+      id: u.id,
+      text: u.text ?? "",
+      scheduledAtSec: typeof u.scheduled_at === "number" ? u.scheduled_at : null,
+      status: u.status ?? "buffer",
+      service: serviceById.get(pid) ?? "",
+      profileId: pid,
+      profileUsername: usernameById.get(pid),
+      videoThumbnailUrl: u.media?.thumbnail,
+    }));
+  });
+
+  const results = await Promise.all(tasks);
+  const flat = results.flat();
+  // Surface earliest-scheduled first; queued (no scheduled_at) drops to end.
+  flat.sort((a, b) => {
+    const aT = a.scheduledAtSec ?? Number.POSITIVE_INFINITY;
+    const bT = b.scheduledAtSec ?? Number.POSITIVE_INFINITY;
+    return aT - bT;
+  });
+  return flat;
+}
+
+// Delete a scheduled / queued / draft Buffer update by its id.
+export async function destroyBufferUpdate(updateId: string): Promise<void> {
+  const token = getBufferAccessToken();
+  const res = await fetch(
+    `${BUFFER_API_BASE}/updates/${encodeURIComponent(updateId)}/destroy.json?access_token=${encodeURIComponent(token)}`,
+    { method: "POST" },
+  );
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Buffer destroy failed (${res.status}): ${text.slice(0, 300)}`);
+  }
+  const json = (await res.json()) as { success?: boolean; message?: string };
+  if (!json.success) {
+    throw new Error(json.message ?? "Buffer destroy returned unsuccessful");
+  }
+}
+
+// Flatten the language→platform map into a list of all profile IDs the
+// user has wired up. Used by the pending-updates fanout.
+export function allMappedProfileIds(map: BufferProfileMap): string[] {
+  const ids: string[] = [];
+  for (const lang of Object.keys(map)) {
+    const entry = map[lang];
+    if (!entry) continue;
+    for (const platform of Object.keys(entry) as SocialPlatform[]) {
+      const id = entry[platform];
+      if (id) ids.push(id);
+    }
+  }
+  return Array.from(new Set(ids));
 }

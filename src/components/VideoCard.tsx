@@ -1,36 +1,18 @@
 "use client";
 
 import { useState } from "react";
-import type { Language, VideoJobState, VideoPost } from "@/lib/types";
+import type { VideoJobState, VideoPost } from "@/lib/types";
 import { useVideoPolling } from "@/lib/useVideoPolling";
 import { regenerateOneVideo } from "@/lib/generateVideo";
+import { BufferSendModal } from "./BufferSendModal";
 
-type BufferState =
+type SocialPlatform = "facebook" | "instagram" | "tiktok";
+type ScheduleMode = "now" | "queue" | "scheduled" | "draft";
+
+// Last-action confirmation shown on the card after the send modal closes.
+type BufferReceipt =
   | { kind: "idle" }
-  | { kind: "sending" }
-  | { kind: "queued"; platforms: string[] }
-  | { kind: "error"; message: string };
-
-async function sendToBuffer(args: {
-  language: Language;
-  videoUrl: string;
-  caption: string;
-}): Promise<{ platforms: string[] }> {
-  const res = await fetch("/api/social/buffer/queue", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(args),
-  });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(json.error ?? `Buffer queue failed (${res.status})`);
-  }
-  const queued = Array.isArray(json.queued) ? json.queued : [];
-  const platforms = queued.map(
-    (q: { platform: string }) => q.platform,
-  );
-  return { platforms };
-}
+  | { kind: "queued"; platforms: SocialPlatform[]; mode: ScheduleMode };
 
 const STAGE_LABELS: Record<VideoJobState, string> = {
   waiting_images: "Waiting for image set",
@@ -49,7 +31,8 @@ export function VideoCard({ post }: { post: VideoPost }) {
 
   const [captionCopied, setCaptionCopied] = useState(false);
   const [regenBusy, setRegenBusy] = useState(false);
-  const [bufferState, setBufferState] = useState<BufferState>({ kind: "idle" });
+  const [sendOpen, setSendOpen] = useState(false);
+  const [receipt, setReceipt] = useState<BufferReceipt>({ kind: "idle" });
 
   const isWorking =
     post.state === "waiting_images" ||
@@ -79,29 +62,8 @@ export function VideoCard({ post }: { post: VideoPost }) {
     }
   }
 
-  const canSendToBuffer =
-    post.state === "ready" &&
-    !!post.videoUrl &&
-    !!post.language &&
-    bufferState.kind !== "sending";
-
-  async function onSendToBuffer() {
-    if (!canSendToBuffer || !post.videoUrl || !post.language) return;
-    setBufferState({ kind: "sending" });
-    try {
-      const { platforms } = await sendToBuffer({
-        language: post.language,
-        videoUrl: post.videoUrl,
-        caption: post.caption,
-      });
-      setBufferState({ kind: "queued", platforms });
-    } catch (err) {
-      setBufferState({
-        kind: "error",
-        message: err instanceof Error ? err.message : "Buffer send failed",
-      });
-    }
-  }
+  const canOpenSend =
+    post.state === "ready" && !!post.videoUrl && !!post.language;
 
   return (
     <div className="rounded-3xl overflow-hidden border bg-white dark:bg-neutral-950 border-neutral-200 dark:border-neutral-900 shadow-[0_2px_8px_-3px_rgba(0,0,0,0.08)] flex flex-col">
@@ -141,56 +103,69 @@ export function VideoCard({ post }: { post: VideoPost }) {
 
       {post.state === "ready" && post.videoUrl && (
         <BufferAction
-          state={bufferState}
-          canSend={canSendToBuffer}
+          receipt={receipt}
+          canOpen={canOpenSend}
           hasLanguage={!!post.language}
-          onSend={onSendToBuffer}
-          onRetry={() => setBufferState({ kind: "idle" })}
+          onOpen={() => setSendOpen(true)}
+        />
+      )}
+
+      {sendOpen && post.videoUrl && post.language && (
+        <BufferSendModal
+          language={post.language}
+          videoUrl={post.videoUrl}
+          caption={post.caption}
+          onClose={() => setSendOpen(false)}
+          onSuccess={(queued, mode) =>
+            setReceipt({
+              kind: "queued",
+              platforms: queued.map((q) => q.platform),
+              mode,
+            })
+          }
         />
       )}
     </div>
   );
 }
 
+function modeLabel(mode: ScheduleMode): string {
+  switch (mode) {
+    case "now":       return "Posting now";
+    case "queue":     return "Queued (next slot)";
+    case "scheduled": return "Scheduled";
+    case "draft":     return "Saved as draft";
+  }
+}
+
 function BufferAction({
-  state,
-  canSend,
+  receipt,
+  canOpen,
   hasLanguage,
-  onSend,
-  onRetry,
+  onOpen,
 }: {
-  state: BufferState;
-  canSend: boolean;
+  receipt: BufferReceipt;
+  canOpen: boolean;
   hasLanguage: boolean;
-  onSend: () => void;
-  onRetry: () => void;
+  onOpen: () => void;
 }) {
-  if (state.kind === "queued") {
+  if (receipt.kind === "queued") {
     return (
-      <div className="px-4 pb-4">
+      <div className="px-4 pb-4 flex flex-col gap-2">
         <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-[12px] text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
           <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="20 6 9 17 4 12" />
           </svg>
           <span>
-            Queued in Buffer for {state.platforms.length === 0 ? "no channels (check map)" : state.platforms.join(" · ")}.
-            Open Buffer to schedule.
+            {modeLabel(receipt.mode)} on{" "}
+            {receipt.platforms.length === 0 ? "no channels" : receipt.platforms.join(" · ")}.
           </span>
         </div>
-      </div>
-    );
-  }
-  if (state.kind === "error") {
-    return (
-      <div className="px-4 pb-4 flex flex-col gap-2">
-        <div className="rounded-2xl border border-red-500/40 bg-red-500/10 px-4 py-3 text-[12px] text-red-700 dark:text-red-300 leading-snug">
-          {state.message}
-        </div>
         <button
-          onClick={onRetry}
+          onClick={onOpen}
           className="self-start text-[11px] font-semibold text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-neutral-100"
         >
-          Try again
+          Send again
         </button>
       </div>
     );
@@ -198,8 +173,8 @@ function BufferAction({
   return (
     <div className="px-4 pb-4">
       <button
-        onClick={onSend}
-        disabled={!canSend}
+        onClick={onOpen}
+        disabled={!canOpen}
         title={
           !hasLanguage
             ? "Older post — language wasn't recorded. Regenerate to enable Buffer send."
@@ -207,17 +182,7 @@ function BufferAction({
         }
         className="w-full px-4 py-2.5 rounded-2xl text-[12px] font-semibold border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 hover:bg-neutral-50 dark:hover:bg-neutral-900 text-neutral-900 dark:text-neutral-100 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
       >
-        {state.kind === "sending" ? (
-          <>
-            <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
-              <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2.5" opacity="0.25" />
-              <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
-            </svg>
-            <span>Queuing in Buffer…</span>
-          </>
-        ) : (
-          <span>Send to Buffer</span>
-        )}
+        Send to Buffer
       </button>
     </div>
   );
