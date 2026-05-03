@@ -162,6 +162,10 @@ export interface VideoPost {
   introClipUrl?: string;
   outroClipUrl?: string;
   messageTheme?: MessageTheme;
+  // Captured at render dispatch so the social-relay action knows which
+  // language's Buffer profiles (FB / IG / TikTok) to push to. Optional
+  // for backward compat with posts already in localStorage.
+  language?: Language;
 }
 
 // /api/video/start now only returns the 3 scripts. Render dispatch happens

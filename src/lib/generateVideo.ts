@@ -451,9 +451,11 @@ function maybeDispatchRenders(batchId: string): void {
     jobId: null,
     state: "waiting_images",
     progress: 0,
-    // Stamp the theme on each post so per-card regen stays in the same
-    // theme without round-tripping to the store.
+    // Stamp the theme + language on each post so per-card regen stays
+    // in the same theme and the social-relay action knows which Buffer
+    // profile set to target.
     messageTheme: p.messageTheme,
+    language: p.language,
   }));
   store.setVideoPosts(initial);
 
@@ -589,6 +591,7 @@ export async function renderWithPickedClips(clipUrls: string[]): Promise<void> {
     jobId: null,
     state: "waiting_images" as const,
     progress: 0,
+    language,
   }));
   setVideoPosts(placeholderPosts);
 
@@ -808,6 +811,7 @@ export async function generateInfluencerBatch(args: {
     introClipUrl: args.introClipUrl,
     outroClipUrl: args.outroClipUrl,
     messageTheme: args.messageTheme,
+    language,
   }));
   setVideoPosts(placeholderPosts);
   clearClipSelection();
