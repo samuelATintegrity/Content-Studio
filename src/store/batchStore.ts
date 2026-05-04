@@ -3,10 +3,12 @@
 import { create } from "zustand";
 import {
   DEFAULT_FORMAT,
+  DEFAULT_GRAPHIC_TEMPLATE,
   DEFAULT_MESSAGE_THEME,
   DEFAULT_STATIC_SUB_MODE,
   type ContentType,
   type Format,
+  type GraphicTemplate,
   type ImageSlot,
   type Language,
   type MessageTheme,
@@ -25,6 +27,10 @@ interface BatchState {
   // Static-format sub-mode: "photo" (Nano Banana + text bands) vs
   // "graphic" (hand-built SVG templates). Mirrors the video subMode.
   staticSubMode: StaticSubMode;
+  // Which template the entire graphic batch should use. Replaces the
+  // content-type picker in graphic mode — picking a template is the
+  // primary categorization knob there.
+  selectedGraphicTemplate: GraphicTemplate;
   posts: Post[];
   videoPosts: VideoPost[];
   imageSlots: ImageSlot[];
@@ -66,6 +72,7 @@ interface BatchState {
   clearClipSelection: () => void;
   setSubMode: (m: SubMode) => void;
   setStaticSubMode: (m: StaticSubMode) => void;
+  setSelectedGraphicTemplate: (t: GraphicTemplate) => void;
   setSelectedAvatarName: (name: string | null) => void;
   setSelectedIntroClipUrl: (url: string | null) => void;
   setSelectedOutroClipUrl: (url: string | null) => void;
@@ -86,6 +93,7 @@ export const useBatchStore = create<BatchState>((set) => ({
   selectedClipKeys: [],
   subMode: "narration",
   staticSubMode: DEFAULT_STATIC_SUB_MODE,
+  selectedGraphicTemplate: DEFAULT_GRAPHIC_TEMPLATE,
   selectedAvatarName: null,
   selectedIntroClipUrl: null,
   selectedOutroClipUrl: null,
@@ -173,6 +181,11 @@ export const useBatchStore = create<BatchState>((set) => ({
   // so leaving stale state across the swap creates rendering glitches.
   setStaticSubMode: (staticSubMode) =>
     set({ staticSubMode, posts: [] }),
+  // Picking a different graphic template clears the in-progress batch
+  // since posts are fully template-shaped — leaving stat-template posts
+  // visible after switching to did-you-know is misleading.
+  setSelectedGraphicTemplate: (selectedGraphicTemplate) =>
+    set({ selectedGraphicTemplate, posts: [] }),
   // Switching the avatar invalidates the intro/outro picks, since both are
   // filtered by avatar.
   setSelectedAvatarName: (name) =>

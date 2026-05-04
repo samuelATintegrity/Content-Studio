@@ -33,7 +33,14 @@ export type StaticSubMode = "photo" | "graphic";
 // from the same { headline, subline, cta } field shape.
 export type GraphicTemplate = "stat" | "did_you_know" | "promo";
 
+export const GRAPHIC_TEMPLATE_LABELS: Record<GraphicTemplate, string> = {
+  stat: "Statistic",
+  did_you_know: "Did you know",
+  promo: "Promo",
+};
+
 export const DEFAULT_STATIC_SUB_MODE: StaticSubMode = "photo";
+export const DEFAULT_GRAPHIC_TEMPLATE: GraphicTemplate = "stat";
 
 export const FORMAT_LABELS: Record<Format, string> = {
   static: "Static · 4:5",

@@ -229,36 +229,73 @@ const GRAPHIC_TOOL = {
   },
 };
 
-function buildGraphicUserPrompt(language: Language, contentType: ContentType): string {
-  const spec = CONTENT_TYPE_SPECS[contentType];
-  const baseAngles = spec.angles;
+// Each template draws angles from the content-type pool that best fits
+// its tone. Stat + Promo lean on the matching-mission angles (top 10%,
+// 4.8 stars, vetted agents) — those are the only documented quantitative
+// anchors. Did-you-know pulls from the educational pools (USDA + DPA)
+// because those have the mythbust briefs that fit the format.
+const TEMPLATE_CONTENT_TYPES: Record<GraphicTemplate, ContentType[]> = {
+  stat: ["good_agents"],
+  did_you_know: ["edu_zero_down_usda_local", "edu_dpa_local"],
+  promo: ["good_agents"],
+};
+
+const TEMPLATE_DESCRIPTIONS: Record<GraphicTemplate, string> = {
+  stat: 'a HUGE number/value as the headline ("Top 10%", "4.8 Stars", etc.), with a short context line. Use ONLY documented numeric anchors — top 10% and 4.8 stars or higher are explicitly allowed; never invent percentages, dollar amounts, or counts.',
+  did_you_know: 'a mythbust / fact card. Headline is a punchy statement or hook (the eyebrow "Did you know?" is rendered automatically by the template, so the headline is the actual claim, e.g., "USDA isn\'t just for farms."). Subline is a single-sentence elaboration.',
+  promo: 'pure brand awareness. Headline is the brand tagline ("Find the right agent. Skip the guessing."), subline is the value-prop tail ("Vetted agents matched to your situation"). No specific topic anchoring required.',
+};
+
+function buildGraphicUserPrompt(language: Language, template: GraphicTemplate): string {
+  const sourceTypes = TEMPLATE_CONTENT_TYPES[template];
+  // Flatten the angle pools across the source content types, dedupe by
+  // key. Cycle to GRAPHIC_BATCH_POSTS so we always get exactly that many.
+  const seenKeys = new Set<string>();
+  const flatAngles: { key: string; brief: string; sourceType: ContentType }[] = [];
+  for (const ct of sourceTypes) {
+    const spec = CONTENT_TYPE_SPECS[ct];
+    for (const a of spec.angles) {
+      if (seenKeys.has(a.key)) continue;
+      seenKeys.add(a.key);
+      flatAngles.push({ key: a.key, brief: a.brief, sourceType: ct });
+    }
+  }
   const angles =
-    baseAngles.length === 0
+    flatAngles.length === 0
       ? []
-      : Array.from({ length: GRAPHIC_BATCH_POSTS }, (_, i) => baseAngles[i % baseAngles.length]);
+      : Array.from({ length: GRAPHIC_BATCH_POSTS }, (_, i) => flatAngles[i % flatAngles.length]);
 
   const angleList = angles
-    .map(
-      (a, i) =>
-        `${i + 1}. angle="${a.key}"\n   brief: ${a.brief}`,
-    )
+    .map((a, i) => `${i + 1}. angle="${a.key}"\n   brief: ${a.brief}`)
     .join("\n");
 
-  const refDocSection = spec.referenceDocument
-    ? `\n\nREFERENCE DOCUMENT (this is the source of truth for any specific claims; rephrase ideas naturally, do NOT copy verbatim, do NOT invent numbers or claims beyond what's here):\n${spec.referenceDocument}\n`
+  // Pull reference docs from any source content type that has one.
+  const refDocs = sourceTypes
+    .map((ct) => CONTENT_TYPE_SPECS[ct].referenceDocument)
+    .filter((d): d is string => Boolean(d));
+  const refDocSection = refDocs.length
+    ? `\n\nREFERENCE DOCUMENT(S) (these are the source of truth for any specific claims; rephrase ideas naturally, do NOT copy verbatim, do NOT invent numbers or claims beyond what's here):\n${refDocs.join("\n\n---\n\n")}\n`
     : "";
 
+  // Topic line summarises every source content type's topic, so Claude
+  // knows the surface area it can pull from.
+  const topicLine = sourceTypes
+    .map((ct) => CONTENT_TYPE_SPECS[ct].topic)
+    .join(" + ");
+  const guardrailLine = sourceTypes
+    .map((ct) => CONTENT_TYPE_SPECS[ct].guardrails)
+    .join(" Also: ");
+
   return `Language: ${LANGUAGE_LABELS[language]}
-Topic: ${spec.topic}
-Guardrails: ${spec.guardrails}${refDocSection}
+Topic: ${topicLine}
+Guardrails: ${guardrailLine}${refDocSection}
 
-These posts will render as DESIGNED GRAPHICS (not photos). Each post is a single 4:5 image with a designed layout — big headline, short subline, a CTA — no photography. The user picks one of three templates per post:
+Every post in this batch uses the SAME hand-built SVG template:
+**${template}** — ${TEMPLATE_DESCRIPTIONS[template]}
 
-- "stat": a HUGE number / value as the headline, with a short context line. Pick this when the angle's brief lends itself to a quantitative anchor (top 10%, 4.8 stars, $0 down, etc.). Don't invent stats — only use what's in the reference document or the topic guardrails.
-- "did_you_know": a mythbust / fact card. Headline is a short hook (often "Did you know?" or a punchy statement), subline is a single-sentence elaboration. Pick this for educational angles.
-- "promo": pure brand awareness. Headline is the tagline, subline is the value-prop tail. Use sparingly — at most 1-2 of the ${GRAPHIC_BATCH_POSTS} posts. Don't repeat the same tagline across the batch.
+The user has already picked this template at the UI level — set every post's "template" field to exactly "${template}". No mixing.
 
-Across the batch, mix templates so the user gets variety. Default to "stat" or "did_you_know" — promo is filler.
+Each post is a single 4:5 image with the template's designed layout — big headline, short subline, a CTA — no photography.
 
 Produce one post for each of these angles, preserving the angle key:
 ${angleList}
@@ -280,8 +317,13 @@ function extractGraphicToolPosts(resp: Anthropic.Messages.Message): RawGraphicPo
 
 export async function generateGraphicBatch(
   language: Language,
-  contentType: ContentType,
+  template: GraphicTemplate,
 ): Promise<GenerateBatchResponse> {
+  // The IG caption builder needs SOME content type for URL + form-line
+  // + hashtag selection. Pick the first source content type for the
+  // template — gives consistent, on-brand copy framing per template.
+  const captionContentType = TEMPLATE_CONTENT_TYPES[template][0];
+
   try {
     const resp = await client().messages.create({
       model: MODEL,
@@ -295,13 +337,17 @@ export async function generateGraphicBatch(
       ],
       tools: [GRAPHIC_TOOL],
       tool_choice: { type: "tool", name: GRAPHIC_TOOL.name },
-      messages: [{ role: "user", content: buildGraphicUserPrompt(language, contentType) }],
+      messages: [{ role: "user", content: buildGraphicUserPrompt(language, template) }],
     });
 
     const raw = extractGraphicToolPosts(resp);
     const posts = raw.map((p) => {
       const headline = stripDashes(p.headline).trim();
       const subline = stripDashes(p.subline).trim();
+      // Force every post to honor the user's selected template — the
+      // prompt asks Claude for this but we belt-and-suspenders it here
+      // since the template field is what the SVG renderer branches on.
+      const finalTemplate = template;
       return {
         angle: p.angle,
         // Top-band-style headline + cta echoed at the top level so any
@@ -310,9 +356,9 @@ export async function generateGraphicBatch(
         // graphic.* for the actual SVG layout.
         headline,
         cta: CTA_TEXT[language],
-        caption: buildCaption(language, contentType, p.body),
+        caption: buildCaption(language, captionContentType, p.body),
         graphic: {
-          template: p.template,
+          template: finalTemplate,
           headline,
           subline,
           cta: CTA_TEXT[language],

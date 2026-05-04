@@ -1,13 +1,16 @@
 import { NextResponse } from "next/server";
 import { generateBatch, generateGraphicBatch, regenerateOne } from "@/lib/claude";
-import type { BatchRequest } from "@/lib/types";
+import type { BatchRequest, GraphicTemplate } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function POST(req: Request) {
   try {
-    const body = (await req.json()) as BatchRequest & { angleKey?: string };
+    const body = (await req.json()) as BatchRequest & {
+      angleKey?: string;
+      graphicTemplate?: GraphicTemplate;
+    };
     if (!body.language || !body.contentType) {
       return NextResponse.json({ error: "language and contentType are required" }, { status: 400 });
     }
@@ -19,7 +22,7 @@ export async function POST(req: Request) {
     }
     const result =
       body.staticSubMode === "graphic"
-        ? await generateGraphicBatch(body.language, body.contentType)
+        ? await generateGraphicBatch(body.language, body.graphicTemplate ?? "stat")
         : await generateBatch(body.language, body.contentType);
     return NextResponse.json(result);
   } catch (e) {

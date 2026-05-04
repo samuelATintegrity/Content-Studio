@@ -30,7 +30,7 @@ const CACHED_AI_COUNT = 4;
 // batch; the caption gets an [image error: ...] tail so it's visible.
 export async function generateBatch(): Promise<void> {
   const store = useBatchStore.getState();
-  const { language, contentType, staticSubMode, setLoading, setError, setPosts, resetUsedPhotoIds, addUsedPhotoId } = store;
+  const { language, contentType, staticSubMode, selectedGraphicTemplate, setLoading, setError, setPosts, resetUsedPhotoIds, addUsedPhotoId } = store;
 
   // Graphic sub-mode is a wholly separate pipeline — no image fetching,
   // no Pexels fallback, no library pick. Just Claude copy + an SVG render
@@ -40,7 +40,7 @@ export async function generateBatch(): Promise<void> {
     setError(null);
     setPosts([]);
     try {
-      const copy = await fetchBatchCopy(language, contentType, "graphic");
+      const copy = await fetchBatchCopy(language, contentType, "graphic", selectedGraphicTemplate);
       const initial = copy.posts.map((p, i) => ({
         id: `${Date.now()}-${i}`,
         angle: p.angle,

@@ -13,11 +13,12 @@ export async function fetchBatchCopy(
   language: Language,
   contentType: ContentType,
   staticSubMode?: StaticSubMode,
+  graphicTemplate?: GraphicTemplate,
 ): Promise<GenerateBatchResponse> {
   const res = await fetch("/api/generate-batch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ language, contentType, staticSubMode }),
+    body: JSON.stringify({ language, contentType, staticSubMode, graphicTemplate }),
   });
   if (!res.ok) throw new Error((await res.json()).error ?? "generate-batch failed");
   return res.json();

@@ -5,10 +5,12 @@ import { useBatchStore } from "@/store/batchStore";
 import {
   CONTENT_TYPE_LABELS,
   FORMAT_LABELS,
+  GRAPHIC_TEMPLATE_LABELS,
   LANGUAGE_LABELS,
   MESSAGE_THEME_LABELS,
   type ContentType,
   type Format,
+  type GraphicTemplate,
   type Language,
   type MessageTheme,
 } from "@/lib/types";
@@ -38,6 +40,7 @@ const CONTENT_TYPES: ContentType[] = [
 ];
 
 const MESSAGE_THEMES: MessageTheme[] = ["agent_match", "dpa"];
+const GRAPHIC_TEMPLATES: GraphicTemplate[] = ["stat", "did_you_know", "promo"];
 
 // Content types that don't make sense in certain (language, format)
 // combinations. English skips language_match (the audience already
@@ -70,15 +73,19 @@ export function Sidebar({ drawerOpen = false, onClose }: SidebarProps = {}) {
     language,
     contentType,
     subMode,
+    staticSubMode,
+    selectedGraphicTemplate,
     selectedAvatarName,
     selectedMessageTheme,
     setFormat,
     setLanguage,
     setContentType,
     setSubMode,
+    setSelectedGraphicTemplate,
     setSelectedAvatarName,
     setSelectedMessageTheme,
   } = useBatchStore();
+  const isGraphic = format === "static" && staticSubMode === "graphic";
 
   // Esc closes the mobile drawer. No-op on desktop since onClose is a
   // no-op prop.
@@ -218,6 +225,26 @@ export function Sidebar({ drawerOpen = false, onClose }: SidebarProps = {}) {
                 align="left"
               >
                 {MESSAGE_THEME_LABELS[t]}
+              </Pill>
+            ))}
+          </div>
+        </Section>
+      ) : isGraphic ? (
+        // Graphic sub-mode replaces the content-type picker with a
+        // template picker — picking the template IS the categorization.
+        // Internally each template draws from an appropriate content
+        // type pool (stat / promo from good_agents, did-you-know from
+        // the educational angles).
+        <Section title="Graphic type">
+          <div className="flex flex-col gap-2">
+            {GRAPHIC_TEMPLATES.map((t) => (
+              <Pill
+                key={t}
+                selected={selectedGraphicTemplate === t}
+                onClick={() => setSelectedGraphicTemplate(t)}
+                align="left"
+              >
+                {GRAPHIC_TEMPLATE_LABELS[t]}
               </Pill>
             ))}
           </div>
