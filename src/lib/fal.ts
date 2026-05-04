@@ -71,12 +71,30 @@ export async function generateAiPoster(args: {
   subline: string;
   cta: string;
   brandName: string;
+  // Color palette. backgroundHex is the canvas color (typically a soft
+  // neutral). primaryHex is the brand mark + headline color. secondaryHex
+  // and accentHex are pops + softer accents. logoTintHex is the color
+  // the logo should be rendered in when it appears in the poster.
+  backgroundHex: string;
   primaryHex: string;
+  secondaryHex: string;
   accentHex: string;
+  logoTintHex: string;
   logoUrl?: string;
 }): Promise<{ url: string }> {
   configure();
-  const { headline, subline, cta, brandName, primaryHex, accentHex, logoUrl } = args;
+  const {
+    headline,
+    subline,
+    cta,
+    brandName,
+    backgroundHex,
+    primaryHex,
+    secondaryHex,
+    accentHex,
+    logoTintHex,
+    logoUrl,
+  } = args;
 
   // The prompt is intentionally explicit about: aspect, brand voice,
   // typographic hierarchy, color palette, and the no-photo constraint
@@ -87,10 +105,14 @@ export async function generateAiPoster(args: {
     `Headline (set this exact text in a large display weight): "${headline}"`,
     `Subline (smaller, 1-2 lines): "${subline}"`,
     `CTA (in a button or band): "${cta}"`,
-    `Brand colors: primary ${primaryHex} (use for the dominant background or band), accent ${accentHex} for highlights, white text on dark backgrounds.`,
+    `Use this brand palette:`,
+    `  - Background canvas: ${backgroundHex} (warm beige cream — most of the poster is this color).`,
+    `  - Primary accent: ${primaryHex} (deep teal — use for headline ink, the logo mark, and the CTA band).`,
+    `  - Secondary accent: ${secondaryHex} (lighter teal — use for thin dividers or supporting accents).`,
+    `  - Tertiary accent: ${accentHex} (warm peach — sparingly for visual variety).`,
     logoUrl
-      ? `Include the brand logo (provided as a reference image) prominently and clearly — do not redraw it, use the supplied mark.`
-      : `Include simple typographic branding for "${brandName}" in the header area.`,
+      ? `Include the brand logo (provided as the reference image) prominently in the upper portion of the poster. The logo MUST be rendered in solid ${logoTintHex} — do not change its shape, just recolor it to that exact deep teal hex. Do not redraw or stylize the mark; use the supplied geometry.`
+      : `Include simple typographic branding "${brandName}" in solid ${logoTintHex} in the header area.`,
     `Style: clean, modern, minimal, designed graphic — NOT a photograph, NOT a photorealistic scene. Flat colors and typography only.`,
     `Render the typography crisply and accurately — no garbled letters, no random characters, no fake text.`,
     `No people, no houses, no photographs.`,

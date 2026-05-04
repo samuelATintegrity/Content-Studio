@@ -59,6 +59,11 @@ export async function generateBatch(): Promise<void> {
       }));
       setPosts(initial);
 
+      // AI poster runs are slow (Nano Banana Pro is 30-60s per image) and
+      // sometimes time out, so log the failures explicitly to the console
+      // for debugging instead of just stuffing the message into the
+      // caption where it's invisible. The toast / error state still
+      // surfaces in the caption so the user sees something on the card.
       await Promise.all(
         initial.map(async (post) => {
           if (!post.graphic) return;
@@ -71,9 +76,15 @@ export async function generateBatch(): Promise<void> {
             });
             useBatchStore.getState().updatePost(post.id, { imageDataUrl });
           } catch (e) {
+            const message = e instanceof Error ? e.message : "unknown";
+            console.error(
+              `[generate] graphic render failed (template=${post.graphic.template}, angle=${post.angle}):`,
+              message,
+            );
             useBatchStore.getState().updatePost(post.id, {
               caption:
-                post.caption + `\n\n[graphic error: ${e instanceof Error ? e.message : "unknown"}]`,
+                post.caption +
+                `\n\n[graphic error — open browser console for details: ${message}]`,
             });
           }
         }),

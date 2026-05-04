@@ -3,7 +3,12 @@ import { composeGraphic } from "@/lib/composeGraphic";
 import type { GraphicTemplate } from "@/lib/types";
 
 export const runtime = "nodejs";
-export const maxDuration = 15;
+// Nano Banana Pro can take 30-60s per image. The previous 15s cap was
+// truncating AI poster runs — the fal.ai dashboard showed the image
+// generated successfully but our function had already timed out, so
+// the client got a 504 and the image never appeared in the batch.
+// 300s matches the longest Vercel Pro-tier function timeout.
+export const maxDuration = 300;
 
 interface Body {
   template: GraphicTemplate;

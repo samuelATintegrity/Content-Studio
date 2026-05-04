@@ -195,6 +195,21 @@ async function loadLogoTinted(tintHex: string, maxH: number, maxW: number): Prom
   }
 }
 
+// ── Graphic palette ─────────────────────────────────────────────────
+//
+// Independent from the photo-static palette in brand.config.ts so we
+// can iterate on the graphic-design lane without touching photo posts.
+// User-supplied palette: beige background, deep + light teal as the
+// primary brand colors, warm peach for accent, coral for highlights.
+// Logo is recolored to deep teal via the alpha-mask tinter.
+const PALETTE = {
+  beige: "#FDFCDC",        // canvas / background
+  teal: "#0081A7",         // primary brand color, headline ink, CTA band, logo tint
+  tealLight: "#00AFB9",    // secondary teal, accents + dividers
+  peach: "#FED9B7",        // warm fill / soft accent
+  coral: "#F07167",        // attention-grabbing highlight
+} as const;
+
 // ── Template builders ───────────────────────────────────────────────
 
 interface BuildArgs {
@@ -213,14 +228,15 @@ interface BuildResult {
 const BAR_HEIGHT = 32; // accent bar at top edge of the canvas
 const PADDING_X = 80;
 
-// Stat callout: brand-color background, big number/value centered upper,
-// short context line below, CTA bar at the bottom.
+// Stat callout: beige canvas, teal accent bar at top, big number/value
+// centered upper in deep teal, short context line below in lighter
+// teal, deep-teal CTA band at the bottom with cream text.
 async function buildStat({ fields, sansFont, serifFont }: BuildArgs): Promise<BuildResult> {
-  const bg = brand.colors.primary;
-  const accent = brand.colors.accent;
-  const text = brand.colors.text;
+  const bg = PALETTE.beige;
+  const accent = PALETTE.tealLight;
+  const ink = PALETTE.teal;
   const ctaBandY = CANVAS_H - 220;
-  const ctaBandColor = brand.colors.secondary;
+  const ctaBandColor = PALETTE.teal;
 
   const headline = fields.headline;
   const display = serifFont ?? sansFont;
@@ -235,7 +251,7 @@ async function buildStat({ fields, sansFont, serifFont }: BuildArgs): Promise<Bu
       fontSize: size,
       centerX: CANVAS_W / 2,
       centerY: 470,
-      fill: text,
+      fill: ink,
     });
   }
 
@@ -252,8 +268,8 @@ async function buildStat({ fields, sansFont, serifFont }: BuildArgs): Promise<Bu
           fontSize,
           centerX: CANVAS_W / 2,
           centerY: startY + i * lineH,
-          fill: text,
-          fillOpacity: 0.85,
+          fill: ink,
+          fillOpacity: 0.78,
         }),
       )
       .join("");
@@ -268,7 +284,7 @@ async function buildStat({ fields, sansFont, serifFont }: BuildArgs): Promise<Bu
       fontSize: size,
       centerX: CANVAS_W / 2,
       centerY: ctaBandY + 220 / 2,
-      fill: brand.colors.textSecondary,
+      fill: PALETTE.beige,
       letterSpacing: 2,
     });
   }
@@ -283,8 +299,8 @@ async function buildStat({ fields, sansFont, serifFont }: BuildArgs): Promise<Bu
   ${ctaEl}
 </svg>`;
 
-  // Logo above the CTA band, centered horizontally.
-  const logo = await loadLogoTinted(brand.colors.text, 64, Math.round(CANVAS_W * 0.5));
+  // Logo above the CTA band, centered horizontally, tinted teal.
+  const logo = await loadLogoTinted(PALETTE.teal, 64, Math.round(CANVAS_W * 0.5));
   if (!logo) return { svg };
   return {
     svg,
@@ -296,13 +312,14 @@ async function buildStat({ fields, sansFont, serifFont }: BuildArgs): Promise<Bu
   };
 }
 
-// Did-you-know: light card vibe, eyebrow row at the top, hook headline
-// in the middle, supporting paragraph below, CTA bar at the bottom.
+// Did-you-know: beige card vibe, teal eyebrow at the top, hook headline
+// in the middle in deep teal, supporting paragraph below in lighter
+// teal opacity, deep-teal CTA bar at the bottom.
 async function buildDidYouKnow({ fields, sansFont, serifFont }: BuildArgs): Promise<BuildResult> {
-  const bg = "#F8F4EE"; // warm off-white
-  const ink = brand.colors.primary;
+  const bg = PALETTE.beige;
+  const ink = PALETTE.teal;
   const ctaBandY = CANVAS_H - 220;
-  const ctaBandColor = brand.colors.primary;
+  const ctaBandColor = PALETTE.teal;
 
   // Eyebrow: small all-caps sans label at the top so the user
   // immediately reads "DID YOU KNOW?" framing.
@@ -372,13 +389,13 @@ async function buildDidYouKnow({ fields, sansFont, serifFont }: BuildArgs): Prom
       fontSize: size,
       centerX: CANVAS_W / 2,
       centerY: ctaBandY + 220 / 2,
-      fill: brand.colors.text,
+      fill: PALETTE.beige,
       letterSpacing: 2,
     });
   }
 
-  // Thin divider rule between eyebrow and headline.
-  const divider = `<rect x="${CANVAS_W / 2 - 60}" y="180" width="120" height="3" fill="${ink}" fill-opacity="0.4"/>`;
+  // Thin divider rule between eyebrow and headline — lighter teal.
+  const divider = `<rect x="${CANVAS_W / 2 - 60}" y="180" width="120" height="3" fill="${PALETTE.tealLight}" fill-opacity="0.7"/>`;
 
   const svg = `
 <svg width="${CANVAS_W}" height="${CANVAS_H}" xmlns="http://www.w3.org/2000/svg">
@@ -394,14 +411,15 @@ async function buildDidYouKnow({ fields, sansFont, serifFont }: BuildArgs): Prom
   return { svg };
 }
 
-// Promo poster: brand background, logo prominent at the top, tagline
-// in the middle, sub-tagline below, CTA at the bottom.
+// Promo poster: deep teal background for visual pop, peach accent at
+// the top, logo prominent in beige, tagline + sub-tagline in beige,
+// secondary teal CTA band at the bottom for layered depth.
 async function buildPromo({ fields, sansFont, serifFont }: BuildArgs): Promise<BuildResult> {
-  const bg = brand.colors.primary;
-  const accent = brand.colors.accent;
-  const text = brand.colors.text;
+  const bg = PALETTE.teal;
+  const accent = PALETTE.peach;
+  const text = PALETTE.beige;
   const ctaBandY = CANVAS_H - 220;
-  const ctaBandColor = brand.colors.secondary;
+  const ctaBandColor = PALETTE.tealLight;
 
   const tagFont = serifFont ?? sansFont;
   let tagEl = "";
@@ -452,7 +470,7 @@ async function buildPromo({ fields, sansFont, serifFont }: BuildArgs): Promise<B
       fontSize: size,
       centerX: CANVAS_W / 2,
       centerY: ctaBandY + 220 / 2,
-      fill: brand.colors.textSecondary,
+      fill: PALETTE.beige,
       letterSpacing: 2,
     });
   }
@@ -467,8 +485,8 @@ async function buildPromo({ fields, sansFont, serifFont }: BuildArgs): Promise<B
   ${ctaEl}
 </svg>`;
 
-  // Big logo above the tagline.
-  const logo = await loadLogoTinted(brand.colors.text, 220, Math.round(CANVAS_W * 0.7));
+  // Big logo above the tagline, tinted beige to read on the teal canvas.
+  const logo = await loadLogoTinted(PALETTE.beige, 220, Math.round(CANVAS_W * 0.7));
   if (!logo) return { svg };
   return {
     svg,
@@ -500,8 +518,14 @@ export async function composeGraphic(args: ComposeGraphicArgs): Promise<Buffer> 
       subline: args.subline,
       cta: args.cta,
       brandName: "Agent Match",
-      primaryHex: brand.colors.primary,
-      accentHex: brand.colors.accent,
+      // Hand-feed the new graphic palette: beige bg, deep teal as the
+      // primary brand accent + logo color, lighter teal as a secondary
+      // accent. The brand.config.ts colors are kept for photo statics.
+      backgroundHex: PALETTE.beige,
+      primaryHex: PALETTE.teal,
+      secondaryHex: PALETTE.tealLight,
+      accentHex: PALETTE.peach,
+      logoTintHex: PALETTE.teal,
       logoUrl: logoUrl ?? undefined,
     });
     const res = await fetch(url);
