@@ -40,7 +40,7 @@ const CONTENT_TYPES: ContentType[] = [
 ];
 
 const MESSAGE_THEMES: MessageTheme[] = ["agent_match", "dpa"];
-const GRAPHIC_TEMPLATES: GraphicTemplate[] = ["stat", "did_you_know", "promo"];
+const GRAPHIC_TEMPLATES: GraphicTemplate[] = ["stat", "did_you_know", "promo", "ai_poster"];
 
 // Content types that don't make sense in certain (language, format)
 // combinations. English skips language_match (the audience already

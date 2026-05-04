@@ -238,12 +238,18 @@ const TEMPLATE_CONTENT_TYPES: Record<GraphicTemplate, ContentType[]> = {
   stat: ["good_agents"],
   did_you_know: ["edu_zero_down_usda_local", "edu_dpa_local"],
   promo: ["good_agents"],
+  // AI poster pulls from the same pool as Promo — brand-mission
+  // angles are the easiest for the image model to compose around
+  // since they're tagline-friendly. The poster's visual layout is
+  // up to Nano Banana Pro; Claude only writes the copy.
+  ai_poster: ["good_agents"],
 };
 
 const TEMPLATE_DESCRIPTIONS: Record<GraphicTemplate, string> = {
   stat: 'a HUGE number/value as the headline ("Top 10%", "4.8 Stars", etc.), with a short context line. Use ONLY documented numeric anchors — top 10% and 4.8 stars or higher are explicitly allowed; never invent percentages, dollar amounts, or counts.',
   did_you_know: 'a mythbust / fact card. Headline is a punchy statement or hook (the eyebrow "Did you know?" is rendered automatically by the template, so the headline is the actual claim, e.g., "USDA isn\'t just for farms."). Subline is a single-sentence elaboration.',
   promo: 'pure brand awareness. Headline is the brand tagline ("Find the right agent. Skip the guessing."), subline is the value-prop tail ("Vetted agents matched to your situation"). No specific topic anchoring required.',
+  ai_poster: 'a designed AI-generated poster. Headline is a short, punchy tagline or value-prop (≤6 words, the AI image model will set it as a large display headline). Subline is a single supporting line (≤12 words). Keep both VERY tight — the image model renders typography and longer text becomes garbled. Don\'t use specific numbers, dollar amounts, or percentages.',
 };
 
 function buildGraphicUserPrompt(language: Language, template: GraphicTemplate): string {

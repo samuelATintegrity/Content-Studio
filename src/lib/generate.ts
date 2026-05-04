@@ -55,6 +55,7 @@ export async function generateBatch(): Promise<void> {
         style: DEFAULT_STYLE,
         staticSubMode: "graphic" as const,
         graphic: p.graphic,
+        language,
       }));
       setPosts(initial);
 
@@ -105,6 +106,7 @@ export async function generateBatch(): Promise<void> {
       framing: { ...DEFAULT_FRAMING },
       fitMode: DEFAULT_FIT_MODE,
       style: DEFAULT_STYLE,
+      language,
     }));
     setPosts(initial);
 

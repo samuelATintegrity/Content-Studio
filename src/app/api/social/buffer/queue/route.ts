@@ -13,7 +13,11 @@ export const maxDuration = 30;
 
 interface Body {
   language: Language;
-  videoUrl: string;
+  // Exactly one of videoUrl / imageUrl. Video → goes out as a reel on
+  // FB/IG and a regular post on TikTok. Image → goes out as a feed
+  // post; TikTok is skipped (Buffer's API rejects still images there).
+  videoUrl?: string;
+  imageUrl?: string;
   caption: string;
   thumbnailUrl?: string;
   platforms?: SocialPlatform[];
@@ -28,9 +32,21 @@ interface Body {
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as Body;
-    if (!body.language || !body.videoUrl || !body.caption) {
+    if (!body.language || !body.caption) {
       return NextResponse.json(
-        { error: "language, videoUrl, caption are required" },
+        { error: "language, caption are required" },
+        { status: 400 },
+      );
+    }
+    if (!body.videoUrl && !body.imageUrl) {
+      return NextResponse.json(
+        { error: "videoUrl or imageUrl is required" },
+        { status: 400 },
+      );
+    }
+    if (body.videoUrl && body.imageUrl) {
+      return NextResponse.json(
+        { error: "pass exactly one of videoUrl / imageUrl" },
         { status: 400 },
       );
     }
@@ -72,6 +88,7 @@ export async function POST(req: Request) {
       targets: targets.map((t) => ({ profileId: t.profileId, platform: t.platform })),
       text: body.caption,
       videoUrl: body.videoUrl,
+      imageUrl: body.imageUrl,
       thumbnailUrl: body.thumbnailUrl,
       scheduleMode: body.scheduleMode ?? "queue",
       scheduledAtIso,

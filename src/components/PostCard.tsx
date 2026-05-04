@@ -10,9 +10,11 @@ import {
   dataUrlToBlob,
   fetchOneCopy,
   fetchPhotoFor,
+  uploadStaticImage,
 } from "@/lib/client";
 import { AI_CREDIT_LABEL, randomPrompt } from "@/lib/imagePrompts";
 import { EditTextModal } from "./EditTextModal";
+import { BufferSendModal } from "./BufferSendModal";
 
 type RecomposeOverrides = Partial<{
   headline: string;
@@ -31,6 +33,14 @@ export function PostCard({ post }: { post: Post }) {
   const [imageDownloaded, setImageDownloaded] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");
   const [editingPhoto, setEditingPhoto] = useState(false);
+  // Buffer flow state — only used by graphic posts. Uploading the
+  // rendered PNG to R2 happens lazily on first Send-to-Buffer click;
+  // the resulting URL is cached so re-opening the modal doesn't re-upload.
+  const [bufferSendOpen, setBufferSendOpen] = useState(false);
+  const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
+  const [bufferPrep, setBufferPrep] = useState<"idle" | "uploading" | "error">("idle");
+  const [bufferPrepError, setBufferPrepError] = useState<string | null>(null);
+  const [bufferReceipt, setBufferReceipt] = useState<{ platforms: string[] } | null>(null);
 
   async function recompose(overrides: RecomposeOverrides = {}) {
     if (!post.photoUrl) return;
@@ -220,6 +230,26 @@ export function PostCard({ post }: { post: Post }) {
     }
   }
 
+  async function openBufferSend() {
+    if (!post.imageDataUrl || !post.language) return;
+    if (uploadedImageUrl) {
+      // Already uploaded earlier — just reopen the modal.
+      setBufferSendOpen(true);
+      return;
+    }
+    setBufferPrep("uploading");
+    setBufferPrepError(null);
+    try {
+      const { cachedUrl } = await uploadStaticImage(post.imageDataUrl);
+      setUploadedImageUrl(cachedUrl);
+      setBufferSendOpen(true);
+      setBufferPrep("idle");
+    } catch (e) {
+      setBufferPrep("error");
+      setBufferPrepError(e instanceof Error ? e.message : "upload failed");
+    }
+  }
+
   function downloadImage() {
     if (!post.imageDataUrl) return;
     const blob = dataUrlToBlob(post.imageDataUrl);
@@ -384,6 +414,51 @@ export function PostCard({ post }: { post: Post }) {
           </div>
         )}
 
+        {isGraphic && post.imageDataUrl && (
+          <div className="flex flex-col gap-2 pt-1">
+            {bufferReceipt ? (
+              <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2.5 text-[12px] text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
+                <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+                <span>
+                  Queued in Buffer for{" "}
+                  {bufferReceipt.platforms.length === 0
+                    ? "no channels"
+                    : bufferReceipt.platforms.join(" · ")}
+                  .
+                </span>
+              </div>
+            ) : (
+              <button
+                onClick={openBufferSend}
+                disabled={!post.language || bufferPrep === "uploading"}
+                title={
+                  !post.language
+                    ? "Older post — language wasn't recorded. Regenerate the batch to enable Buffer send."
+                    : undefined
+                }
+                className="w-full px-4 py-2.5 rounded-2xl text-[12px] font-semibold border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 hover:bg-neutral-50 dark:hover:bg-neutral-900 text-neutral-900 dark:text-neutral-100 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              >
+                {bufferPrep === "uploading" ? (
+                  <>
+                    <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2.5" opacity="0.25" />
+                      <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+                    </svg>
+                    <span>Preparing image…</span>
+                  </>
+                ) : (
+                  <span>Send to Buffer</span>
+                )}
+              </button>
+            )}
+            {bufferPrepError && (
+              <p className="text-[11px] text-red-500 leading-snug">{bufferPrepError}</p>
+            )}
+          </div>
+        )}
+
         {post.photoCredit && (
           <div className="text-[10px] text-neutral-400 dark:text-neutral-600 pt-1 mt-auto">
             {post.photoCredit.photographer.startsWith("AI ")
@@ -398,6 +473,18 @@ export function PostCard({ post }: { post: Post }) {
           initial={{ headline: post.headline, cta: post.cta, caption: post.caption }}
           onCancel={() => setEditing(false)}
           onSave={saveEdit}
+        />
+      )}
+
+      {bufferSendOpen && uploadedImageUrl && post.language && (
+        <BufferSendModal
+          language={post.language}
+          imageUrl={uploadedImageUrl}
+          caption={post.caption}
+          onClose={() => setBufferSendOpen(false)}
+          onSuccess={(queued) =>
+            setBufferReceipt({ platforms: queued.map((q) => q.platform) })
+          }
         />
       )}
     </div>

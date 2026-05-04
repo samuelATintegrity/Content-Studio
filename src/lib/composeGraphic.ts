@@ -14,6 +14,7 @@ import path from "path";
 import * as opentype from "opentype.js";
 import { brand } from "../../brand.config";
 import { CANVAS_W, CANVAS_H } from "./compose";
+import { generateAiPoster } from "./fal";
 import type { GraphicTemplate } from "./types";
 
 // ── Font loading (sibling cache to compose.ts) ───────────────────────
@@ -79,35 +80,68 @@ function textToPath(args: TextPathArgs): string {
   return `<path d="${d}" fill="${fill}"${opacityAttr}/>`;
 }
 
-// Wrap a string into N lines fitting maxWidth at the given font size,
-// breaking on word boundaries. Returns the line list. Used for the
-// did-you-know subline + promo subline.
-function wrapToLines(text: string, font: opentype.Font, fontSize: number, maxWidth: number, maxLines = 4): string[] {
+function measureLine(text: string, font: opentype.Font, fontSize: number): number {
   const scale = fontSize / font.unitsPerEm;
-  const measure = (s: string): number => {
-    const chars = Array.from(s);
-    let w = 0;
-    for (const ch of chars) {
-      const g = font.charToGlyph(ch);
-      w += (g.advanceWidth ?? 0) * scale;
-    }
-    return w;
-  };
+  let w = 0;
+  for (const ch of Array.from(text)) {
+    const g = font.charToGlyph(ch);
+    w += (g.advanceWidth ?? 0) * scale;
+  }
+  return w;
+}
+
+// Wrap a string into N lines fitting maxWidth at the given font size,
+// breaking on word boundaries.
+function wrapAt(text: string, font: opentype.Font, fontSize: number, maxWidth: number, maxLines: number): string[] {
   const words = text.split(/\s+/);
   const lines: string[] = [];
   let current = "";
   for (const word of words) {
     const candidate = current ? `${current} ${word}` : word;
-    if (measure(candidate) <= maxWidth) {
+    if (measureLine(candidate, font, fontSize) <= maxWidth) {
       current = candidate;
     } else {
       if (current) lines.push(current);
       current = word;
+      if (lines.length >= maxLines) break;
     }
-    if (lines.length >= maxLines) break;
   }
   if (current && lines.length < maxLines) lines.push(current);
   return lines;
+}
+
+// Wrap + shrink: try wrapping at baseSize; if the longest resulting line
+// still overflows (e.g., a single word wider than maxWidth), drop the
+// font size in 4-px steps and re-wrap until it fits or we hit minSize.
+// Returns the final lines + the size that was actually used. Replaces
+// the old wrapToLines to fix the case where a long single-word headline
+// (or the layout's maxLines clamp dropped tail words) caused visible
+// truncation in the rendered output.
+function fitAndWrap(
+  text: string,
+  font: opentype.Font,
+  baseSize: number,
+  minSize: number,
+  maxWidth: number,
+  maxLines: number,
+): { lines: string[]; fontSize: number } {
+  let size = baseSize;
+  while (size >= minSize) {
+    const lines = wrapAt(text, font, size, maxWidth, maxLines);
+    const longest = lines.reduce((m, l) => Math.max(m, measureLine(l, font, size)), 0);
+    // Also catch the case where wrapping clamped to maxLines and there
+    // are still leftover words — surface as overflow so we shrink.
+    const reconstructed = lines.join(" ");
+    const droppedTail = reconstructed.replace(/\s+/g, " ") !== text.replace(/\s+/g, " ").trim();
+    if (longest <= maxWidth && !droppedTail) {
+      return { lines, fontSize: size };
+    }
+    size -= 4;
+  }
+  // Last resort at minSize — re-wrap and accept whatever we get rather
+  // than returning empty.
+  const lines = wrapAt(text, font, minSize, maxWidth, maxLines);
+  return { lines, fontSize: minSize };
 }
 
 // Fit a string to a single line by shrinking the size until it fits.
@@ -207,15 +241,15 @@ async function buildStat({ fields, sansFont, serifFont }: BuildArgs): Promise<Bu
 
   let sublineEl = "";
   if (supporting) {
-    const lines = wrapToLines(fields.subline, supporting, 44, CANVAS_W - PADDING_X * 2 - 80, 3);
-    const lineH = 44 * 1.35;
+    const { lines, fontSize } = fitAndWrap(fields.subline, supporting, 44, 28, CANVAS_W - PADDING_X * 2 - 80, 3);
+    const lineH = fontSize * 1.35;
     const startY = 720 - ((lines.length - 1) * lineH) / 2;
     sublineEl = lines
       .map((ln, i) =>
         textToPath({
           text: ln,
           font: supporting,
-          fontSize: 44,
+          fontSize,
           centerX: CANVAS_W / 2,
           centerY: startY + i * lineH,
           fill: text,
@@ -287,19 +321,19 @@ async function buildDidYouKnow({ fields, sansFont, serifFont }: BuildArgs): Prom
     });
   }
 
-  // Headline (the hook). Auto-wrap up to 3 lines.
+  // Headline (the hook). Auto-wrap up to 3 lines, shrinking if needed.
   let headlineEl = "";
   const headlineFont = serifFont ?? sansFont;
   if (headlineFont) {
-    const lines = wrapToLines(fields.headline, headlineFont, 96, CANVAS_W - PADDING_X * 2, 3);
-    const lineH = 96 * 1.1;
+    const { lines, fontSize } = fitAndWrap(fields.headline, headlineFont, 96, 48, CANVAS_W - PADDING_X * 2, 3);
+    const lineH = fontSize * 1.1;
     const startY = 380 - ((lines.length - 1) * lineH) / 2;
     headlineEl = lines
       .map((ln, i) =>
         textToPath({
           text: ln,
           font: headlineFont,
-          fontSize: 96,
+          fontSize,
           centerX: CANVAS_W / 2,
           centerY: startY + i * lineH,
           fill: ink,
@@ -311,15 +345,15 @@ async function buildDidYouKnow({ fields, sansFont, serifFont }: BuildArgs): Prom
   // Subline elaboration in sans, smaller, slightly more transparent.
   let sublineEl = "";
   if (sansFont) {
-    const lines = wrapToLines(fields.subline, sansFont, 44, CANVAS_W - PADDING_X * 2 - 60, 4);
-    const lineH = 44 * 1.4;
+    const { lines, fontSize } = fitAndWrap(fields.subline, sansFont, 44, 28, CANVAS_W - PADDING_X * 2 - 60, 4);
+    const lineH = fontSize * 1.4;
     const startY = 770 - ((lines.length - 1) * lineH) / 2;
     sublineEl = lines
       .map((ln, i) =>
         textToPath({
           text: ln,
           font: sansFont,
-          fontSize: 44,
+          fontSize,
           centerX: CANVAS_W / 2,
           centerY: startY + i * lineH,
           fill: ink,
@@ -372,15 +406,15 @@ async function buildPromo({ fields, sansFont, serifFont }: BuildArgs): Promise<B
   const tagFont = serifFont ?? sansFont;
   let tagEl = "";
   if (tagFont) {
-    const lines = wrapToLines(fields.headline, tagFont, 110, CANVAS_W - PADDING_X * 2, 3);
-    const lineH = 110 * 1.1;
+    const { lines, fontSize } = fitAndWrap(fields.headline, tagFont, 110, 56, CANVAS_W - PADDING_X * 2, 3);
+    const lineH = fontSize * 1.1;
     const startY = 600 - ((lines.length - 1) * lineH) / 2;
     tagEl = lines
       .map((ln, i) =>
         textToPath({
           text: ln,
           font: tagFont,
-          fontSize: 110,
+          fontSize,
           centerX: CANVAS_W / 2,
           centerY: startY + i * lineH,
           fill: text,
@@ -391,15 +425,15 @@ async function buildPromo({ fields, sansFont, serifFont }: BuildArgs): Promise<B
 
   let subEl = "";
   if (sansFont) {
-    const lines = wrapToLines(fields.subline, sansFont, 42, CANVAS_W - PADDING_X * 2 - 60, 3);
-    const lineH = 42 * 1.4;
+    const { lines, fontSize } = fitAndWrap(fields.subline, sansFont, 42, 26, CANVAS_W - PADDING_X * 2 - 60, 3);
+    const lineH = fontSize * 1.4;
     const startY = 880 - ((lines.length - 1) * lineH) / 2;
     subEl = lines
       .map((ln, i) =>
         textToPath({
           text: ln,
           font: sansFont,
-          fontSize: 42,
+          fontSize,
           centerX: CANVAS_W / 2,
           centerY: startY + i * lineH,
           fill: text,
@@ -456,6 +490,28 @@ export interface ComposeGraphicArgs {
 }
 
 export async function composeGraphic(args: ComposeGraphicArgs): Promise<Buffer> {
+  // AI poster: Nano Banana Pro generates the entire 4:5 graphic from
+  // copy + brand info + the logo as a reference image. We fetch the
+  // resulting image and return its bytes (encoded as PNG by sharp).
+  if (args.template === "ai_poster") {
+    const logoUrl = resolvePublicLogoUrl();
+    const { url } = await generateAiPoster({
+      headline: args.headline,
+      subline: args.subline,
+      cta: args.cta,
+      brandName: "Agent Match",
+      primaryHex: brand.colors.primary,
+      accentHex: brand.colors.accent,
+      logoUrl: logoUrl ?? undefined,
+    });
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error(`AI poster fetch failed (${res.status})`);
+    }
+    const bytes = Buffer.from(await res.arrayBuffer());
+    return sharp(bytes).png().toBuffer();
+  }
+
   const sansFont = await loadFont("sans");
   const serifFont = await loadFont("serif");
   const buildArgs: BuildArgs = {
@@ -485,4 +541,20 @@ export async function composeGraphic(args: ComposeGraphicArgs): Promise<Buffer> 
     .composite([{ input: result.logo.buf, top: result.logo.top, left: result.logo.left }])
     .png()
     .toBuffer();
+}
+
+// Resolve a publicly fetchable URL for the brand logo so fal.ai can
+// pull it as a reference image. Vercel exposes VERCEL_URL on every
+// build; locally we fall back to NEXT_PUBLIC_SITE_URL or undefined
+// (in which case the AI poster prompt drops the reference and just
+// asks for typographic branding).
+function resolvePublicLogoUrl(): string | null {
+  const explicit = process.env.NEXT_PUBLIC_SITE_URL;
+  const vercel = process.env.VERCEL_URL;
+  let base: string | null = null;
+  if (explicit) base = explicit.replace(/\/$/, "");
+  else if (vercel) base = `https://${vercel}`;
+  if (!base) return null;
+  const logoPath = brand.logo.startsWith("/") ? brand.logo : `/${brand.logo}`;
+  return `${base}${logoPath}`;
 }

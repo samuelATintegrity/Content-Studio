@@ -49,12 +49,17 @@ function defaultScheduledLocal(): string {
 export function BufferSendModal({
   language,
   videoUrl,
+  imageUrl,
   caption: initialCaption,
   onClose,
   onSuccess,
 }: {
   language: Language;
-  videoUrl: string;
+  // Exactly one of videoUrl / imageUrl. Video posts go out as reels
+  // on FB+IG; image posts as feed posts (and TikTok is filtered out
+  // server-side since Buffer's API doesn't accept still images there).
+  videoUrl?: string;
+  imageUrl?: string;
   caption: string;
   onClose: () => void;
   onSuccess: (queued: { platform: SocialPlatform }[], mode: ScheduleMode) => void;
@@ -69,7 +74,9 @@ export function BufferSendModal({
   const [sendError, setSendError] = useState<string | null>(null);
 
   // Fetch the platforms mapped for this video's language, then default
-  // every available platform to checked.
+  // every available platform to checked. Image posts can't go to TikTok
+  // (Buffer's API rejects still images there) so hide the pill upfront.
+  const isImage = Boolean(imageUrl);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -82,8 +89,9 @@ export function BufferSendModal({
           setAvailable([]);
           return;
         }
-        setAvailable(json.platforms);
-        setSelectedPlatforms(new Set(json.platforms));
+        const filtered = isImage ? json.platforms.filter((p) => p !== "tiktok") : json.platforms;
+        setAvailable(filtered);
+        setSelectedPlatforms(new Set(filtered));
       } catch (err) {
         if (cancelled) return;
         setAvailableError(err instanceof Error ? err.message : "lookup failed");
@@ -93,7 +101,7 @@ export function BufferSendModal({
     return () => {
       cancelled = true;
     };
-  }, [language]);
+  }, [language, isImage]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -133,11 +141,12 @@ export function BufferSendModal({
     try {
       const body: Record<string, unknown> = {
         language,
-        videoUrl,
         caption: caption.trim(),
         platforms: Array.from(selectedPlatforms),
         scheduleMode,
       };
+      if (videoUrl) body.videoUrl = videoUrl;
+      else if (imageUrl) body.imageUrl = imageUrl;
       if (scheduleMode === "scheduled") {
         body.scheduledAtSec = localStringToUnixSec(scheduledLocal);
       }

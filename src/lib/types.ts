@@ -29,14 +29,18 @@ export type Format = "static" | "video";
 // callouts, did-you-know cards, brand promos).
 export type StaticSubMode = "photo" | "graphic";
 
-// Hand-built graphic templates. Each renders a different SVG layout
-// from the same { headline, subline, cta } field shape.
-export type GraphicTemplate = "stat" | "did_you_know" | "promo";
+// Graphic templates. The first three are hand-built SVG layouts (one
+// SVG builder per template). "ai_poster" is the experimental escape
+// hatch — Nano Banana Pro generates the entire 4:5 graphic from the
+// post's copy + the brand logo as a reference image. Less predictable
+// but produces visual variety the SVG templates can't.
+export type GraphicTemplate = "stat" | "did_you_know" | "promo" | "ai_poster";
 
 export const GRAPHIC_TEMPLATE_LABELS: Record<GraphicTemplate, string> = {
   stat: "Statistic",
   did_you_know: "Did you know",
   promo: "Promo",
+  ai_poster: "AI poster",
 };
 
 export const DEFAULT_STATIC_SUB_MODE: StaticSubMode = "photo";
@@ -102,6 +106,10 @@ export interface Post {
     subline: string;
     cta: string;
   };
+  // Stamped at batch dispatch so the Send-to-Buffer flow knows which
+  // language's profile set to target. Undefined for older posts in
+  // localStorage from before this field landed.
+  language?: Language;
 }
 
 export interface BatchRequest {

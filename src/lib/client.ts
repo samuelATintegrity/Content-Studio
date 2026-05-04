@@ -135,6 +135,24 @@ export async function composeGraphicDataUrl(args: {
   });
 }
 
+// Upload a finished static-post PNG (already rendered as a data URL on
+// the client) to R2 and return its public URL. Buffer's GraphQL API
+// needs a public URL for the image asset, so this is the prerequisite
+// step before the Send-to-Buffer flow on graphic posts.
+export async function uploadStaticImage(dataUrl: string): Promise<{ cachedUrl: string }> {
+  const blob = dataUrlToBlob(dataUrl);
+  const res = await fetch("/api/static/upload-image", {
+    method: "POST",
+    headers: { "content-type": blob.type || "image/png" },
+    body: blob,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "upload failed" }));
+    throw new Error(err.error ?? "upload failed");
+  }
+  return res.json();
+}
+
 export function dataUrlToBlob(dataUrl: string): Blob {
   const [meta, b64] = dataUrl.split(",");
   const mime = /data:(.*?);/.exec(meta)?.[1] ?? "image/png";

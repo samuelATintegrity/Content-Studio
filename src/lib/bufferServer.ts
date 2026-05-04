@@ -165,20 +165,36 @@ interface CreatePostResult {
   error?: string;
 }
 
-// Build the per-platform metadata block for a 9:16 video post. Each
-// platform Buffer supports has a different shape: Facebook + Instagram
-// require an explicit `type: reel` (Facebook posts API rejects video
-// without it; Instagram needs both `type` and `shouldShareToFeed`).
-// TikTok takes only an optional title — we omit. Other platforms
-// accept video without metadata; we don't enable them in this app yet.
-function buildMetadataBlock(platform: SocialPlatform): string {
+export type BufferAssetType = "video" | "image";
+
+// Build the per-platform metadata block. Required fields differ per
+// platform AND per asset type:
+//   Video → Facebook needs type:reel, Instagram needs type:reel +
+//   shouldShareToFeed:true, TikTok needs nothing (always video).
+//   Image → Facebook needs type:post, Instagram needs type:post +
+//   shouldShareToFeed:true. TikTok doesn't accept images via this API.
+function buildMetadataBlock(platform: SocialPlatform, assetType: BufferAssetType): string {
+  if (assetType === "image") {
+    switch (platform) {
+      case "facebook":
+        return `metadata: { facebook: { type: post } }`;
+      case "instagram":
+        return `metadata: { instagram: { type: post, shouldShareToFeed: true } }`;
+      case "tiktok":
+        // TikTok's image post type is "photo" but Buffer's API errors
+        // when posting still images to TikTok via this path. Skip the
+        // metadata block; the queue-route layer above already filters
+        // tiktok out of image posts before we get here.
+        return ``;
+    }
+  }
   switch (platform) {
     case "facebook":
       return `metadata: { facebook: { type: reel } }`;
     case "instagram":
       return `metadata: { instagram: { type: reel, shouldShareToFeed: true } }`;
     case "tiktok":
-      return ``; // TikTok metadata input has no required fields for video posts
+      return ``;
   }
 }
 
@@ -186,7 +202,8 @@ async function createSinglePost(args: {
   channelId: string;
   platform: SocialPlatform;
   text: string;
-  videoUrl: string;
+  mediaUrl: string;
+  assetType: BufferAssetType;
   thumbnailUrl?: string;
   scheduleMode: BufferScheduleMode;
   scheduledAtIso?: string;
@@ -206,11 +223,21 @@ async function createSinglePost(args: {
       ? `, $dueAt: DateTime!`
       : "";
 
-  const thumbField = args.thumbnailUrl ? `, thumbnailUrl: $thumb` : "";
-  const thumbDecl = args.thumbnailUrl ? `, $thumb: String!` : "";
+  // Thumbnails only apply to video assets; image posts have no thumbnail concept.
+  const includeThumb = args.assetType === "video" && Boolean(args.thumbnailUrl);
+  const thumbField = includeThumb ? `, thumbnailUrl: $thumb` : "";
+  const thumbDecl = includeThumb ? `, $thumb: String!` : "";
 
-  const metadataBlock = buildMetadataBlock(args.platform);
+  const metadataBlock = buildMetadataBlock(args.platform, args.assetType);
   const metadataField = metadataBlock ? `, ${metadataBlock}` : "";
+
+  // Buffer's GraphQL accepts assets.videos[] for video posts and
+  // assets.images[] for image posts. We pick the right one and inline
+  // the URL via the same variable.
+  const assetsField =
+    args.assetType === "image"
+      ? `assets: { images: [{ url: $url }] }`
+      : `assets: { videos: [{ url: $url${thumbField} }] }`;
 
   const query = `
     mutation CreatePost($text: String!, $channelId: ChannelId!, $url: String!${thumbDecl}${dueAtDecl}) {
@@ -219,7 +246,7 @@ async function createSinglePost(args: {
         channelId: $channelId,
         schedulingType: automatic,
         mode: ${modeKeyword},
-        assets: { videos: [{ url: $url${thumbField} }] }${metadataField}${dueAtField}
+        ${assetsField}${metadataField}${dueAtField}
       }) {
         ... on PostActionSuccess { post { id } }
         ... on MutationError { message }
@@ -230,9 +257,9 @@ async function createSinglePost(args: {
   const variables: Record<string, unknown> = {
     text: args.text,
     channelId: args.channelId,
-    url: args.videoUrl,
+    url: args.mediaUrl,
   };
-  if (args.thumbnailUrl) variables.thumb = args.thumbnailUrl;
+  if (includeThumb && args.thumbnailUrl) variables.thumb = args.thumbnailUrl;
   if (args.scheduleMode === "scheduled" && args.scheduledAtIso) {
     variables.dueAt = args.scheduledAtIso;
   }
@@ -263,7 +290,10 @@ export interface BufferTarget {
 export async function createBufferUpdate(args: {
   targets: BufferTarget[];
   text: string;
-  videoUrl: string;
+  // Exactly one of videoUrl / imageUrl must be provided. The route
+  // layer enforces that before we get here; this function trusts it.
+  videoUrl?: string;
+  imageUrl?: string;
   thumbnailUrl?: string;
   scheduleMode?: BufferScheduleMode;
   // Required when scheduleMode === "scheduled". ISO 8601 UTC.
@@ -272,16 +302,34 @@ export async function createBufferUpdate(args: {
   if (args.targets.length === 0) {
     throw new Error("createBufferUpdate: at least one target required");
   }
+  if (!args.videoUrl && !args.imageUrl) {
+    throw new Error("createBufferUpdate: videoUrl or imageUrl required");
+  }
+  if (args.videoUrl && args.imageUrl) {
+    throw new Error("createBufferUpdate: pass exactly one of videoUrl / imageUrl");
+  }
   const mode = args.scheduleMode ?? "queue";
   if (mode === "scheduled" && !args.scheduledAtIso) {
     throw new Error("scheduledAtIso required when scheduleMode === 'scheduled'");
   }
-  const tasks = args.targets.map((t) =>
+  const assetType: BufferAssetType = args.imageUrl ? "image" : "video";
+  const mediaUrl = (args.imageUrl ?? args.videoUrl) as string;
+  // TikTok doesn't accept still images via the Buffer GraphQL path —
+  // drop tiktok targets when posting an image, surface as a per-target
+  // error so the UI can flag it without failing the whole batch.
+  const filteredTargets =
+    assetType === "image" ? args.targets.filter((t) => t.platform !== "tiktok") : args.targets;
+  const skippedTikTok =
+    assetType === "image"
+      ? args.targets.filter((t) => t.platform === "tiktok")
+      : [];
+  const tasks = filteredTargets.map((t) =>
     createSinglePost({
       channelId: t.profileId,
       platform: t.platform,
       text: args.text,
-      videoUrl: args.videoUrl,
+      mediaUrl,
+      assetType,
       thumbnailUrl: args.thumbnailUrl,
       scheduleMode: mode,
       scheduledAtIso: args.scheduledAtIso,
@@ -294,9 +342,16 @@ export async function createBufferUpdate(args: {
     if (r.postId) updateIds.push(r.postId);
     else errors.push({ profileId: r.channelId, message: r.error ?? "unknown" });
   }
-  if (updateIds.length === 0) {
+  // Surface the TikTok skips as soft errors so the UI can flag them.
+  for (const skipped of skippedTikTok) {
+    errors.push({
+      profileId: skipped.profileId,
+      message: "TikTok does not accept image posts via the Buffer API.",
+    });
+  }
+  if (updateIds.length === 0 && filteredTargets.length > 0) {
     throw new Error(
-      `All ${args.targets.length} channels failed: ${errors.map((e) => e.message).join("; ")}`,
+      `All ${filteredTargets.length} channels failed: ${errors.map((e) => e.message).join("; ")}`,
     );
   }
   return { updateIds, errors };

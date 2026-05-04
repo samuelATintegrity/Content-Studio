@@ -18,6 +18,12 @@ function configure() {
 // Nano Banana 2 on fal.ai = Google Gemini 3.1 Flash Image.
 const IMAGE_MODEL = "fal-ai/nano-banana-2";
 
+// Nano Banana Pro on fal.ai = Google Gemini 3 Pro Image. Used by the
+// "AI poster" graphic template — better at typography + designed
+// graphics than the Flash model. Accepts reference images (image_urls)
+// so we can pass our logo and ask it to incorporate the actual mark.
+const IMAGE_MODEL_PRO = "fal-ai/nano-banana-pro";
+
 // Seedance 2.0 image-to-video. Note: bytedance models on fal.ai live under
 // the "bytedance/" namespace, not "fal-ai/" like Nano Banana.
 const SEEDANCE_MODEL = "bytedance/seedance-2.0/image-to-video";
@@ -52,6 +58,60 @@ export async function generateImage(userPrompt: string): Promise<{ url: string }
   const data = (result as { data?: FalData }).data;
   const url = data?.images?.[0]?.url;
   if (!url) throw new Error("fal.ai returned no image URL");
+  return { url };
+}
+
+// Generate a 4:5 designed-graphic poster via Nano Banana Pro. The
+// caller supplies copy fields (headline / subline / cta) and a public
+// URL to the brand logo (passed as a reference image so the actual
+// mark appears, not a hallucinated lookalike). Returns the fal-hosted
+// image URL.
+export async function generateAiPoster(args: {
+  headline: string;
+  subline: string;
+  cta: string;
+  brandName: string;
+  primaryHex: string;
+  accentHex: string;
+  logoUrl?: string;
+}): Promise<{ url: string }> {
+  configure();
+  const { headline, subline, cta, brandName, primaryHex, accentHex, logoUrl } = args;
+
+  // The prompt is intentionally explicit about: aspect, brand voice,
+  // typographic hierarchy, color palette, and the no-photo constraint
+  // so we get a poster (not a photorealistic scene with text on top).
+  const prompt = [
+    `Create a 4:5 portrait social media poster for "${brandName}", a real estate agent matching service.`,
+    `Layout: large headline at the top half, supporting subline in the middle, a CTA button or band at the bottom.`,
+    `Headline (set this exact text in a large display weight): "${headline}"`,
+    `Subline (smaller, 1-2 lines): "${subline}"`,
+    `CTA (in a button or band): "${cta}"`,
+    `Brand colors: primary ${primaryHex} (use for the dominant background or band), accent ${accentHex} for highlights, white text on dark backgrounds.`,
+    logoUrl
+      ? `Include the brand logo (provided as a reference image) prominently and clearly — do not redraw it, use the supplied mark.`
+      : `Include simple typographic branding for "${brandName}" in the header area.`,
+    `Style: clean, modern, minimal, designed graphic — NOT a photograph, NOT a photorealistic scene. Flat colors and typography only.`,
+    `Render the typography crisply and accurately — no garbled letters, no random characters, no fake text.`,
+    `No people, no houses, no photographs.`,
+  ].join(" ");
+
+  const input: Record<string, unknown> = {
+    prompt,
+    num_images: 1,
+    output_format: "png",
+    aspect_ratio: "4:5",
+  };
+  if (logoUrl) {
+    input.image_urls = [logoUrl];
+  }
+
+  const result = await fal.subscribe(IMAGE_MODEL_PRO, { input: input as never, logs: false });
+  type FalImage = { url?: string };
+  type FalData = { images?: FalImage[] };
+  const data = (result as { data?: FalData }).data;
+  const url = data?.images?.[0]?.url;
+  if (!url) throw new Error("fal.ai returned no AI poster URL");
   return { url };
 }
 
