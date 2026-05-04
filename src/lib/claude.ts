@@ -5,9 +5,12 @@ import { buildCaption, CTA_TEXT, stripDashes } from "./copy";
 import {
   LANGUAGE_LABELS,
   type ContentType,
+  type DykGraphicData,
   type GenerateBatchResponse,
+  type GraphicData,
   type GraphicTemplate,
   type Language,
+  type StatGraphicData,
 } from "./types";
 
 const MODEL = "claude-sonnet-4-6";
@@ -167,61 +170,94 @@ export async function generateBatch(
 
 // ── Graphic batch ────────────────────────────────────────────────────
 //
-// Hand-built SVG-template lane: stat callouts, did-you-know cards,
-// brand promo posters. Same Claude pipeline as photo posts but a
-// different tool schema — Claude picks one of three templates per post
-// and fills three short text fields rather than the photo-style
-// headline + caption.
+// One generator per template. Each has its own tool schema for the
+// fields the template actually displays. The user has already picked
+// the template at the UI level (selectedGraphicTemplate in the store);
+// we don't ask Claude to pick. Promo's on-image copy is fixed brand
+// boilerplate so Claude only writes the IG caption body for that one.
 
 export const GRAPHIC_BATCH_POSTS = 6;
 
-const GRAPHIC_TEMPLATES: GraphicTemplate[] = ["stat", "did_you_know", "promo"];
+// Each template draws angles from the content-type pool that fits its
+// tone. Stat + Promo lean on the matching-mission angles (top 10%, 4.8
+// stars, vetted) — those are the only documented quantitative anchors
+// for stat callouts and the brand-mission angles for promo. Did-you-know
+// pulls from the educational pools (USDA + DPA) since they have the
+// mythbust briefs the format leans on.
+const TEMPLATE_CONTENT_TYPES: Record<GraphicTemplate, ContentType[]> = {
+  stat: ["good_agents"],
+  did_you_know: ["edu_zero_down_usda_local", "edu_dpa_local"],
+  promo: ["good_agents"],
+  ai_poster: ["good_agents"],
+};
 
-interface RawGraphicPost {
+interface RawStatPost {
   angle: string;
-  template: GraphicTemplate;
+  number: string;
+  unit: string;
+  statement: string;
+  source: string;
+  body: string;
+}
+
+interface RawDykPost {
+  angle: string;
+  fact: string;
+  body: string;
+  caption_body: string;
+}
+
+interface RawCaptionOnlyPost {
+  angle: string;
+  body: string;
+}
+
+interface RawAiPosterPost {
+  angle: string;
   headline: string;
   subline: string;
   body: string;
 }
 
-const GRAPHIC_TOOL = {
-  name: "graphic_post_results",
-  description:
-    "Return the generated graphic-design social media posts. Call this exactly once with one entry per requested angle.",
+const STAT_TOOL = {
+  name: "stat_post_results",
+  description: "Return one entry per requested angle for the Statistic graphic template.",
   input_schema: {
     type: "object" as const,
     properties: {
       posts: {
         type: "array",
-        description: "One entry per requested angle, in the same order.",
         items: {
           type: "object",
           properties: {
-            angle: { type: "string", description: "Echo back the angle key you were given." },
-            template: {
+            angle: { type: "string", description: "Echo the angle key." },
+            number: {
               type: "string",
-              enum: GRAPHIC_TEMPLATES,
               description:
-                "Layout template. 'stat' = a big number/value with a one-line context (use when the angle has a quantitative anchor like 'top 10%' or '4.8 stars'). 'did_you_know' = mythbust or fact card with a hook + single explanation sentence. 'promo' = pure brand awareness with a tagline + sub-tagline.",
+                "The bare numeric anchor that will be rendered HUGE (e.g., '10', '4.8', '$0'). Use ONLY documented values — top 10% and 4.8 stars or higher are explicitly allowed. Never invent percentages, dollar amounts, or counts. Keep it short, just the number itself, no descriptive text.",
             },
-            headline: {
+            unit: {
               type: "string",
               description:
-                "Display headline. For 'stat': the bare number/value (e.g., '4.8★', 'Top 10%', '$0 down'). For 'did_you_know': a short hook (e.g., 'USDA isn't just for farms.'). For 'promo': the brand tagline (e.g., 'Find an agent who fits.'). Max ~6 words.",
+                "The smaller suffix shown next to the number ('%', '★', ' down', '+'). Empty string is fine if the number stands alone.",
             },
-            subline: {
+            statement: {
               type: "string",
               description:
-                "Single supporting line under the headline. Max ~14 words. For 'stat': what the number means (e.g., 'average rating across every Agent Match partner agent'). For 'did_you_know': a one-sentence elaboration. For 'promo': the value-prop tail (e.g., 'Vetted agents, matched to your situation, ready to help.').",
+                "Single supporting sentence (max ~14 words) that gives the number meaning. Same voice + guardrails as photo-static post copy.",
+            },
+            source: {
+              type: "string",
+              description:
+                "Short attribution line, mono-styled in the render (e.g., 'Industry data, 2024'). Keep it generic — never invent a publication that doesn't exist.",
             },
             body: {
               type: "string",
               description:
-                "3-5 sentence post body in the requested language for the IG caption. End with a newline and 3-5 hashtags. No URLs, no DM/CTA language, no em dashes. Treat this exactly like the photo-post body — same voice, same guardrails.",
+                "3-5 sentence IG caption body in the requested language. Newline + 3-5 hashtags at the end. No URLs, no DM/CTA language, no em dashes.",
             },
           },
-          required: ["angle", "template", "headline", "subline", "body"],
+          required: ["angle", "number", "unit", "statement", "source", "body"],
         },
       },
     },
@@ -229,151 +265,313 @@ const GRAPHIC_TOOL = {
   },
 };
 
-// Each template draws angles from the content-type pool that best fits
-// its tone. Stat + Promo lean on the matching-mission angles (top 10%,
-// 4.8 stars, vetted agents) — those are the only documented quantitative
-// anchors. Did-you-know pulls from the educational pools (USDA + DPA)
-// because those have the mythbust briefs that fit the format.
-const TEMPLATE_CONTENT_TYPES: Record<GraphicTemplate, ContentType[]> = {
-  stat: ["good_agents"],
-  did_you_know: ["edu_zero_down_usda_local", "edu_dpa_local"],
-  promo: ["good_agents"],
-  // AI poster pulls from the same pool as Promo — brand-mission
-  // angles are the easiest for the image model to compose around
-  // since they're tagline-friendly. The poster's visual layout is
-  // up to Nano Banana Pro; Claude only writes the copy.
-  ai_poster: ["good_agents"],
+const DYK_TOOL = {
+  name: "dyk_post_results",
+  description: "Return one entry per requested angle for the Did-You-Know graphic template.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      posts: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            angle: { type: "string", description: "Echo the angle key." },
+            fact: {
+              type: "string",
+              description:
+                "1-2 sentence headline statement, the rendered hook. Punchy and educational, mythbust energy. The eyebrow 'Did you know?' is rendered automatically by the template — don't include it here.",
+            },
+            body: {
+              type: "string",
+              description:
+                "1-2 sentence supporting paragraph (rendered below the fact). Elaborates the fact with practical context. Same voice + guardrails as photo-static post copy.",
+            },
+            caption_body: {
+              type: "string",
+              description:
+                "3-5 sentence IG caption body in the requested language. Newline + 3-5 hashtags at the end. No URLs, no DM/CTA language, no em dashes.",
+            },
+          },
+          required: ["angle", "fact", "body", "caption_body"],
+        },
+      },
+    },
+    required: ["posts"],
+  },
 };
 
-const TEMPLATE_DESCRIPTIONS: Record<GraphicTemplate, string> = {
-  stat: 'a HUGE number/value as the headline ("Top 10%", "4.8 Stars", etc.), with a short context line. Use ONLY documented numeric anchors — top 10% and 4.8 stars or higher are explicitly allowed; never invent percentages, dollar amounts, or counts.',
-  did_you_know: 'a mythbust / fact card. Headline is a punchy statement or hook (the eyebrow "Did you know?" is rendered automatically by the template, so the headline is the actual claim, e.g., "USDA isn\'t just for farms."). Subline is a single-sentence elaboration.',
-  promo: 'pure brand awareness. Headline is the brand tagline ("Find the right agent. Skip the guessing."), subline is the value-prop tail ("Vetted agents matched to your situation"). No specific topic anchoring required.',
-  ai_poster: 'a designed AI-generated poster. Headline is a short, punchy tagline or value-prop (≤6 words, the AI image model will set it as a large display headline). Subline is a single supporting line (≤12 words). Keep both VERY tight — the image model renders typography and longer text becomes garbled. Don\'t use specific numbers, dollar amounts, or percentages.',
+const CAPTION_ONLY_TOOL = {
+  name: "caption_only_results",
+  description: "Return one IG caption body per requested angle. The image copy is fixed at the template level.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      posts: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            angle: { type: "string", description: "Echo the angle key." },
+            body: {
+              type: "string",
+              description:
+                "3-5 sentence IG caption body in the requested language, fitting the angle's brief. Newline + 3-5 hashtags at the end. No URLs, no DM/CTA language, no em dashes.",
+            },
+          },
+          required: ["angle", "body"],
+        },
+      },
+    },
+    required: ["posts"],
+  },
 };
 
-function buildGraphicUserPrompt(language: Language, template: GraphicTemplate): string {
+const AI_POSTER_TOOL = {
+  name: "ai_poster_results",
+  description: "Return one entry per requested angle for the AI-generated poster template.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      posts: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            angle: { type: "string", description: "Echo the angle key." },
+            headline: {
+              type: "string",
+              description:
+                "Short tagline (≤6 words). The image model sets it as a large display headline. Don't use specific numbers, dollar amounts, or percentages — image-model typography is unreliable on long or numeric text.",
+            },
+            subline: {
+              type: "string",
+              description: "Single supporting line (≤12 words).",
+            },
+            body: {
+              type: "string",
+              description:
+                "3-5 sentence IG caption body in the requested language. Newline + 3-5 hashtags at the end. No URLs, no DM/CTA language, no em dashes.",
+            },
+          },
+          required: ["angle", "headline", "subline", "body"],
+        },
+      },
+    },
+    required: ["posts"],
+  },
+};
+
+function buildAngleList(template: GraphicTemplate): string {
   const sourceTypes = TEMPLATE_CONTENT_TYPES[template];
-  // Flatten the angle pools across the source content types, dedupe by
-  // key. Cycle to GRAPHIC_BATCH_POSTS so we always get exactly that many.
-  const seenKeys = new Set<string>();
-  const flatAngles: { key: string; brief: string; sourceType: ContentType }[] = [];
+  const seen = new Set<string>();
+  const flat: { key: string; brief: string }[] = [];
   for (const ct of sourceTypes) {
-    const spec = CONTENT_TYPE_SPECS[ct];
-    for (const a of spec.angles) {
-      if (seenKeys.has(a.key)) continue;
-      seenKeys.add(a.key);
-      flatAngles.push({ key: a.key, brief: a.brief, sourceType: ct });
+    for (const a of CONTENT_TYPE_SPECS[ct].angles) {
+      if (seen.has(a.key)) continue;
+      seen.add(a.key);
+      flat.push({ key: a.key, brief: a.brief });
     }
   }
   const angles =
-    flatAngles.length === 0
+    flat.length === 0
       ? []
-      : Array.from({ length: GRAPHIC_BATCH_POSTS }, (_, i) => flatAngles[i % flatAngles.length]);
+      : Array.from({ length: GRAPHIC_BATCH_POSTS }, (_, i) => flat[i % flat.length]);
+  return angles.map((a, i) => `${i + 1}. angle="${a.key}"\n   brief: ${a.brief}`).join("\n");
+}
 
-  const angleList = angles
-    .map((a, i) => `${i + 1}. angle="${a.key}"\n   brief: ${a.brief}`)
-    .join("\n");
-
-  // Pull reference docs from any source content type that has one.
+function buildRefDocSection(template: GraphicTemplate): string {
+  const sourceTypes = TEMPLATE_CONTENT_TYPES[template];
   const refDocs = sourceTypes
     .map((ct) => CONTENT_TYPE_SPECS[ct].referenceDocument)
     .filter((d): d is string => Boolean(d));
-  const refDocSection = refDocs.length
-    ? `\n\nREFERENCE DOCUMENT(S) (these are the source of truth for any specific claims; rephrase ideas naturally, do NOT copy verbatim, do NOT invent numbers or claims beyond what's here):\n${refDocs.join("\n\n---\n\n")}\n`
-    : "";
-
-  // Topic line summarises every source content type's topic, so Claude
-  // knows the surface area it can pull from.
-  const topicLine = sourceTypes
-    .map((ct) => CONTENT_TYPE_SPECS[ct].topic)
-    .join(" + ");
-  const guardrailLine = sourceTypes
-    .map((ct) => CONTENT_TYPE_SPECS[ct].guardrails)
-    .join(" Also: ");
-
-  return `Language: ${LANGUAGE_LABELS[language]}
-Topic: ${topicLine}
-Guardrails: ${guardrailLine}${refDocSection}
-
-Every post in this batch uses the SAME hand-built SVG template:
-**${template}** — ${TEMPLATE_DESCRIPTIONS[template]}
-
-The user has already picked this template at the UI level — set every post's "template" field to exactly "${template}". No mixing.
-
-Each post is a single 4:5 image with the template's designed layout — big headline, short subline, a CTA — no photography.
-
-Produce one post for each of these angles, preserving the angle key:
-${angleList}
-
-Return your results by calling the graphic_post_results tool.`;
+  if (!refDocs.length) return "";
+  return `\n\nREFERENCE DOCUMENT(S) (source of truth for any specific claims; rephrase ideas naturally, do NOT copy verbatim, do NOT invent numbers or claims beyond what's here):\n${refDocs.join("\n\n---\n\n")}\n`;
 }
 
-function extractGraphicToolPosts(resp: Anthropic.Messages.Message): RawGraphicPost[] {
+function buildBaseHeader(language: Language, template: GraphicTemplate): string {
+  const sourceTypes = TEMPLATE_CONTENT_TYPES[template];
+  const topicLine = sourceTypes.map((ct) => CONTENT_TYPE_SPECS[ct].topic).join(" + ");
+  const guardrailLine = sourceTypes.map((ct) => CONTENT_TYPE_SPECS[ct].guardrails).join(" Also: ");
+  return `Language: ${LANGUAGE_LABELS[language]}\nTopic: ${topicLine}\nGuardrails: ${guardrailLine}${buildRefDocSection(template)}`;
+}
+
+function extractToolPostsTyped<T>(resp: Anthropic.Messages.Message, toolName: string): T[] {
   const tu = resp.content.find((b) => b.type === "tool_use");
   if (!tu || tu.type !== "tool_use") {
-    throw new Error("Claude did not call the graphic_post_results tool");
+    throw new Error(`Claude did not call the ${toolName} tool`);
   }
-  const input = tu.input as { posts?: RawGraphicPost[] };
+  const input = tu.input as { posts?: T[] };
   if (!input.posts || !Array.isArray(input.posts)) {
-    throw new Error("graphic_post_results tool call missing 'posts' array");
+    throw new Error(`${toolName} tool call missing 'posts' array`);
   }
   return input.posts;
+}
+
+// Loose tool typing — each per-template tool has a different
+// input_schema shape, so we widen the parameter type and rely on the
+// runtime to validate.
+type GraphicTool = { name: string; description: string; input_schema: Record<string, unknown> };
+
+async function callTool<T>(prompt: string, tool: GraphicTool): Promise<T[]> {
+  const resp = await client().messages.create({
+    model: MODEL,
+    max_tokens: 4096,
+    system: [
+      { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+    ],
+    tools: [tool as unknown as Anthropic.Messages.ToolUnion],
+    tool_choice: { type: "tool", name: tool.name },
+    messages: [{ role: "user", content: prompt }],
+  });
+  return extractToolPostsTyped<T>(resp, tool.name);
+}
+
+function captionContentTypeFor(template: GraphicTemplate): ContentType {
+  return TEMPLATE_CONTENT_TYPES[template][0];
+}
+
+async function generateStatBatch(language: Language): Promise<GenerateBatchResponse> {
+  const captionContentType = captionContentTypeFor("stat");
+  const prompt = `${buildBaseHeader(language, "stat")}
+
+This batch generates ${GRAPHIC_BATCH_POSTS} Statistic graphic posts. Each post displays a HUGE numeric value as the headline (e.g., 10%, 4.8★) with a one-line statement underneath, plus an attribution source line. Stat callout typography rewards short, punchy values.
+
+Produce one post per angle. Across the batch, vary which numeric anchor you pick — don't repeat "Top 10%" or "4.8 stars" 6 times. Mix in other documented angles (vetted agents, pre-interviewed, buy-side specialists) by extracting their natural numeric framing where possible.
+
+Angles:
+${buildAngleList("stat")}
+
+Return your results by calling the ${STAT_TOOL.name} tool.`;
+
+  try {
+    const raw = await callTool<RawStatPost>(prompt, STAT_TOOL);
+    const posts = raw.map<GenerateBatchResponse["posts"][number]>((p) => {
+      const graphic: StatGraphicData = {
+        template: "stat",
+        number: stripDashes(p.number).trim(),
+        unit: stripDashes(p.unit ?? "").trim(),
+        statement: stripDashes(p.statement).trim(),
+        source: stripDashes(p.source).trim(),
+      };
+      return {
+        angle: p.angle,
+        // Mirror the headline/cta pair into the top-level Post fields
+        // so any UI that reads them (card title, regen) has copy.
+        headline: graphic.number + (graphic.unit ? graphic.unit : ""),
+        cta: CTA_TEXT[language],
+        caption: buildCaption(language, captionContentType, p.body),
+        graphic,
+      };
+    });
+    return { posts };
+  } catch (e) {
+    throw friendlyError(e);
+  }
+}
+
+async function generateDykBatch(language: Language): Promise<GenerateBatchResponse> {
+  const captionContentType = captionContentTypeFor("did_you_know");
+  const prompt = `${buildBaseHeader(language, "did_you_know")}
+
+This batch generates ${GRAPHIC_BATCH_POSTS} Did-You-Know graphic posts. Each post is a fact card: an opening hook fact (1-2 sentences) and a supporting elaboration (1-2 sentences). The eyebrow "Did you know?" is rendered automatically by the template — don't include it in the fact text.
+
+Angles:
+${buildAngleList("did_you_know")}
+
+Return your results by calling the ${DYK_TOOL.name} tool.`;
+
+  try {
+    const raw = await callTool<RawDykPost>(prompt, DYK_TOOL);
+    const posts = raw.map<GenerateBatchResponse["posts"][number]>((p, i) => {
+      const graphic: DykGraphicData = {
+        template: "did_you_know",
+        fact: stripDashes(p.fact).trim(),
+        body: stripDashes(p.body).trim(),
+        index: String(i + 1).padStart(2, "0"),
+      };
+      return {
+        angle: p.angle,
+        headline: graphic.fact,
+        cta: CTA_TEXT[language],
+        caption: buildCaption(language, captionContentType, p.caption_body),
+        graphic,
+      };
+    });
+    return { posts };
+  } catch (e) {
+    throw friendlyError(e);
+  }
+}
+
+async function generatePromoBatch(language: Language): Promise<GenerateBatchResponse> {
+  // Promo on-image copy is fixed brand boilerplate. Claude only writes
+  // distinct IG caption bodies per angle so the same visual posts have
+  // varied accompanying captions instead of being literally identical.
+  const captionContentType = captionContentTypeFor("promo");
+  const prompt = `${buildBaseHeader(language, "promo")}
+
+This batch generates ${GRAPHIC_BATCH_POSTS} Promo posts. The on-image copy is FIXED brand boilerplate (the canonical Agent Match tagline + value prop), so don't write it. Your only job is the IG caption body — one caption per angle, varied across the batch so the same visual post has different supporting copy each time.
+
+Angles:
+${buildAngleList("promo")}
+
+Return your results by calling the ${CAPTION_ONLY_TOOL.name} tool.`;
+
+  try {
+    const raw = await callTool<RawCaptionOnlyPost>(prompt, CAPTION_ONLY_TOOL);
+    const posts = raw.map<GenerateBatchResponse["posts"][number]>((p) => ({
+      angle: p.angle,
+      headline: "The wrong agent can cost you tens of thousands.",
+      cta: CTA_TEXT[language],
+      caption: buildCaption(language, captionContentType, p.body),
+      graphic: { template: "promo" },
+    }));
+    return { posts };
+  } catch (e) {
+    throw friendlyError(e);
+  }
+}
+
+async function generateAiPosterBatch(language: Language): Promise<GenerateBatchResponse> {
+  const captionContentType = captionContentTypeFor("ai_poster");
+  const prompt = `${buildBaseHeader(language, "ai_poster")}
+
+This batch generates ${GRAPHIC_BATCH_POSTS} AI-generated posters. The image model (Nano Banana Pro) renders typography from the headline + subline, so keep both VERY short — long or numeric text comes back garbled. No specific numbers, dollar amounts, or percentages.
+
+Angles:
+${buildAngleList("ai_poster")}
+
+Return your results by calling the ${AI_POSTER_TOOL.name} tool.`;
+
+  try {
+    const raw = await callTool<RawAiPosterPost>(prompt, AI_POSTER_TOOL);
+    const posts = raw.map<GenerateBatchResponse["posts"][number]>((p) => {
+      const headline = stripDashes(p.headline).trim();
+      const subline = stripDashes(p.subline).trim();
+      return {
+        angle: p.angle,
+        headline,
+        cta: CTA_TEXT[language],
+        caption: buildCaption(language, captionContentType, p.body),
+        graphic: { template: "ai_poster", headline, subline },
+      };
+    });
+    return { posts };
+  } catch (e) {
+    throw friendlyError(e);
+  }
 }
 
 export async function generateGraphicBatch(
   language: Language,
   template: GraphicTemplate,
 ): Promise<GenerateBatchResponse> {
-  // The IG caption builder needs SOME content type for URL + form-line
-  // + hashtag selection. Pick the first source content type for the
-  // template — gives consistent, on-brand copy framing per template.
-  const captionContentType = TEMPLATE_CONTENT_TYPES[template][0];
-
-  try {
-    const resp = await client().messages.create({
-      model: MODEL,
-      max_tokens: 4096,
-      system: [
-        {
-          type: "text",
-          text: SYSTEM_PROMPT,
-          cache_control: { type: "ephemeral" },
-        },
-      ],
-      tools: [GRAPHIC_TOOL],
-      tool_choice: { type: "tool", name: GRAPHIC_TOOL.name },
-      messages: [{ role: "user", content: buildGraphicUserPrompt(language, template) }],
-    });
-
-    const raw = extractGraphicToolPosts(resp);
-    const posts = raw.map((p) => {
-      const headline = stripDashes(p.headline).trim();
-      const subline = stripDashes(p.subline).trim();
-      // Force every post to honor the user's selected template — the
-      // prompt asks Claude for this but we belt-and-suspenders it here
-      // since the template field is what the SVG renderer branches on.
-      const finalTemplate = template;
-      return {
-        angle: p.angle,
-        // Top-band-style headline + cta echoed at the top level so any
-        // existing UI that reads post.headline still has something to
-        // show (card title, regen flows, etc.). The renderer reads
-        // graphic.* for the actual SVG layout.
-        headline,
-        cta: CTA_TEXT[language],
-        caption: buildCaption(language, captionContentType, p.body),
-        graphic: {
-          template: finalTemplate,
-          headline,
-          subline,
-          cta: CTA_TEXT[language],
-        },
-      };
-    });
-    return { posts };
-  } catch (e) {
-    throw friendlyError(e);
+  switch (template) {
+    case "stat":          return generateStatBatch(language);
+    case "did_you_know":  return generateDykBatch(language);
+    case "promo":         return generatePromoBatch(language);
+    case "ai_poster":     return generateAiPosterBatch(language);
   }
 }
 

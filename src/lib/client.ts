@@ -1,6 +1,6 @@
 "use client";
 
-import type { ContentType, FitMode, FontVariant, Framing, GenerateBatchResponse, GraphicTemplate, Language, Post, StaticSubMode, StyleVariant } from "./types";
+import type { ContentType, FitMode, FontVariant, Framing, GenerateBatchResponse, GraphicData, GraphicTemplate, Language, Post, StaticSubMode, StyleVariant } from "./types";
 
 interface PhotoResp {
   url: string;
@@ -111,16 +111,11 @@ export async function composeImageDataUrl(args: {
   });
 }
 
-export async function composeGraphicDataUrl(args: {
-  template: GraphicTemplate;
-  headline: string;
-  subline: string;
-  cta: string;
-}): Promise<string> {
+export async function composeGraphicDataUrl(graphic: GraphicData): Promise<string> {
   const res = await fetch("/api/compose-graphic", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(args),
+    body: JSON.stringify({ graphic }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: "compose-graphic failed" }));

@@ -68,12 +68,7 @@ export async function generateBatch(): Promise<void> {
         initial.map(async (post) => {
           if (!post.graphic) return;
           try {
-            const imageDataUrl = await composeGraphicDataUrl({
-              template: post.graphic.template,
-              headline: post.graphic.headline,
-              subline: post.graphic.subline,
-              cta: post.graphic.cta,
-            });
+            const imageDataUrl = await composeGraphicDataUrl(post.graphic);
             useBatchStore.getState().updatePost(post.id, { imageDataUrl });
           } catch (e) {
             const message = e instanceof Error ? e.message : "unknown";

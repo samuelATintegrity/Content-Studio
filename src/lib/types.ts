@@ -46,6 +46,43 @@ export const GRAPHIC_TEMPLATE_LABELS: Record<GraphicTemplate, string> = {
 export const DEFAULT_STATIC_SUB_MODE: StaticSubMode = "photo";
 export const DEFAULT_GRAPHIC_TEMPLATE: GraphicTemplate = "stat";
 
+// Per-template field shapes. Each template displays a different set of
+// values, so we use a discriminated union keyed on template instead of
+// a generic { headline, subline } that pretends one shape fits all.
+export interface StatGraphicData {
+  template: "stat";
+  number: string;        // "73", "$58k", "4.7"
+  unit: string;          // "%", " days", "★"
+  statement: string;     // one-line context
+  source: string;        // attribution line
+}
+
+export interface DykGraphicData {
+  template: "did_you_know";
+  fact: string;          // 1-2 sentence headline
+  body: string;          // 1-2 sentence elaboration
+  index: string;         // "01", "02"
+}
+
+export interface PromoGraphicData {
+  template: "promo";
+  // No fields — promo uses canonical Agent Match brand copy. The
+  // surrounding code generates a fresh IG caption per post but the
+  // on-image text is identical across the batch.
+}
+
+export interface AiPosterGraphicData {
+  template: "ai_poster";
+  headline: string;
+  subline: string;
+}
+
+export type GraphicData =
+  | StatGraphicData
+  | DykGraphicData
+  | PromoGraphicData
+  | AiPosterGraphicData;
+
 export const FORMAT_LABELS: Record<Format, string> = {
   static: "Static · 4:5",
   video: "Video · 9:16",
@@ -97,15 +134,13 @@ export interface Post {
   fitMode: FitMode;
   style: StyleVariant;
   // Graphic-mode fields. Undefined for the standard photo flow. When
-  // set, the renderer skips photo + text-bands and produces an SVG
-  // template instead (stat callout, did-you-know, promo).
+  // set, the renderer routes by template:
+  //   stat        → React template (Light theme), per-field copy
+  //   did_you_know → React template, per-field copy
+  //   promo       → React template, canonical brand copy (no fields)
+  //   ai_poster   → fal.ai Nano Banana Pro from headline + subline
   staticSubMode?: StaticSubMode;
-  graphic?: {
-    template: GraphicTemplate;
-    headline: string;
-    subline: string;
-    cta: string;
-  };
+  graphic?: GraphicData;
   // Stamped at batch dispatch so the Send-to-Buffer flow knows which
   // language's profile set to target. Undefined for older posts in
   // localStorage from before this field landed.
@@ -121,15 +156,10 @@ export interface BatchRequest {
 export interface GenerateBatchResponse {
   posts: Array<
     Pick<Post, "angle" | "headline" | "cta" | "caption"> & {
-      // Graphic-mode posts include the template + all three layout
-      // fields. Undefined for photo posts so the existing static
-      // path stays untouched.
-      graphic?: {
-        template: GraphicTemplate;
-        headline: string;
-        subline: string;
-        cta: string;
-      };
+      // Graphic-mode posts carry the template + per-template fields.
+      // Undefined for photo posts so the existing static path stays
+      // untouched.
+      graphic?: GraphicData;
     }
   >;
 }

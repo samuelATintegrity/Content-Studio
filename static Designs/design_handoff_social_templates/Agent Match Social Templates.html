@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Agent Match — Social Templates</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800;900&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; padding: 0; background: #f3f3f0; font-family: 'Inter', system-ui, sans-serif; }
+  * { box-sizing: border-box; }
+</style>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="posts.jsx"></script>
+<script type="text/babel" src="stat-post.jsx"></script>
+<script type="text/babel" src="dyk-post.jsx"></script>
+<script type="text/babel" src="promo-post.jsx"></script>
+
+<script type="text/babel" data-presets="react">
+const THEMES = [
+  { id: "light",     label: "01 · Light" },
+  { id: "inverse",   label: "02 · Inverse" },
+  { id: "halftone",  label: "03 · Halftone" },
+  { id: "grid",      label: "04 · Grid" },
+  { id: "editorial", label: "05 · Editorial" },
+];
+
+const STAT_CONTENT = [
+  { number: "73", unit: "%", statement: "of homes sell within 30 days when listed by a top 10% agent.", source: "Industry data, 2024" },
+  { number: "$58k", unit: "",  statement: "average gain sellers see when working with a top-tier agent vs. an average one.", source: "Internal analysis, 2025" },
+  { number: "10",  unit: "%", statement: "of agents handle 90% of successful sales in any given market.", source: "MLS data, 2024" },
+  { number: "31",  unit: " days", statement: "faster average close time with a top-performing listing agent.", source: "Industry data, 2024" },
+  { number: "4.7", unit: "★", statement: "minimum aggregate rating across major platforms — every agent we match.", source: "Agent Match standard" },
+];
+
+const DYK_CONTENT = [
+  { fact: "Most buyers interview only one agent — yet the right one can save them tens of thousands.", body: "Top agents negotiate harder, price smarter, and know which contingencies to fight for. Choosing well is the highest-leverage decision you'll make." },
+  { fact: "The top 10% of agents close more deals each year than the bottom 50% combined.", body: "Experience compounds. Higher-volume agents see more situations, build deeper networks, and move faster when timing matters most." },
+  { fact: "A 1% commission difference on a $500k home is $5,000 — but the wrong agent can cost ten times that.", body: "Pricing strategy, marketing reach, and negotiation skill move the final number far more than commission rates do." },
+  { fact: "We interview every agent personally before introducing them to a client.", body: "Filters and ratings catch a lot — but a real conversation surfaces what a profile can't: responsiveness, fit, and follow-through." },
+  { fact: "Part-time agents handle most of the listings — but rarely the best outcomes.", body: "We only refer agents who consistently rank in the top 10% within their market and price range. No part-timers, no rookies, no exceptions." },
+];
+
+function App() {
+  return (
+    <window.DesignCanvas
+      title="Agent Match · Social Templates"
+      subtitle="3 templates × 5 themes · Instagram/Facebook portrait 1080×1350"
+    >
+      <window.DCSection id="stat" title="Template 01 — Statistic Call-out">
+        {THEMES.map((t, i) => (
+          <window.DCArtboard
+            key={t.id}
+            id={`stat-${t.id}`}
+            label={t.label}
+            width={540}
+            height={675}
+          >
+            <window.StatPost theme={t.id} {...STAT_CONTENT[i]} />
+          </window.DCArtboard>
+        ))}
+      </window.DCSection>
+
+      <window.DCSection id="dyk" title="Template 02 — Did You Know? (Education)">
+        {THEMES.map((t, i) => (
+          <window.DCArtboard
+            key={t.id}
+            id={`dyk-${t.id}`}
+            label={t.label}
+            width={540}
+            height={675}
+          >
+            <window.DYKPost theme={t.id} number={`0${i + 1}`} {...DYK_CONTENT[i]} />
+          </window.DCArtboard>
+        ))}
+      </window.DCSection>
+
+      <window.DCSection id="promo" title="Template 03 — Promotional">
+        {THEMES.map((t) => (
+          <window.DCArtboard
+            key={t.id}
+            id={`promo-${t.id}`}
+            label={t.label}
+            width={540}
+            height={675}
+          >
+            <window.PromoPost theme={t.id} />
+          </window.DCArtboard>
+        ))}
+      </window.DCSection>
+    </window.DesignCanvas>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
