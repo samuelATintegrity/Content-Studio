@@ -69,7 +69,7 @@ export async function POST(req: Request) {
     }
 
     const { updateIds, errors } = await createBufferUpdate({
-      profileIds: targets.map((t) => t.profileId),
+      targets: targets.map((t) => ({ profileId: t.profileId, platform: t.platform })),
       text: body.caption,
       videoUrl: body.videoUrl,
       thumbnailUrl: body.thumbnailUrl,

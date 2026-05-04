@@ -165,17 +165,37 @@ interface CreatePostResult {
   error?: string;
 }
 
+// Build the per-platform metadata block for a 9:16 video post. Each
+// platform Buffer supports has a different shape: Facebook + Instagram
+// require an explicit `type: reel` (Facebook posts API rejects video
+// without it; Instagram needs both `type` and `shouldShareToFeed`).
+// TikTok takes only an optional title — we omit. Other platforms
+// accept video without metadata; we don't enable them in this app yet.
+function buildMetadataBlock(platform: SocialPlatform): string {
+  switch (platform) {
+    case "facebook":
+      return `metadata: { facebook: { type: reel } }`;
+    case "instagram":
+      return `metadata: { instagram: { type: reel, shouldShareToFeed: true } }`;
+    case "tiktok":
+      return ``; // TikTok metadata input has no required fields for video posts
+  }
+}
+
 async function createSinglePost(args: {
   channelId: string;
+  platform: SocialPlatform;
   text: string;
   videoUrl: string;
   thumbnailUrl?: string;
   scheduleMode: BufferScheduleMode;
   scheduledAtIso?: string;
 }): Promise<CreatePostResult> {
-  // Inline the enum values (mode, schedulingType) — GraphQL enums can't
-  // ride over JSON variables as plain strings without a typed declaration
-  // and Buffer's input shape isn't fully documented for variables.
+  // Inline the enum values (mode, schedulingType, metadata.*.type) —
+  // GraphQL enums can't ride over JSON variables as plain strings
+  // without a typed declaration, and Buffer's per-platform metadata
+  // shape varies enough that templating is cleaner than nesting four
+  // optional input scalar declarations.
   const modeKeyword = args.scheduleMode === "queue" ? "addToQueue" : "customScheduled";
   const dueAtField =
     args.scheduleMode === "scheduled" && args.scheduledAtIso
@@ -189,6 +209,9 @@ async function createSinglePost(args: {
   const thumbField = args.thumbnailUrl ? `, thumbnailUrl: $thumb` : "";
   const thumbDecl = args.thumbnailUrl ? `, $thumb: String!` : "";
 
+  const metadataBlock = buildMetadataBlock(args.platform);
+  const metadataField = metadataBlock ? `, ${metadataBlock}` : "";
+
   const query = `
     mutation CreatePost($text: String!, $channelId: ChannelId!, $url: String!${thumbDecl}${dueAtDecl}) {
       createPost(input: {
@@ -196,7 +219,7 @@ async function createSinglePost(args: {
         channelId: $channelId,
         schedulingType: automatic,
         mode: ${modeKeyword},
-        assets: { videos: [{ url: $url${thumbField} }] }${dueAtField}
+        assets: { videos: [{ url: $url${thumbField} }] }${metadataField}${dueAtField}
       }) {
         ... on PostActionSuccess { post { id } }
         ... on MutationError { message }
@@ -229,9 +252,16 @@ async function createSinglePost(args: {
 
 // Fan out createPost across N channels (Buffer's GraphQL only accepts
 // one channelId per mutation, unlike the old v1 REST which took
-// profile_ids[]). Returns aggregated success + per-channel errors.
+// profile_ids[]). Each target carries its platform so the per-platform
+// metadata block can be set correctly (Facebook + Instagram need
+// type: reel for vertical video; TikTok needs nothing extra).
+export interface BufferTarget {
+  profileId: string;
+  platform: SocialPlatform;
+}
+
 export async function createBufferUpdate(args: {
-  profileIds: string[];
+  targets: BufferTarget[];
   text: string;
   videoUrl: string;
   thumbnailUrl?: string;
@@ -239,22 +269,23 @@ export async function createBufferUpdate(args: {
   // Required when scheduleMode === "scheduled". ISO 8601 UTC.
   scheduledAtIso?: string;
 }): Promise<{ updateIds: string[]; errors: Array<{ profileId: string; message: string }> }> {
-  if (args.profileIds.length === 0) {
-    throw new Error("createBufferUpdate: at least one profileId required");
+  if (args.targets.length === 0) {
+    throw new Error("createBufferUpdate: at least one target required");
   }
   const mode = args.scheduleMode ?? "queue";
   if (mode === "scheduled" && !args.scheduledAtIso) {
     throw new Error("scheduledAtIso required when scheduleMode === 'scheduled'");
   }
-  const tasks = args.profileIds.map((channelId) =>
+  const tasks = args.targets.map((t) =>
     createSinglePost({
-      channelId,
+      channelId: t.profileId,
+      platform: t.platform,
       text: args.text,
       videoUrl: args.videoUrl,
       thumbnailUrl: args.thumbnailUrl,
       scheduleMode: mode,
       scheduledAtIso: args.scheduledAtIso,
-    }).then((r) => ({ ...r, channelId })),
+    }).then((r) => ({ ...r, channelId: t.profileId })),
   );
   const results = await Promise.all(tasks);
   const updateIds: string[] = [];
@@ -263,12 +294,9 @@ export async function createBufferUpdate(args: {
     if (r.postId) updateIds.push(r.postId);
     else errors.push({ profileId: r.channelId, message: r.error ?? "unknown" });
   }
-  // If every channel failed, surface that as an exception so the API
-  // route returns a 500. Mixed success/failure returns ok with the
-  // per-channel errors array.
   if (updateIds.length === 0) {
     throw new Error(
-      `All ${args.profileIds.length} channels failed: ${errors.map((e) => e.message).join("; ")}`,
+      `All ${args.targets.length} channels failed: ${errors.map((e) => e.message).join("; ")}`,
     );
   }
   return { updateIds, errors };

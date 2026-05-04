@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { Language } from "@/lib/types";
+import { InlineDateTimePicker } from "./InlineDateTimePicker";
 
 type SocialPlatform = "facebook" | "instagram" | "tiktok";
 // Buffer's GraphQL API only supports addToQueue and customScheduled.
@@ -280,12 +281,10 @@ export function BufferSendModal({
               ))}
             </div>
             {scheduleMode === "scheduled" && (
-              <input
-                type="datetime-local"
+              <InlineDateTimePicker
                 value={scheduledLocal}
-                onChange={(e) => setScheduledLocal(e.target.value)}
-                min={defaultScheduledLocal().slice(0, 16)}
-                className="px-3 py-2 rounded-xl bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-sm focus:outline-none focus:border-neutral-400 dark:focus:border-neutral-600"
+                onChange={setScheduledLocal}
+                minDate={new Date()}
               />
             )}
             <p className="text-[11px] text-neutral-500 leading-snug">
