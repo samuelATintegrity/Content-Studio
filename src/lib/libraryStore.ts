@@ -14,7 +14,11 @@ import type { MusicTrack } from "./musicLibrary";
 
 const MANIFEST_VERSION = 1;
 const LOCAL_MIRROR_KEY = "content-studio-library-mirror";
-const WRITE_DEBOUNCE_MS = 600;
+// Short debounce — coalesces rapid edits (typing tags, toggling
+// language pills) but keeps the gap between intent and persistence
+// small enough that a quick page refresh after a delete won't strand
+// the change in memory.
+const WRITE_DEBOUNCE_MS = 250;
 
 // Legacy per-module localStorage keys, used only for one-time migration
 // the first time we boot against an empty server manifest.
@@ -83,6 +87,30 @@ function scheduleSync(): void {
       console.error("[library] PUT /api/library failed", err);
     });
   }, WRITE_DEBOUNCE_MS);
+}
+
+// Fire the pending manifest write immediately, with `keepalive: true`
+// so it survives page navigation. Called from the unload + visibility
+// handlers so a refresh / tab-close right after a delete doesn't
+// strand the change. No-op when nothing is pending.
+function flushPendingWrite(): void {
+  if (typeof window === "undefined") return;
+  if (!_writeTimer) return;
+  clearTimeout(_writeTimer);
+  _writeTimer = null;
+  // Snapshot the body now — _state could mutate further before the
+  // browser actually transmits the request.
+  const body = JSON.stringify(_state);
+  try {
+    void fetch("/api/library", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body,
+      keepalive: true,
+    });
+  } catch (err) {
+    console.error("[library] flushPendingWrite failed", err);
+  }
 }
 
 async function fetchManifest(): Promise<Manifest | null> {
@@ -220,7 +248,9 @@ export async function bootstrapLibrary(): Promise<void> {
 
 // Refresh on tab focus so picking up where you left off on another device
 // doesn't require a hard reload. Cross-tab sync on the same machine flows
-// through the storage event.
+// through the storage event. Flush any pending write the moment the tab
+// is going away (refresh, close, background) so a delete + refresh race
+// doesn't strand the change in the debounce window.
 if (typeof window !== "undefined") {
   window.addEventListener("focus", () => {
     void refreshLibrary();
@@ -231,5 +261,11 @@ if (typeof window !== "undefined") {
     if (!mirror) return;
     _state = mirror;
     emitAll();
+  });
+  window.addEventListener("beforeunload", flushPendingWrite);
+  // visibilitychange covers iOS / Android backgrounding (where
+  // beforeunload is unreliable) and the desktop tab-switch case.
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushPendingWrite();
   });
 }
