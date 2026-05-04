@@ -7,7 +7,7 @@ import { regenerateOneVideo } from "@/lib/generateVideo";
 import { BufferSendModal } from "./BufferSendModal";
 
 type SocialPlatform = "facebook" | "instagram" | "tiktok";
-type ScheduleMode = "now" | "queue" | "scheduled" | "draft";
+type ScheduleMode = "queue" | "scheduled";
 
 // Last-action confirmation shown on the card after the send modal closes.
 type BufferReceipt =
@@ -131,10 +131,8 @@ export function VideoCard({ post }: { post: VideoPost }) {
 
 function modeLabel(mode: ScheduleMode): string {
   switch (mode) {
-    case "now":       return "Posting now";
     case "queue":     return "Queued (next slot)";
     case "scheduled": return "Scheduled";
-    case "draft":     return "Saved as draft";
   }
 }
 

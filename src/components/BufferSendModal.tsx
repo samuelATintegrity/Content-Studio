@@ -4,7 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 import type { Language } from "@/lib/types";
 
 type SocialPlatform = "facebook" | "instagram" | "tiktok";
-type ScheduleMode = "now" | "queue" | "scheduled" | "draft";
+// Buffer's GraphQL API only supports addToQueue and customScheduled.
+// The legacy v1 "Post now" / "Save as draft" modes are gone.
+type ScheduleMode = "queue" | "scheduled";
 
 const PLATFORM_LABELS: Record<SocialPlatform, string> = {
   facebook: "Facebook",
@@ -60,7 +62,7 @@ export function BufferSendModal({
   const [available, setAvailable] = useState<SocialPlatform[] | null>(null);
   const [availableError, setAvailableError] = useState<string | null>(null);
   const [selectedPlatforms, setSelectedPlatforms] = useState<Set<SocialPlatform>>(new Set());
-  const [scheduleMode, setScheduleMode] = useState<ScheduleMode>("draft");
+  const [scheduleMode, setScheduleMode] = useState<ScheduleMode>("queue");
   const [scheduledLocal, setScheduledLocal] = useState<string>(() => defaultScheduledLocal());
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -260,10 +262,8 @@ export function BufferSendModal({
             <div className="flex flex-wrap gap-2">
               {(
                 [
-                  { mode: "now" as const,       label: "Post now" },
                   { mode: "queue" as const,     label: "Add to queue" },
                   { mode: "scheduled" as const, label: "Pick a time" },
-                  { mode: "draft" as const,     label: "Save as draft" },
                 ]
               ).map(({ mode, label }) => (
                 <button
@@ -289,10 +289,8 @@ export function BufferSendModal({
               />
             )}
             <p className="text-[11px] text-neutral-500 leading-snug">
-              {scheduleMode === "now" && "Posts immediately on every selected channel. Buffer transcodes the video first — usually under a minute."}
-              {scheduleMode === "queue" && "Adds to the top of each channel's auto-queue, posting at the channel's next scheduled slot."}
+              {scheduleMode === "queue" && "Adds to each channel's auto-queue, posting at the channel's next scheduled slot."}
               {scheduleMode === "scheduled" && "Posts at the time above (your local timezone)."}
-              {scheduleMode === "draft" && "Lands in Buffer drafts. You'll finish scheduling in Buffer's UI."}
             </p>
           </div>
 

@@ -16,12 +16,10 @@ interface Body {
   videoUrl: string;
   caption: string;
   thumbnailUrl?: string;
-  // Subset of platforms to send to. Defaults to every platform mapped
-  // for the language. Used by the send modal's per-channel checkboxes.
   platforms?: SocialPlatform[];
-  // Schedule semantics. "draft" (default) leaves the post in the user's
-  // Buffer drafts so they finish scheduling there; "now" / "queue" /
-  // "scheduled" let Content Studio be the only surface they touch.
+  // Buffer GraphQL public API only exposes "queue" (addToQueue) and
+  // "scheduled" (customScheduled). The legacy v1 "now" and "draft"
+  // modes were dropped after the migration.
   scheduleMode?: BufferScheduleMode;
   // Required when scheduleMode === "scheduled". Unix seconds (UTC).
   scheduledAtSec?: number;
@@ -47,12 +45,13 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           error:
-            `No matching Buffer profiles for language "${body.language}". Set BUFFER_PROFILE_MAP_JSON or pick a different channel.`,
+            `No matching Buffer channels for language "${body.language}". Set BUFFER_PROFILE_MAP_JSON or pick a different channel.`,
         },
         { status: 400 },
       );
     }
 
+    let scheduledAtIso: string | undefined;
     if (body.scheduleMode === "scheduled") {
       if (!body.scheduledAtSec || !Number.isFinite(body.scheduledAtSec)) {
         return NextResponse.json(
@@ -60,28 +59,42 @@ export async function POST(req: Request) {
           { status: 400 },
         );
       }
-      // Reject past timestamps so users don't accidentally fire posts
-      // they thought were future-dated.
       if (body.scheduledAtSec * 1000 < Date.now() - 60_000) {
         return NextResponse.json(
           { error: "scheduledAtSec is in the past — pick a future time." },
           { status: 400 },
         );
       }
+      scheduledAtIso = new Date(body.scheduledAtSec * 1000).toISOString();
     }
 
-    const { updateIds } = await createBufferUpdate({
+    const { updateIds, errors } = await createBufferUpdate({
       profileIds: targets.map((t) => t.profileId),
       text: body.caption,
       videoUrl: body.videoUrl,
       thumbnailUrl: body.thumbnailUrl,
-      scheduleMode: body.scheduleMode ?? "draft",
-      scheduledAtSec: body.scheduledAtSec,
+      scheduleMode: body.scheduleMode ?? "queue",
+      scheduledAtIso,
     });
+
+    // Map any per-channel failures back to platform names so the UI can
+    // tell the user "TikTok failed" rather than echoing channel UUIDs.
+    const failedByProfileId = new Map(errors.map((e) => [e.profileId, e.message]));
+    const queued = targets
+      .filter((t) => !failedByProfileId.has(t.profileId))
+      .map((t) => ({ platform: t.platform, profileId: t.profileId }));
+    const failed = targets
+      .filter((t) => failedByProfileId.has(t.profileId))
+      .map((t) => ({
+        platform: t.platform,
+        profileId: t.profileId,
+        message: failedByProfileId.get(t.profileId) ?? "unknown",
+      }));
 
     return NextResponse.json({
       ok: true,
-      queued: targets.map((t) => ({ platform: t.platform, profileId: t.profileId })),
+      queued,
+      failed,
       updateIds,
     });
   } catch (e) {

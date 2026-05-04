@@ -1,12 +1,19 @@
-// Server-side helpers for the Buffer relay. Reads the access token + a
-// language-keyed profile map from env vars so the user only has to set
-// it up once per deploy. Per-language map shape:
+// Server-side helpers for Buffer's GraphQL API at https://api.buffer.com.
 //
-//   { "en": { "facebook": "...", "instagram": "...", "tiktok": "..." },
-//     "tl": {...}, "es": {...}, "zh": {...} }
+// Buffer killed the v1 REST API in 2025 — new tokens are OIDC-style
+// personal keys for the GraphQL endpoint only. We migrated the entire
+// integration to the new schema. Public function names + the
+// BUFFER_PROFILE_MAP_JSON env var shape are preserved so the
+// surrounding routes / UI didn't need a sweeping rename, but the
+// values inside the map are now Buffer Channel IDs (not legacy
+// Profile IDs). Re-fetch them via /api/social/buffer/profiles after
+// the migration deploy.
 //
-// Missing platforms inside a language entry are silently skipped at queue
-// time so the user can roll out language-by-language without errors.
+// Token: generate at https://publish.buffer.com/settings/api ("New Key").
+// Map shape (BUFFER_PROFILE_MAP_JSON):
+//   { "en": { "facebook": "<channel_id>", "instagram": "<channel_id>",
+//             "tiktok": "<channel_id>" }, "tl": {...}, ... }
+// Missing platform entries are silently skipped at queue time.
 
 import type { Language } from "./types";
 
@@ -16,16 +23,7 @@ export interface BufferProfileMap {
   [language: string]: Partial<Record<SocialPlatform, string>>;
 }
 
-const BUFFER_API_BASE = "https://api.bufferapp.com/1";
-
-export interface BufferProfile {
-  id: string;
-  service: string;          // "facebook" | "instagram" | "tiktok" | other
-  service_username?: string;
-  formatted_username?: string;
-  // Facebook returns a "type" of "page" / "profile". Pages are what we want.
-  service_type?: string;
-}
+const BUFFER_API = "https://api.buffer.com";
 
 export function getBufferAccessToken(): string {
   const token = process.env.BUFFER_ACCESS_TOKEN;
@@ -33,9 +31,6 @@ export function getBufferAccessToken(): string {
   return token;
 }
 
-// Parses BUFFER_PROFILE_MAP_JSON. Returns an empty map (and no throw) when
-// unset so the diagnostic /profiles route still works for first-time
-// setup before the user has filled in the mapping.
 export function getBufferProfileMap(): BufferProfileMap {
   const raw = process.env.BUFFER_PROFILE_MAP_JSON;
   if (!raw) return {};
@@ -62,168 +57,6 @@ export function profileIdsForLanguage(
   return out;
 }
 
-export async function listBufferProfiles(): Promise<BufferProfile[]> {
-  const token = getBufferAccessToken();
-  const res = await fetch(`${BUFFER_API_BASE}/profiles.json?access_token=${encodeURIComponent(token)}`, {
-    method: "GET",
-    cache: "no-store",
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Buffer /profiles.json failed (${res.status}): ${text.slice(0, 300)}`);
-  }
-  return (await res.json()) as BufferProfile[];
-}
-
-// Schedule mode for Buffer updates:
-//   "now"       → post immediately
-//   "queue"     → add to the top of each profile's auto-queue (next slot)
-//   "scheduled" → custom timestamp (scheduledAt, unix seconds)
-//   "draft"     → land in the user's drafts (default; user schedules later)
-export type BufferScheduleMode = "now" | "queue" | "scheduled" | "draft";
-
-// Create a Buffer "update" (queued post) on one or more profiles. Video
-// URL must be publicly accessible (R2 URLs work). Throws on Buffer-side
-// error. Schedule semantics handled via Buffer's `now` / `top` /
-// `scheduled_at` form fields per the API spec.
-export async function createBufferUpdate(args: {
-  profileIds: string[];
-  text: string;
-  videoUrl: string;
-  thumbnailUrl?: string;
-  scheduleMode?: BufferScheduleMode;
-  // Required when scheduleMode === "scheduled". Unix seconds (UTC).
-  scheduledAtSec?: number;
-}): Promise<{ updateIds: string[] }> {
-  if (args.profileIds.length === 0) {
-    throw new Error("createBufferUpdate: at least one profileId required");
-  }
-
-  const token = getBufferAccessToken();
-  const form = new URLSearchParams();
-  form.append("text", args.text);
-  for (const id of args.profileIds) form.append("profile_ids[]", id);
-  form.append("media[video]", args.videoUrl);
-  if (args.thumbnailUrl) form.append("media[thumbnail]", args.thumbnailUrl);
-  form.append("media[link]", args.videoUrl);
-
-  const mode = args.scheduleMode ?? "draft";
-  if (mode === "now") {
-    form.append("now", "true");
-  } else if (mode === "queue") {
-    form.append("top", "true");
-  } else if (mode === "scheduled") {
-    if (!args.scheduledAtSec || !Number.isFinite(args.scheduledAtSec)) {
-      throw new Error("scheduledAtSec required when scheduleMode === 'scheduled'");
-    }
-    form.append("scheduled_at", String(Math.floor(args.scheduledAtSec)));
-  }
-  // mode === "draft": no extra fields → Buffer stages it in drafts.
-
-  const res = await fetch(
-    `${BUFFER_API_BASE}/updates/create.json?access_token=${encodeURIComponent(token)}`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body: form.toString(),
-    },
-  );
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Buffer /updates/create.json failed (${res.status}): ${text.slice(0, 500)}`);
-  }
-  const json = (await res.json()) as {
-    success?: boolean;
-    updates?: Array<{ id: string }>;
-    message?: string;
-  };
-  if (!json.success || !Array.isArray(json.updates)) {
-    throw new Error(json.message ?? "Buffer returned an unsuccessful response");
-  }
-  return { updateIds: json.updates.map((u) => u.id) };
-}
-
-// A pending (scheduled or queued) Buffer update enriched with the
-// profile's display info so the UI can render "X · facebook · @page-name"
-// without a second round-trip.
-export interface PendingBufferUpdate {
-  id: string;
-  text: string;
-  scheduledAtSec: number | null;
-  status: string;
-  service: string;            // facebook | instagram | tiktok
-  profileId: string;
-  profileUsername?: string;
-  videoThumbnailUrl?: string;
-}
-
-// List every pending update across the configured profile IDs. Buffer's
-// /profiles/:id/updates/pending.json is per-profile, so we fan out and
-// merge. Empty profileIds returns an empty list (callers should pass the
-// flattened map).
-export async function listPendingUpdates(profileIds: string[]): Promise<PendingBufferUpdate[]> {
-  if (profileIds.length === 0) return [];
-  const token = getBufferAccessToken();
-  const profiles = await listBufferProfiles().catch(() => [] as BufferProfile[]);
-  const usernameById = new Map(profiles.map((p) => [p.id, p.formatted_username ?? p.service_username] as const));
-  const serviceById = new Map(profiles.map((p) => [p.id, p.service] as const));
-
-  const tasks = profileIds.map(async (pid) => {
-    const url = `${BUFFER_API_BASE}/profiles/${encodeURIComponent(pid)}/updates/pending.json?access_token=${encodeURIComponent(token)}&count=50`;
-    const res = await fetch(url, { method: "GET", cache: "no-store" });
-    if (!res.ok) return [] as PendingBufferUpdate[];
-    const json = (await res.json()) as {
-      updates?: Array<{
-        id: string;
-        text?: string;
-        scheduled_at?: number | null;
-        status?: string;
-        media?: { thumbnail?: string };
-      }>;
-    };
-    const updates = Array.isArray(json.updates) ? json.updates : [];
-    return updates.map<PendingBufferUpdate>((u) => ({
-      id: u.id,
-      text: u.text ?? "",
-      scheduledAtSec: typeof u.scheduled_at === "number" ? u.scheduled_at : null,
-      status: u.status ?? "buffer",
-      service: serviceById.get(pid) ?? "",
-      profileId: pid,
-      profileUsername: usernameById.get(pid),
-      videoThumbnailUrl: u.media?.thumbnail,
-    }));
-  });
-
-  const results = await Promise.all(tasks);
-  const flat = results.flat();
-  // Surface earliest-scheduled first; queued (no scheduled_at) drops to end.
-  flat.sort((a, b) => {
-    const aT = a.scheduledAtSec ?? Number.POSITIVE_INFINITY;
-    const bT = b.scheduledAtSec ?? Number.POSITIVE_INFINITY;
-    return aT - bT;
-  });
-  return flat;
-}
-
-// Delete a scheduled / queued / draft Buffer update by its id.
-export async function destroyBufferUpdate(updateId: string): Promise<void> {
-  const token = getBufferAccessToken();
-  const res = await fetch(
-    `${BUFFER_API_BASE}/updates/${encodeURIComponent(updateId)}/destroy.json?access_token=${encodeURIComponent(token)}`,
-    { method: "POST" },
-  );
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Buffer destroy failed (${res.status}): ${text.slice(0, 300)}`);
-  }
-  const json = (await res.json()) as { success?: boolean; message?: string };
-  if (!json.success) {
-    throw new Error(json.message ?? "Buffer destroy returned unsuccessful");
-  }
-}
-
-// Flatten the language→platform map into a list of all profile IDs the
-// user has wired up. Used by the pending-updates fanout.
 export function allMappedProfileIds(map: BufferProfileMap): string[] {
   const ids: string[] = [];
   for (const lang of Object.keys(map)) {
@@ -235,4 +68,290 @@ export function allMappedProfileIds(map: BufferProfileMap): string[] {
     }
   }
   return Array.from(new Set(ids));
+}
+
+// ── GraphQL transport ────────────────────────────────────────────────
+
+interface GraphQLResponse<T> {
+  data?: T;
+  errors?: Array<{ message: string; path?: (string | number)[] }>;
+}
+
+async function bufferGraphQL<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
+  const token = getBufferAccessToken();
+  const res = await fetch(BUFFER_API, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ query, variables }),
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Buffer API ${res.status}: ${text.slice(0, 400)}`);
+  }
+  const json = (await res.json()) as GraphQLResponse<T>;
+  if (json.errors?.length) {
+    throw new Error(json.errors.map((e) => e.message).join("; "));
+  }
+  if (!json.data) throw new Error("Buffer GraphQL returned no data");
+  return json.data;
+}
+
+// ── Organization (cached per process) ────────────────────────────────
+
+let _orgIdCache: string | null = null;
+
+export async function getOrganizationId(): Promise<string> {
+  if (_orgIdCache) return _orgIdCache;
+  const data = await bufferGraphQL<{ account: { organizations: Array<{ id: string }> } }>(
+    `query GetOrganizations { account { organizations { id } } }`,
+  );
+  const org = data.account?.organizations?.[0];
+  if (!org) throw new Error("No Buffer organization found for this account");
+  _orgIdCache = org.id;
+  return org.id;
+}
+
+// ── Channels (formerly "profiles") ───────────────────────────────────
+
+// Slim shape returned by /api/social/buffer/profiles. Field names mirror
+// the old REST shape so the existing setup-discovery route doesn't need
+// to change its response contract.
+export interface BufferProfile {
+  id: string;
+  service: string;
+  service_username?: string;
+  formatted_username?: string;
+  service_type?: string;
+}
+
+interface RawChannel {
+  id: string;
+  name: string;
+  displayName: string;
+  service: string;
+}
+
+export async function listBufferProfiles(): Promise<BufferProfile[]> {
+  const orgId = await getOrganizationId();
+  const data = await bufferGraphQL<{ channels: RawChannel[] }>(
+    `query GetChannels($input: ChannelsInput!) {
+      channels(input: $input) { id name displayName service }
+    }`,
+    { input: { organizationId: orgId } },
+  );
+  return data.channels.map((c) => ({
+    id: c.id,
+    service: c.service,
+    service_username: c.name,
+    formatted_username: c.displayName || c.name,
+  }));
+}
+
+// ── Post creation ────────────────────────────────────────────────────
+
+// New Buffer schedule modes (subset we support):
+//   "queue"     → schedulingType: automatic, mode: addToQueue
+//   "scheduled" → schedulingType: automatic, mode: customScheduled, dueAt: <iso>
+// The legacy "now" and "draft" v1 modes are NOT exposed by Buffer's
+// GraphQL public API, so we no longer offer them in the UI.
+export type BufferScheduleMode = "queue" | "scheduled";
+
+interface CreatePostResult {
+  postId?: string;
+  error?: string;
+}
+
+async function createSinglePost(args: {
+  channelId: string;
+  text: string;
+  videoUrl: string;
+  thumbnailUrl?: string;
+  scheduleMode: BufferScheduleMode;
+  scheduledAtIso?: string;
+}): Promise<CreatePostResult> {
+  // Inline the enum values (mode, schedulingType) — GraphQL enums can't
+  // ride over JSON variables as plain strings without a typed declaration
+  // and Buffer's input shape isn't fully documented for variables.
+  const modeKeyword = args.scheduleMode === "queue" ? "addToQueue" : "customScheduled";
+  const dueAtField =
+    args.scheduleMode === "scheduled" && args.scheduledAtIso
+      ? `, dueAt: $dueAt`
+      : "";
+  const dueAtDecl =
+    args.scheduleMode === "scheduled" && args.scheduledAtIso
+      ? `, $dueAt: DateTime!`
+      : "";
+
+  const thumbField = args.thumbnailUrl ? `, thumbnailUrl: $thumb` : "";
+  const thumbDecl = args.thumbnailUrl ? `, $thumb: String!` : "";
+
+  const query = `
+    mutation CreatePost($text: String!, $channelId: ChannelId!, $url: String!${thumbDecl}${dueAtDecl}) {
+      createPost(input: {
+        text: $text,
+        channelId: $channelId,
+        schedulingType: automatic,
+        mode: ${modeKeyword},
+        assets: { videos: [{ url: $url${thumbField} }] }${dueAtField}
+      }) {
+        ... on PostActionSuccess { post { id } }
+        ... on MutationError { message }
+      }
+    }
+  `;
+
+  const variables: Record<string, unknown> = {
+    text: args.text,
+    channelId: args.channelId,
+    url: args.videoUrl,
+  };
+  if (args.thumbnailUrl) variables.thumb = args.thumbnailUrl;
+  if (args.scheduleMode === "scheduled" && args.scheduledAtIso) {
+    variables.dueAt = args.scheduledAtIso;
+  }
+
+  try {
+    const data = await bufferGraphQL<{
+      createPost: { post?: { id: string }; message?: string };
+    }>(query, variables);
+    if (data.createPost.post?.id) {
+      return { postId: data.createPost.post.id };
+    }
+    return { error: data.createPost.message ?? "Buffer returned no post id" };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "createPost failed" };
+  }
+}
+
+// Fan out createPost across N channels (Buffer's GraphQL only accepts
+// one channelId per mutation, unlike the old v1 REST which took
+// profile_ids[]). Returns aggregated success + per-channel errors.
+export async function createBufferUpdate(args: {
+  profileIds: string[];
+  text: string;
+  videoUrl: string;
+  thumbnailUrl?: string;
+  scheduleMode?: BufferScheduleMode;
+  // Required when scheduleMode === "scheduled". ISO 8601 UTC.
+  scheduledAtIso?: string;
+}): Promise<{ updateIds: string[]; errors: Array<{ profileId: string; message: string }> }> {
+  if (args.profileIds.length === 0) {
+    throw new Error("createBufferUpdate: at least one profileId required");
+  }
+  const mode = args.scheduleMode ?? "queue";
+  if (mode === "scheduled" && !args.scheduledAtIso) {
+    throw new Error("scheduledAtIso required when scheduleMode === 'scheduled'");
+  }
+  const tasks = args.profileIds.map((channelId) =>
+    createSinglePost({
+      channelId,
+      text: args.text,
+      videoUrl: args.videoUrl,
+      thumbnailUrl: args.thumbnailUrl,
+      scheduleMode: mode,
+      scheduledAtIso: args.scheduledAtIso,
+    }).then((r) => ({ ...r, channelId })),
+  );
+  const results = await Promise.all(tasks);
+  const updateIds: string[] = [];
+  const errors: Array<{ profileId: string; message: string }> = [];
+  for (const r of results) {
+    if (r.postId) updateIds.push(r.postId);
+    else errors.push({ profileId: r.channelId, message: r.error ?? "unknown" });
+  }
+  // If every channel failed, surface that as an exception so the API
+  // route returns a 500. Mixed success/failure returns ok with the
+  // per-channel errors array.
+  if (updateIds.length === 0) {
+    throw new Error(
+      `All ${args.profileIds.length} channels failed: ${errors.map((e) => e.message).join("; ")}`,
+    );
+  }
+  return { updateIds, errors };
+}
+
+// ── Pending posts (scheduled / queued) ───────────────────────────────
+
+export interface PendingBufferUpdate {
+  id: string;
+  text: string;
+  scheduledAtSec: number | null;
+  status: string;
+  service: string;
+  profileId: string;
+  profileUsername?: string;
+  videoThumbnailUrl?: string;
+}
+
+interface RawPostNode {
+  id: string;
+  text: string;
+  dueAt: string | null;
+  status: string;
+  channel: { id: string; service: string; displayName: string; name: string };
+  assets?: { source?: string };
+}
+
+// List every "scheduled" post across the configured channels. The
+// channelIds filter scopes results to the user's mapped channels only.
+export async function listPendingUpdates(profileIds: string[]): Promise<PendingBufferUpdate[]> {
+  if (profileIds.length === 0) return [];
+  const orgId = await getOrganizationId();
+  const data = await bufferGraphQL<{ posts: { edges: Array<{ node: RawPostNode }> } }>(
+    `query GetScheduledPosts($input: PostsInput!) {
+      posts(input: $input) {
+        edges {
+          node {
+            id
+            text
+            dueAt
+            status
+            channel { id service displayName name }
+            assets { source }
+          }
+        }
+      }
+    }`,
+    {
+      input: {
+        organizationId: orgId,
+        sort: [{ field: "dueAt", direction: "asc" }],
+        filter: { status: ["scheduled"], channelIds: profileIds },
+      },
+    },
+  );
+  const nodes = data.posts.edges.map((e) => e.node);
+  return nodes.map<PendingBufferUpdate>((n) => ({
+    id: n.id,
+    text: n.text ?? "",
+    scheduledAtSec: n.dueAt ? Math.floor(new Date(n.dueAt).getTime() / 1000) : null,
+    status: n.status ?? "scheduled",
+    service: n.channel?.service ?? "",
+    profileId: n.channel?.id ?? "",
+    profileUsername: n.channel?.displayName || n.channel?.name,
+    videoThumbnailUrl: n.assets?.source,
+  }));
+}
+
+// ── Post deletion ────────────────────────────────────────────────────
+
+export async function destroyBufferUpdate(updateId: string): Promise<void> {
+  const data = await bufferGraphQL<{
+    deletePost: { id?: string; message?: string };
+  }>(
+    `mutation DeletePost($input: DeletePostInput!) {
+      deletePost(input: $input) {
+        ... on DeletePostSuccess { id }
+        ... on MutationError { message }
+      }
+    }`,
+    { input: { id: updateId } },
+  );
+  if (!data.deletePost.id) {
+    throw new Error(data.deletePost.message ?? "deletePost failed");
+  }
 }
