@@ -24,7 +24,7 @@ export interface ComposeArgs {
 
 const DEFAULT_OUTRO_S = 3;
 const DEFAULT_OUTRO_BG = "#0B2545"; // brand primary
-const DEFAULT_MUSIC_VOLUME = 0.15; // ~+2dB louder than the prior 0.12, ~+8dB over the original 0.06
+const DEFAULT_MUSIC_VOLUME = 0.25; // ~+4 dB louder than the prior 0.15, ~+12 dB over the original 0.06
 // Narration is mixed at slightly under unity so the music sits up alongside
 // it more comfortably. ~-1.5 dB; small enough that no make-up gain is needed.
 const NARRATION_VOLUME = 0.85;
@@ -345,7 +345,7 @@ const WHOOSH_VOLUME = 0.7;
 // fires at the boundary since the intro is short and the user didn't
 // flag drift there.
 const WHOOSH_OUTRO_POST_CUT_S = 0.1;
-const INFLUENCER_MUSIC_VOLUME = 0.15;
+const INFLUENCER_MUSIC_VOLUME = 0.25; // ~+4 dB louder than the prior 0.15
 // Music fades out across the LAST MUSIC_FADE_OUT_S seconds of the middle
 // segment (constant declared at the top of this file for narration mode)
 // so the fade ends at the moment the outro begins. Outro plays clean.
