@@ -192,6 +192,22 @@ function readLegacyLocalStorage(): Manifest {
 // hits the manual refresh affordance. Silent on failure — we keep showing
 // whatever we already had.
 export async function refreshLibrary(): Promise<void> {
+  // Flush any pending mutation BEFORE fetching. Otherwise a focus
+  // refetch can adopt server state that's older than the in-memory
+  // state (because the debounced PUT hasn't fired yet), clobbering the
+  // user's recent change. After the flush, the server reflects intent
+  // and the GET round-trip is safe.
+  if (_writeTimer) {
+    clearTimeout(_writeTimer);
+    _writeTimer = null;
+    try {
+      await pushManifest(_state);
+    } catch (err) {
+      console.error("[library] flush-before-refresh failed", err);
+      // Don't return — a fresh GET is still useful even if our PUT
+      // failed (network blip, etc.).
+    }
+  }
   try {
     const server = await fetchManifest();
     if (!server) return;

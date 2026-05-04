@@ -93,8 +93,29 @@ export function addLibraryClip(input: Omit<LibraryClip, "id" | "savedAt">): Libr
 
 export function removeLibraryClip(id: string): void {
   const store = read();
+  const removed = store.clips.find((c) => c.id === id);
   store.clips = store.clips.filter((c) => c.id !== id);
   write(store);
+  // Cascade: drop any saved-set slots that referenced this URL. Without
+  // this, the merged library view (which OVERWRITES library entries with
+  // saved-set entries on URL collision) would resurrect the deleted clip
+  // as a kind: "saved" tile that has no delete button — looks identical
+  // to the user, who concludes the delete didn't work. Drop sets that
+  // end up empty.
+  if (removed) {
+    const sets = getSlice("sets");
+    let touched = false;
+    const next = sets
+      .map((s) => {
+        const slots = s.slots.filter(
+          (slot) => slot.videoUrl !== removed.url && slot.imageUrl !== removed.posterUrl,
+        );
+        if (slots.length !== s.slots.length) touched = true;
+        return { ...s, slots };
+      })
+      .filter((s) => s.slots.length > 0);
+    if (touched) setSlice("sets", next);
+  }
 }
 
 // Patch a clip in-place. Used by the tag-scan pipeline to attach tags
