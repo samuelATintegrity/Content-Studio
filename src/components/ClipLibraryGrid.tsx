@@ -60,7 +60,13 @@ export function ClipLibraryGrid() {
   const [clips, setClips] = useState<MergedClip[]>(() => listMergedLibrary());
   const [filter, setFilter] = useState("");
   const [activeTags, setActiveTags] = useState<Set<string>>(new Set());
-  const [groupBy, setGroupBy] = useState<GroupBy>("none");
+  // Library defaults to category view since the clip pool grows fast and a
+  // flat grid gets unwieldy. Each section starts collapsed so the page is
+  // clean on open; users tap a header to expand. A search query or active
+  // tag chip force-expands every section that has matches so searches
+  // never disappear behind a collapsed header.
+  const [groupBy, setGroupBy] = useState<GroupBy>("category");
+  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [aiModalOpen, setAiModalOpen] = useState(false);
   // When set, opens the metadata modal pre-seeded from this clip. Used
   // for the pencil-edit flow AND the auto-prompt after upload / AI clip
@@ -379,6 +385,16 @@ export function ClipLibraryGrid() {
           groupBy={groupBy}
           clips={middleFiltered}
           renderTile={renderTile}
+          expandedSections={expandedSections}
+          forceExpandAll={q.length > 0 || activeTags.size > 0}
+          onToggleSection={(key) =>
+            setExpandedSections((prev) => {
+              const next = new Set(prev);
+              if (next.has(key)) next.delete(key);
+              else next.add(key);
+              return next;
+            })
+          }
           extraTiles={
             <>
               <UploadTile onUploaded={(id) => setEditingClipKey(id)} />
@@ -679,19 +695,28 @@ function BookendTile({
 }
 
 // Group the filtered clips into sections (Category or Language) and render
-// each section as a header + sub-grid. Clips that match multiple category
-// tags appear under each matching section so the user can find them either
-// way; the "Other" bucket catches clips with no matching category.
+// each section as a collapsible header + sub-grid. Clips that match multiple
+// category tags appear under each matching section so the user can find them
+// either way; the "Other" bucket catches clips with no matching category.
+// Sections collapse by default to keep the page clean as the library grows;
+// search / tag filters force every section open so query results stay
+// visible.
 function GroupedSections({
   groupBy,
   clips,
   renderTile,
   extraTiles,
+  expandedSections,
+  forceExpandAll,
+  onToggleSection,
 }: {
   groupBy: "category" | "language";
   clips: MergedClip[];
   renderTile: (clip: MergedClip) => React.ReactNode;
   extraTiles: React.ReactNode;
+  expandedSections: Set<string>;
+  forceExpandAll: boolean;
+  onToggleSection: (key: string) => void;
 }) {
   let sections: Array<{ key: string; label: string; clips: MergedClip[] }>;
   if (groupBy === "category") {
@@ -718,25 +743,48 @@ function GroupedSections({
   const empty = visible.length === 0;
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-3">
       {/* Always show the upload + AI tiles in a top row regardless of grouping. */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 mb-3">
         {extraTiles}
       </div>
       {empty ? null : (
-        visible.map((s) => (
-          <section key={s.key}>
-            <h4 className="text-[11px] uppercase tracking-[0.16em] text-neutral-500 font-semibold mb-2 px-1 flex items-baseline gap-2">
-              <span>{s.label}</span>
-              <span className="text-neutral-400 dark:text-neutral-600 font-normal">
-                {s.clips.length}
-              </span>
-            </h4>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-              {s.clips.map((c) => renderTile(c))}
-            </div>
-          </section>
-        ))
+        visible.map((s) => {
+          const isExpanded = forceExpandAll || expandedSections.has(s.key);
+          return (
+            <section key={s.key}>
+              <button
+                type="button"
+                onClick={() => onToggleSection(s.key)}
+                className="w-full flex items-center gap-2 px-1 py-2 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-900 transition text-left"
+                aria-expanded={isExpanded}
+              >
+                <svg
+                  className={`w-3 h-3 shrink-0 text-neutral-500 transition-transform ${isExpanded ? "rotate-90" : ""}`}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polyline points="9 18 15 12 9 6" />
+                </svg>
+                <span className="text-[11px] uppercase tracking-[0.16em] text-neutral-500 font-semibold">
+                  {s.label}
+                </span>
+                <span className="text-[11px] text-neutral-400 dark:text-neutral-600 font-normal tabular-nums">
+                  {s.clips.length}
+                </span>
+              </button>
+              {isExpanded && (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 mt-1">
+                  {s.clips.map((c) => renderTile(c))}
+                </div>
+              )}
+            </section>
+          );
+        })
       )}
     </div>
   );
