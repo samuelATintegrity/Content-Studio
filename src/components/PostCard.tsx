@@ -235,6 +235,11 @@ export function PostCard({ post }: { post: Post }) {
 
   const fontLabel = post.fontVariant === "serif" ? "Serif" : "Sans";
   const fitLabel = post.fitMode === "contain" ? "Fit" : "Fill";
+  // Graphic posts skip every photo-specific affordance: no photo edit
+  // (no underlying photo to reposition), no AI prompt input (the design
+  // is pure SVG), no New-image / New-caption regen (graphics regen via
+  // a fresh full batch), no font / style / fit chips (template-locked).
+  const isGraphic = post.staticSubMode === "graphic";
 
   return (
     <div className="rounded-3xl overflow-hidden border bg-white dark:bg-neutral-950 border-neutral-200 dark:border-neutral-900 shadow-[0_2px_8px_-3px_rgba(0,0,0,0.08)] hover:shadow-[0_8px_24px_-6px_rgba(0,0,0,0.15)] transition-shadow flex flex-col">
@@ -254,14 +259,16 @@ export function PostCard({ post }: { post: Post }) {
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={post.imageDataUrl} alt={post.angle} className="w-full h-full object-cover" />
             <div className="absolute top-2.5 right-2.5 flex gap-1.5 opacity-100 lg:opacity-0 lg:group-hover/image:opacity-100 transition focus-within:opacity-100">
-              <button
-                onClick={() => setEditingPhoto(true)}
-                disabled={!post.photoUrl}
-                className="px-3.5 py-1.5 rounded-full text-xs font-semibold bg-black/70 text-white backdrop-blur-md hover:bg-black/85 disabled:opacity-40"
-                title="Zoom and reposition the photo"
-              >
-                Edit
-              </button>
+              {!isGraphic && (
+                <button
+                  onClick={() => setEditingPhoto(true)}
+                  disabled={!post.photoUrl}
+                  className="px-3.5 py-1.5 rounded-full text-xs font-semibold bg-black/70 text-white backdrop-blur-md hover:bg-black/85 disabled:opacity-40"
+                  title="Zoom and reposition the photo"
+                >
+                  Edit
+                </button>
+              )}
               <button
                 onClick={downloadImage}
                 className="px-3.5 py-1.5 rounded-full text-xs font-semibold bg-black/70 text-white backdrop-blur-md hover:bg-black/85"
@@ -292,17 +299,24 @@ export function PostCard({ post }: { post: Post }) {
           >
             {post.angle.replace(/_/g, " ")}
           </span>
-          <div className="flex gap-1 shrink-0 text-[10px] uppercase tracking-[0.1em] text-neutral-500">
-            <Chip onClick={cycleStyle} disabled={busy !== null || !post.photoUrl} title="Cycle visual style">
-              {STYLE_LABELS[post.style]}
-            </Chip>
-            <Chip onClick={toggleFitMode} disabled={busy !== null || !post.photoUrl} title="Toggle Fit / Fill">
-              {fitLabel}
-            </Chip>
-            <Chip onClick={toggleFont} disabled={busy !== null || !post.photoUrl} title="Swap headline font">
-              Aa · {fontLabel}
-            </Chip>
-          </div>
+          {!isGraphic && (
+            <div className="flex gap-1 shrink-0 text-[10px] uppercase tracking-[0.1em] text-neutral-500">
+              <Chip onClick={cycleStyle} disabled={busy !== null || !post.photoUrl} title="Cycle visual style">
+                {STYLE_LABELS[post.style]}
+              </Chip>
+              <Chip onClick={toggleFitMode} disabled={busy !== null || !post.photoUrl} title="Toggle Fit / Fill">
+                {fitLabel}
+              </Chip>
+              <Chip onClick={toggleFont} disabled={busy !== null || !post.photoUrl} title="Swap headline font">
+                Aa · {fontLabel}
+              </Chip>
+            </div>
+          )}
+          {isGraphic && post.graphic && (
+            <span className="shrink-0 text-[10px] uppercase tracking-[0.1em] text-neutral-500 font-medium">
+              {post.graphic.template.replace(/_/g, " ")}
+            </span>
+          )}
         </div>
 
         {/* Caption with hover-to-copy. Scrollable so the full body is readable
@@ -325,7 +339,8 @@ export function PostCard({ post }: { post: Post }) {
 
         {/* AI image prompt — generates via Nano Banana 2 and replaces the photo.
             Input is full-width on its own row so long prompts stay readable;
-            shuffle + generate sit underneath. */}
+            shuffle + generate sit underneath. Photo-mode only. */}
+        {!isGraphic && (
         <div className="flex flex-col gap-1.5">
           <input
             value={aiPrompt}
@@ -355,16 +370,19 @@ export function PostCard({ post }: { post: Post }) {
             </button>
           </div>
         </div>
+        )}
 
-        <div className="flex flex-wrap gap-1.5 pt-1">
-          <BtnSmall onClick={regenImage} disabled={busy !== null}>
-            {busy === "photo" ? "…" : "New image"}
-          </BtnSmall>
-          <BtnSmall onClick={regenCopy} disabled={busy !== null}>
-            {busy === "copy" ? "…" : "New caption"}
-          </BtnSmall>
-          <BtnSmall onClick={() => setEditing(true)}>Edit text</BtnSmall>
-        </div>
+        {!isGraphic && (
+          <div className="flex flex-wrap gap-1.5 pt-1">
+            <BtnSmall onClick={regenImage} disabled={busy !== null}>
+              {busy === "photo" ? "…" : "New image"}
+            </BtnSmall>
+            <BtnSmall onClick={regenCopy} disabled={busy !== null}>
+              {busy === "copy" ? "…" : "New caption"}
+            </BtnSmall>
+            <BtnSmall onClick={() => setEditing(true)}>Edit text</BtnSmall>
+          </div>
+        )}
 
         {post.photoCredit && (
           <div className="text-[10px] text-neutral-400 dark:text-neutral-600 pt-1 mt-auto">

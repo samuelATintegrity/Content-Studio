@@ -2,6 +2,7 @@
 
 import { useBatchStore } from "@/store/batchStore";
 import {
+  composeGraphicDataUrl,
   composeImageDataUrl,
   fetchAndCacheAiImage,
   fetchBatchCopy,
@@ -29,7 +30,60 @@ const CACHED_AI_COUNT = 4;
 // batch; the caption gets an [image error: ...] tail so it's visible.
 export async function generateBatch(): Promise<void> {
   const store = useBatchStore.getState();
-  const { language, contentType, setLoading, setError, setPosts, resetUsedPhotoIds, addUsedPhotoId } = store;
+  const { language, contentType, staticSubMode, setLoading, setError, setPosts, resetUsedPhotoIds, addUsedPhotoId } = store;
+
+  // Graphic sub-mode is a wholly separate pipeline — no image fetching,
+  // no Pexels fallback, no library pick. Just Claude copy + an SVG render
+  // per post via the /api/compose-graphic route.
+  if (staticSubMode === "graphic") {
+    setLoading(true);
+    setError(null);
+    setPosts([]);
+    try {
+      const copy = await fetchBatchCopy(language, contentType, "graphic");
+      const initial = copy.posts.map((p, i) => ({
+        id: `${Date.now()}-${i}`,
+        angle: p.angle,
+        headline: p.headline,
+        cta: p.cta,
+        caption: p.caption,
+        photoUrl: "",
+        imageDataUrl: undefined,
+        fontVariant: "sans" as FontVariant,
+        framing: { ...DEFAULT_FRAMING },
+        fitMode: DEFAULT_FIT_MODE,
+        style: DEFAULT_STYLE,
+        staticSubMode: "graphic" as const,
+        graphic: p.graphic,
+      }));
+      setPosts(initial);
+
+      await Promise.all(
+        initial.map(async (post) => {
+          if (!post.graphic) return;
+          try {
+            const imageDataUrl = await composeGraphicDataUrl({
+              template: post.graphic.template,
+              headline: post.graphic.headline,
+              subline: post.graphic.subline,
+              cta: post.graphic.cta,
+            });
+            useBatchStore.getState().updatePost(post.id, { imageDataUrl });
+          } catch (e) {
+            useBatchStore.getState().updatePost(post.id, {
+              caption:
+                post.caption + `\n\n[graphic error: ${e instanceof Error ? e.message : "unknown"}]`,
+            });
+          }
+        }),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "unknown error");
+    } finally {
+      setLoading(false);
+    }
+    return;
+  }
 
   setLoading(true);
   setError(null);

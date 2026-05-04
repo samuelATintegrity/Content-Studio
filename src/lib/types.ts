@@ -24,6 +24,17 @@ export const CONTENT_TYPE_LABELS: Record<ContentType, string> = {
 
 export type Format = "static" | "video";
 
+// Static-format sub-modes. "photo" is the original photo + text-bands
+// composition; "graphic" is the hand-built SVG template lane (stat
+// callouts, did-you-know cards, brand promos).
+export type StaticSubMode = "photo" | "graphic";
+
+// Hand-built graphic templates. Each renders a different SVG layout
+// from the same { headline, subline, cta } field shape.
+export type GraphicTemplate = "stat" | "did_you_know" | "promo";
+
+export const DEFAULT_STATIC_SUB_MODE: StaticSubMode = "photo";
+
 export const FORMAT_LABELS: Record<Format, string> = {
   static: "Static · 4:5",
   video: "Video · 9:16",
@@ -74,15 +85,38 @@ export interface Post {
   framing: Framing;
   fitMode: FitMode;
   style: StyleVariant;
+  // Graphic-mode fields. Undefined for the standard photo flow. When
+  // set, the renderer skips photo + text-bands and produces an SVG
+  // template instead (stat callout, did-you-know, promo).
+  staticSubMode?: StaticSubMode;
+  graphic?: {
+    template: GraphicTemplate;
+    headline: string;
+    subline: string;
+    cta: string;
+  };
 }
 
 export interface BatchRequest {
   language: Language;
   contentType: ContentType;
+  staticSubMode?: StaticSubMode;
 }
 
 export interface GenerateBatchResponse {
-  posts: Array<Pick<Post, "angle" | "headline" | "cta" | "caption">>;
+  posts: Array<
+    Pick<Post, "angle" | "headline" | "cta" | "caption"> & {
+      // Graphic-mode posts include the template + all three layout
+      // fields. Undefined for photo posts so the existing static
+      // path stays untouched.
+      graphic?: {
+        template: GraphicTemplate;
+        headline: string;
+        subline: string;
+        cta: string;
+      };
+    }
+  >;
 }
 
 // ── Video workflow ───────────────────────────────────────────────────

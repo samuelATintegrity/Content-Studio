@@ -1,6 +1,6 @@
 "use client";
 
-import type { ContentType, FitMode, FontVariant, Framing, GenerateBatchResponse, Language, Post, StyleVariant } from "./types";
+import type { ContentType, FitMode, FontVariant, Framing, GenerateBatchResponse, GraphicTemplate, Language, Post, StaticSubMode, StyleVariant } from "./types";
 
 interface PhotoResp {
   url: string;
@@ -12,11 +12,12 @@ interface PhotoResp {
 export async function fetchBatchCopy(
   language: Language,
   contentType: ContentType,
+  staticSubMode?: StaticSubMode,
 ): Promise<GenerateBatchResponse> {
   const res = await fetch("/api/generate-batch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ language, contentType }),
+    body: JSON.stringify({ language, contentType, staticSubMode }),
   });
   if (!res.ok) throw new Error((await res.json()).error ?? "generate-batch failed");
   return res.json();
@@ -99,6 +100,30 @@ export async function composeImageDataUrl(args: {
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: "compose failed" }));
     throw new Error(err.error ?? "compose failed");
+  }
+  const blob = await res.blob();
+  return await new Promise<string>((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result as string);
+    r.onerror = () => reject(r.error);
+    r.readAsDataURL(blob);
+  });
+}
+
+export async function composeGraphicDataUrl(args: {
+  template: GraphicTemplate;
+  headline: string;
+  subline: string;
+  cta: string;
+}): Promise<string> {
+  const res = await fetch("/api/compose-graphic", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(args),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "compose-graphic failed" }));
+    throw new Error(err.error ?? "compose-graphic failed");
   }
   const blob = await res.blob();
   return await new Promise<string>((resolve, reject) => {

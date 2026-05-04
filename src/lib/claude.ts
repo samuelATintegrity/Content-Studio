@@ -6,6 +6,7 @@ import {
   LANGUAGE_LABELS,
   type ContentType,
   type GenerateBatchResponse,
+  type GraphicTemplate,
   type Language,
 } from "./types";
 
@@ -159,6 +160,166 @@ export async function generateBatch(
 
     const raw = extractToolPosts(resp);
     return { posts: finalizePosts(raw, language, contentType) };
+  } catch (e) {
+    throw friendlyError(e);
+  }
+}
+
+// ── Graphic batch ────────────────────────────────────────────────────
+//
+// Hand-built SVG-template lane: stat callouts, did-you-know cards,
+// brand promo posters. Same Claude pipeline as photo posts but a
+// different tool schema — Claude picks one of three templates per post
+// and fills three short text fields rather than the photo-style
+// headline + caption.
+
+export const GRAPHIC_BATCH_POSTS = 6;
+
+const GRAPHIC_TEMPLATES: GraphicTemplate[] = ["stat", "did_you_know", "promo"];
+
+interface RawGraphicPost {
+  angle: string;
+  template: GraphicTemplate;
+  headline: string;
+  subline: string;
+  body: string;
+}
+
+const GRAPHIC_TOOL = {
+  name: "graphic_post_results",
+  description:
+    "Return the generated graphic-design social media posts. Call this exactly once with one entry per requested angle.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      posts: {
+        type: "array",
+        description: "One entry per requested angle, in the same order.",
+        items: {
+          type: "object",
+          properties: {
+            angle: { type: "string", description: "Echo back the angle key you were given." },
+            template: {
+              type: "string",
+              enum: GRAPHIC_TEMPLATES,
+              description:
+                "Layout template. 'stat' = a big number/value with a one-line context (use when the angle has a quantitative anchor like 'top 10%' or '4.8 stars'). 'did_you_know' = mythbust or fact card with a hook + single explanation sentence. 'promo' = pure brand awareness with a tagline + sub-tagline.",
+            },
+            headline: {
+              type: "string",
+              description:
+                "Display headline. For 'stat': the bare number/value (e.g., '4.8★', 'Top 10%', '$0 down'). For 'did_you_know': a short hook (e.g., 'USDA isn't just for farms.'). For 'promo': the brand tagline (e.g., 'Find an agent who fits.'). Max ~6 words.",
+            },
+            subline: {
+              type: "string",
+              description:
+                "Single supporting line under the headline. Max ~14 words. For 'stat': what the number means (e.g., 'average rating across every Agent Match partner agent'). For 'did_you_know': a one-sentence elaboration. For 'promo': the value-prop tail (e.g., 'Vetted agents, matched to your situation, ready to help.').",
+            },
+            body: {
+              type: "string",
+              description:
+                "3-5 sentence post body in the requested language for the IG caption. End with a newline and 3-5 hashtags. No URLs, no DM/CTA language, no em dashes. Treat this exactly like the photo-post body — same voice, same guardrails.",
+            },
+          },
+          required: ["angle", "template", "headline", "subline", "body"],
+        },
+      },
+    },
+    required: ["posts"],
+  },
+};
+
+function buildGraphicUserPrompt(language: Language, contentType: ContentType): string {
+  const spec = CONTENT_TYPE_SPECS[contentType];
+  const baseAngles = spec.angles;
+  const angles =
+    baseAngles.length === 0
+      ? []
+      : Array.from({ length: GRAPHIC_BATCH_POSTS }, (_, i) => baseAngles[i % baseAngles.length]);
+
+  const angleList = angles
+    .map(
+      (a, i) =>
+        `${i + 1}. angle="${a.key}"\n   brief: ${a.brief}`,
+    )
+    .join("\n");
+
+  const refDocSection = spec.referenceDocument
+    ? `\n\nREFERENCE DOCUMENT (this is the source of truth for any specific claims; rephrase ideas naturally, do NOT copy verbatim, do NOT invent numbers or claims beyond what's here):\n${spec.referenceDocument}\n`
+    : "";
+
+  return `Language: ${LANGUAGE_LABELS[language]}
+Topic: ${spec.topic}
+Guardrails: ${spec.guardrails}${refDocSection}
+
+These posts will render as DESIGNED GRAPHICS (not photos). Each post is a single 4:5 image with a designed layout — big headline, short subline, a CTA — no photography. The user picks one of three templates per post:
+
+- "stat": a HUGE number / value as the headline, with a short context line. Pick this when the angle's brief lends itself to a quantitative anchor (top 10%, 4.8 stars, $0 down, etc.). Don't invent stats — only use what's in the reference document or the topic guardrails.
+- "did_you_know": a mythbust / fact card. Headline is a short hook (often "Did you know?" or a punchy statement), subline is a single-sentence elaboration. Pick this for educational angles.
+- "promo": pure brand awareness. Headline is the tagline, subline is the value-prop tail. Use sparingly — at most 1-2 of the ${GRAPHIC_BATCH_POSTS} posts. Don't repeat the same tagline across the batch.
+
+Across the batch, mix templates so the user gets variety. Default to "stat" or "did_you_know" — promo is filler.
+
+Produce one post for each of these angles, preserving the angle key:
+${angleList}
+
+Return your results by calling the graphic_post_results tool.`;
+}
+
+function extractGraphicToolPosts(resp: Anthropic.Messages.Message): RawGraphicPost[] {
+  const tu = resp.content.find((b) => b.type === "tool_use");
+  if (!tu || tu.type !== "tool_use") {
+    throw new Error("Claude did not call the graphic_post_results tool");
+  }
+  const input = tu.input as { posts?: RawGraphicPost[] };
+  if (!input.posts || !Array.isArray(input.posts)) {
+    throw new Error("graphic_post_results tool call missing 'posts' array");
+  }
+  return input.posts;
+}
+
+export async function generateGraphicBatch(
+  language: Language,
+  contentType: ContentType,
+): Promise<GenerateBatchResponse> {
+  try {
+    const resp = await client().messages.create({
+      model: MODEL,
+      max_tokens: 4096,
+      system: [
+        {
+          type: "text",
+          text: SYSTEM_PROMPT,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
+      tools: [GRAPHIC_TOOL],
+      tool_choice: { type: "tool", name: GRAPHIC_TOOL.name },
+      messages: [{ role: "user", content: buildGraphicUserPrompt(language, contentType) }],
+    });
+
+    const raw = extractGraphicToolPosts(resp);
+    const posts = raw.map((p) => {
+      const headline = stripDashes(p.headline).trim();
+      const subline = stripDashes(p.subline).trim();
+      return {
+        angle: p.angle,
+        // Top-band-style headline + cta echoed at the top level so any
+        // existing UI that reads post.headline still has something to
+        // show (card title, regen flows, etc.). The renderer reads
+        // graphic.* for the actual SVG layout.
+        headline,
+        cta: CTA_TEXT[language],
+        caption: buildCaption(language, contentType, p.body),
+        graphic: {
+          template: p.template,
+          headline,
+          subline,
+          cta: CTA_TEXT[language],
+        },
+      };
+    });
+    return { posts };
   } catch (e) {
     throw friendlyError(e);
   }

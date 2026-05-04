@@ -177,6 +177,8 @@ export function Sidebar({ drawerOpen = false, onClose }: SidebarProps = {}) {
         </Section>
       )}
 
+      {format === "static" && <StaticSubModeSection />}
+
       {format === "video" && subMode === "influencer" && (
         <AvatarSection
           language={language}
@@ -385,6 +387,29 @@ function MusicLibrarySection() {
         </span>
       </button>
       {open && <MusicLibraryModal onClose={() => setOpen(false)} />}
+    </Section>
+  );
+}
+
+function StaticSubModeSection() {
+  const staticSubMode = useBatchStore((s) => s.staticSubMode);
+  const setStaticSubMode = useBatchStore((s) => s.setStaticSubMode);
+  return (
+    <Section title="Sub-mode">
+      <div className="flex flex-col gap-2">
+        <Pill
+          selected={staticSubMode === "photo"}
+          onClick={() => setStaticSubMode("photo")}
+        >
+          Photo
+        </Pill>
+        <Pill
+          selected={staticSubMode === "graphic"}
+          onClick={() => setStaticSubMode("graphic")}
+        >
+          Graphic
+        </Pill>
+      </div>
     </Section>
   );
 }

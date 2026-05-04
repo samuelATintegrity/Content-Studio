@@ -4,12 +4,14 @@ import { create } from "zustand";
 import {
   DEFAULT_FORMAT,
   DEFAULT_MESSAGE_THEME,
+  DEFAULT_STATIC_SUB_MODE,
   type ContentType,
   type Format,
   type ImageSlot,
   type Language,
   type MessageTheme,
   type Post,
+  type StaticSubMode,
   type VideoPost,
 } from "@/lib/types";
 import { PICKED_CLIP_COUNT } from "@/lib/videoPrompts";
@@ -20,6 +22,9 @@ interface BatchState {
   format: Format;
   language: Language;
   contentType: ContentType;
+  // Static-format sub-mode: "photo" (Nano Banana + text bands) vs
+  // "graphic" (hand-built SVG templates). Mirrors the video subMode.
+  staticSubMode: StaticSubMode;
   posts: Post[];
   videoPosts: VideoPost[];
   imageSlots: ImageSlot[];
@@ -60,6 +65,7 @@ interface BatchState {
   deselectClip: (key: string) => void;
   clearClipSelection: () => void;
   setSubMode: (m: SubMode) => void;
+  setStaticSubMode: (m: StaticSubMode) => void;
   setSelectedAvatarName: (name: string | null) => void;
   setSelectedIntroClipUrl: (url: string | null) => void;
   setSelectedOutroClipUrl: (url: string | null) => void;
@@ -79,6 +85,7 @@ export const useBatchStore = create<BatchState>((set) => ({
   selectedClipUrls: [],
   selectedClipKeys: [],
   subMode: "narration",
+  staticSubMode: DEFAULT_STATIC_SUB_MODE,
   selectedAvatarName: null,
   selectedIntroClipUrl: null,
   selectedOutroClipUrl: null,
@@ -160,6 +167,12 @@ export const useBatchStore = create<BatchState>((set) => ({
       selectedIntroClipUrl: null,
       selectedOutroClipUrl: null,
     }),
+  // Switching static sub-mode (photo ↔ graphic) clears any in-progress
+  // batch — the two flows produce posts of different shapes (photo
+  // posts have photoUrl + framing, graphic posts have a graphic.* block)
+  // so leaving stale state across the swap creates rendering glitches.
+  setStaticSubMode: (staticSubMode) =>
+    set({ staticSubMode, posts: [] }),
   // Switching the avatar invalidates the intro/outro picks, since both are
   // filtered by avatar.
   setSelectedAvatarName: (name) =>
