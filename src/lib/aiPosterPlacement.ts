@@ -21,7 +21,16 @@ function client(): Anthropic {
 
 const VISION_MODEL = "claude-sonnet-4-6";
 
-export type PosterRegion = "top" | "bottom" | "left" | "right" | "center";
+export type PosterRegion =
+  | "top"
+  | "bottom"
+  | "left"
+  | "right"
+  | "center"
+  | "top-left"
+  | "top-right"
+  | "bottom-left"
+  | "bottom-right";
 export type PosterTextColor = "white" | "black";
 export type PosterScrim = "none" | "bottom-fade" | "top-fade" | "left-fade" | "right-fade" | "vignette";
 
@@ -49,9 +58,19 @@ const PLACEMENT_TOOL = {
       },
       region: {
         type: "string",
-        enum: ["top", "bottom", "left", "right", "center"],
+        enum: [
+          "top",
+          "bottom",
+          "left",
+          "right",
+          "center",
+          "top-left",
+          "top-right",
+          "bottom-left",
+          "bottom-right",
+        ],
         description:
-          "Which area of the frame the text occupies. HARD RULE: this region MUST NOT intersect with subjectLocation. If the subject fills the top half, you must pick bottom. If the subject is upper-right, pick bottom or bottom-left. If the subject extends through both halves, pick the region with the most negative space. 'center' only when the entire frame is calm enough that a vignette can lift centered text.",
+          "Which area of the frame the text occupies. HARD RULE: this region MUST NOT intersect subjectLocation. Use full halves (top, bottom, left, right) when the calm zone fills that whole half. Use a CORNER (top-left, top-right, bottom-left, bottom-right) when the subject is centered or vertical and only a corner is fully clear — this also forces the text into a narrower vertical column, leaving the rest of the image breathing room (e.g., a single matchstick centered: bottom-left). 'center' only when the entire frame is calm enough for a vignette.",
       },
       textColor: {
         type: "string",
@@ -75,18 +94,23 @@ const PLACEMENT_TOOL = {
   },
 };
 
-const PROMPT = `This is the bare background of a vertical 4:5 social-media poster (1080x1350). I'm about to composite a 4-5 word headline (display weight) plus a one-sentence subline on top of it.
+function buildPrompt(plannedZone?: "top" | "bottom"): string {
+  const hintLine = plannedZone
+    ? `\nCREATIVE INTENT: this image was generated with the headline planned for the ${plannedZone.toUpperCase()} of the frame. The artist composed the subject in the opposite zone and left the ${plannedZone} as calm negative space. Default to region=${plannedZone} unless the actual generated image clearly diverged from that intent — in which case override with the better placement and note why in rationale.`
+    : "";
+  return `This is the bare background of a vertical 4:5 social-media poster (1080x1350). I'm about to composite a 4-5 word headline (display weight) plus a one-sentence subline on top of it.${hintLine}
 
 YOUR JOB: pick a placement that NEVER overlaps the focal subject and is legible at thumbnail size.
 
 Procedure (follow in order; do not shortcut):
 1. Identify the focal subject and describe its position in subjectLocation. Be specific about edges and outliers — a tail, a hand, smoke, an extended limb, an object reaching outward all count as subject.
-2. Pick region. The HARD RULE is: region MUST NOT intersect subjectLocation. If the subject fills the upper half, region=bottom. If the subject reaches into the corners, choose the region furthest from the subject's center of mass.
+2. Pick region. The HARD RULE is: region MUST NOT intersect subjectLocation. If the subject fills the upper half, region=bottom. If the subject reaches into the corners, choose the region furthest from the subject's center of mass. If the subject is vertical or centered (a single matchstick, a standing figure, a centered object), prefer a CORNER (top-left, top-right, bottom-left, bottom-right) so the text becomes a narrow column and the subject keeps full breathing room.
 3. Pick textColor. White is the default; only pick black when the chosen region is dominantly bright (white walls, paper, snow, blown-out sky).
-4. Pick scrim. Default ON, matched to region. Pick 'none' ONLY for flat negative-space regions.
+4. Pick scrim. Default ON, matched to region. For corners, pick the matching half-fade (top-left/top-right → top-fade; bottom-left/bottom-right → bottom-fade). Pick 'none' ONLY for flat negative-space regions.
 5. Write a one-sentence rationale citing which rule drove the choice.
 
 Return your choice via the ${PLACEMENT_TOOL.name} tool. Be decisive.`;
+}
 
 // Sensible fallback if the Vision call fails or returns garbage.
 // Bottom-fade + white text reads on virtually every photo and is the
@@ -101,6 +125,7 @@ const FALLBACK: PosterPlacement = {
 export async function pickPosterPlacement(
   imageBytes: Uint8Array,
   contentType: string = "image/png",
+  plannedZone?: "top" | "bottom",
 ): Promise<PosterPlacement> {
   try {
     const b64 = Buffer.from(imageBytes).toString("base64");
@@ -123,20 +148,32 @@ export async function pickPosterPlacement(
                 data: b64,
               },
             },
-            { type: "text", text: PROMPT },
+            { type: "text", text: buildPrompt(plannedZone) },
           ],
         },
       ],
     });
+    // Build a zone-aware fallback: if Vision fails and we know the
+    // artist's intent, honor it. Otherwise default to the safe
+    // bottom-fade + white layout.
+    const zoneFallback: PosterPlacement =
+      plannedZone === "top"
+        ? {
+            region: "top",
+            textColor: "white",
+            scrim: "top-fade",
+            rationale: `fallback (using artist's plannedZone=top)`,
+          }
+        : FALLBACK;
     const tu = resp.content.find((b) => b.type === "tool_use");
     if (!tu || tu.type !== "tool_use") {
       console.warn("[aiPosterPlacement] vision did not call the tool — using fallback");
-      return FALLBACK;
+      return zoneFallback;
     }
     const input = tu.input as Partial<PosterPlacement>;
     if (!input.region || !input.textColor || !input.scrim) {
       console.warn("[aiPosterPlacement] vision returned partial payload — using fallback", input);
-      return FALLBACK;
+      return zoneFallback;
     }
     const placement: PosterPlacement = {
       region: input.region as PosterRegion,

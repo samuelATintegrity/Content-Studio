@@ -77,17 +77,26 @@ export interface PromoGraphicData {
 }
 
 // AI poster v2 splits the old text-baked-into-Nano flow into three
-// stages: (1) Claude writes the imagePrompt + copy, (2) Nano renders a
-// bare image (no text), (3) ImageResponse composites Geist-typeset
+// stages: (1) Claude writes the imagePrompt + copy + commits to a
+// text zone, (2) Nano renders a bare image with the text zone left
+// as calm negative space, (3) ImageResponse composites Geist-typeset
 // headline/subline over the image with placement chosen by Claude
-// Vision. The imagePrompt is captured here so the route can hash it
-// for R2 caching and so regen with the same image but different copy
-// doesn't re-spend a Nano generation.
+// Vision (using textZone as a strong hint). The imagePrompt is
+// captured here so the route can hash it for R2 caching and so
+// regen with the same image but different copy doesn't re-spend a
+// Nano generation.
+export type AiPosterTextZone = "top" | "bottom";
+
 export interface AiPosterGraphicData {
   template: "ai_poster";
   headline: string;
   subline: string;
   imagePrompt: string;
+  // Where Claude planned the text to land on THIS card. The image
+  // prompt was written to leave this zone as calm negative space and
+  // the subject placed in the opposite zone. Vision uses this as the
+  // default when picking a final region.
+  textZone: AiPosterTextZone;
   conceptKey?: string;  // which metaphor seed produced this card
 }
 

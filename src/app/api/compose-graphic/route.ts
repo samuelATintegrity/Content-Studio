@@ -131,7 +131,15 @@ export async function POST(req: Request) {
         );
       }
       const imageBytes = await getOrGenerateBareAiPoster(body.graphic.imagePrompt);
-      const placement = await pickPosterPlacement(imageBytes, "image/png");
+      // Pass Claude's planned text zone (top or bottom) to Vision as
+      // the strong default — Vision still confirms or overrides based
+      // on what the actual generated image looks like, but starts from
+      // the artist's intent rather than guessing from scratch.
+      const placement = await pickPosterPlacement(
+        imageBytes,
+        "image/png",
+        body.graphic.textZone,
+      );
       const imageDataUrl = `data:image/png;base64,${Buffer.from(imageBytes).toString("base64")}`;
 
       const element = renderTemplate({

@@ -500,17 +500,21 @@ export function PromoPostLight({
 // Auto-shrink the headline based on character length. Tuned for Geist
 // Black on a 1080-wide canvas with comfortable margins. Subline scales
 // proportionally so the visual weight ratio stays consistent.
-function aiHeadlineFontSize(text: string): number {
+function aiHeadlineFontSize(text: string, maxWidth: number): number {
   const len = text.trim().length;
-  if (len <= 12) return 156;
-  if (len <= 22) return 124;
-  if (len <= 32) return 100;
-  return 84;
+  // Base ladder for wide (≥760px) columns. Corner / side-rail
+  // layouts use a narrower column and need a smaller ladder so the
+  // headline doesn't break into ragged 1-2 word lines.
+  const narrow = maxWidth < 700;
+  if (len <= 12) return narrow ? 124 : 156;
+  if (len <= 22) return narrow ? 96 : 124;
+  if (len <= 32) return narrow ? 80 : 100;
+  return narrow ? 68 : 84;
 }
 function aiSublineFontSize(headlinePx: number): number {
   // Subline is ~36-42% of headline size — strong hierarchy without
   // crowding the type stack.
-  return Math.max(30, Math.round(headlinePx * 0.38));
+  return Math.max(28, Math.round(headlinePx * 0.38));
 }
 
 // Map a placement region to flexbox alignment + padding for the
@@ -539,7 +543,49 @@ function blockLayoutForRegion(region: PosterRegion): React.CSSProperties {
       return { ...base, justifyContent: "center", alignItems: "flex-end" };
     case "center":
       return { ...base, justifyContent: "center", alignItems: "center" };
+    // Corner regions: vertical column tucked into the named corner.
+    // Used when the focal subject is centered/vertical and only a
+    // corner is fully clear (e.g., a single matchstick centered in
+    // the frame → bottom-left).
+    case "top-left":
+      return { ...base, justifyContent: "flex-start", alignItems: "flex-start" };
+    case "top-right":
+      return { ...base, justifyContent: "flex-start", alignItems: "flex-end" };
+    case "bottom-left":
+      return { ...base, justifyContent: "flex-end", alignItems: "flex-start" };
+    case "bottom-right":
+      return { ...base, justifyContent: "flex-end", alignItems: "flex-end" };
   }
+}
+
+// Text-block max width per region. Corners + side rails get a
+// narrow column so the rest of the image breathes; full-width
+// halves get a wider column so headlines like "We connect you with
+// top 10% performers, vetted." don't wrap awkwardly.
+function textBlockMaxWidthFor(region: PosterRegion): number {
+  switch (region) {
+    case "top":
+    case "bottom":
+      return 880;
+    case "left":
+    case "right":
+      return 540;
+    case "center":
+      return 760;
+    case "top-left":
+    case "top-right":
+    case "bottom-left":
+    case "bottom-right":
+      return 540;
+  }
+}
+
+// Whether the chosen region prefers right-aligned text (so the type
+// hangs off the right gutter rather than tumbling into the center).
+function regionTextAlign(region: PosterRegion): "left" | "right" {
+  return region === "right" || region === "top-right" || region === "bottom-right"
+    ? "right"
+    : "left";
 }
 
 // Map a scrim choice to a CSS gradient backgroundImage. Each fade is
@@ -588,11 +634,15 @@ function wordmarkCornerForRegion(region: PosterRegion): {
   right?: number;
 } {
   switch (region) {
-    case "top":    return { bottom: 64, left: 64 };
-    case "bottom": return { top: 64, right: 64 };
-    case "left":   return { top: 64, right: 64 };
-    case "right":  return { top: 64, left: 64 };
-    case "center": return { bottom: 64, right: 64 };
+    case "top":          return { bottom: 64, left: 64 };
+    case "bottom":       return { top: 64, right: 64 };
+    case "left":         return { top: 64, right: 64 };
+    case "right":        return { top: 64, left: 64 };
+    case "center":       return { bottom: 64, right: 64 };
+    case "top-left":     return { bottom: 64, right: 64 };
+    case "top-right":    return { bottom: 64, left: 64 };
+    case "bottom-left":  return { top: 64, right: 64 };
+    case "bottom-right": return { top: 64, left: 64 };
   }
 }
 
@@ -630,6 +680,17 @@ function haloBoxForRegion(region: PosterRegion): HaloBox {
       return { top: 0, left: 360, width: 720, height: 1350 };
     case "center":
       return { top: 270, left: 90, width: 900, height: 810 };
+    // Corner halos: bounded to roughly the corner quadrant so the
+    // feathered radial gradient lands cleanly behind the text column
+    // and fades to transparent before the diagonal opposite corner.
+    case "top-left":
+      return { top: 0, left: 0, width: 720, height: 540 };
+    case "top-right":
+      return { top: 0, left: 360, width: 720, height: 540 };
+    case "bottom-left":
+      return { top: 810, left: 0, width: 720, height: 540 };
+    case "bottom-right":
+      return { top: 810, left: 360, width: 720, height: 540 };
   }
 }
 
@@ -672,11 +733,14 @@ export function AiPosterCompositeLight({
   logoBlackUrl: string;
   logoWhiteUrl: string;
 }) {
-  const headlinePx = aiHeadlineFontSize(fields.headline);
-  const sublinePx = aiSublineFontSize(headlinePx);
   const layoutStyle = blockLayoutForRegion(placement.region);
   const scrim = scrimStyle(placement.scrim);
   const corner = wordmarkCornerForRegion(placement.region);
+  // Compute the column width FIRST so the font-size scale knows
+  // whether we're in a narrow corner column or a wide half.
+  const textBlockMaxWidthEarly = textBlockMaxWidthFor(placement.region);
+  const headlinePx = aiHeadlineFontSize(fields.headline, textBlockMaxWidthEarly);
+  const sublinePx = aiSublineFontSize(headlinePx);
   const isWhiteText = placement.textColor === "white";
   const textColor = isWhiteText ? "#fff" : "#000";
   const sublineColor = isWhiteText ? "rgba(255,255,255,0.88)" : "rgba(0,0,0,0.78)";
@@ -698,9 +762,12 @@ export function AiPosterCompositeLight({
   const halo = haloBoxForRegion(placement.region);
   const haloBg = haloBackground(isWhiteText ? "dark" : "light");
 
-  // Text block is constrained to 880px so headlines wrap predictably
-  // even when the placement is left/right rail.
-  const textBlockMaxWidth = 880;
+  // Text block max width depends on the region — full halves get a
+  // wide column so headlines don't wrap awkwardly; corners + side
+  // rails get a narrow column so the rest of the image breathes.
+  // (Reuse the value computed above to feed the font-size scale.)
+  const textBlockMaxWidth = textBlockMaxWidthEarly;
+  const textAlign = regionTextAlign(placement.region);
 
   return (
     <div
@@ -752,7 +819,7 @@ export function AiPosterCompositeLight({
             display: "flex",
             flexDirection: "column",
             maxWidth: textBlockMaxWidth,
-            textAlign: placement.region === "right" ? "right" : "left",
+            textAlign,
           }}
         >
           <div

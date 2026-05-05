@@ -227,6 +227,7 @@ interface RawPromoPost {
 interface RawAiPosterPost {
   angle: string;
   conceptKey: string;
+  textZone: "top" | "bottom";
   imagePrompt: string;
   headline: string;
   subline: string;
@@ -355,7 +356,7 @@ const PROMO_TOOL = {
 const AI_POSTER_TOOL = {
   name: "ai_poster_results",
   description:
-    "Return one entry per requested concept for the AI-generated poster template. Each entry is a striking visual + branded copy combo. The image model renders only the bare visual (no text); the headline + subline are composited separately by our own typography pipeline, so write copy you'd be proud to set in a serious display weight.",
+    "Return one entry per requested concept for the AI-generated poster template. Each entry is a striking visual + branded copy combo. The image model renders only the bare visual (no text); the headline + subline are composited separately by our own typography pipeline. Decide upfront where the text will land on each card and write the imagePrompt to leave that zone calm.",
   input_schema: {
     type: "object" as const,
     properties: {
@@ -369,10 +370,16 @@ const AI_POSTER_TOOL = {
               type: "string",
               description: "Echo the concept key passed in the prompt (e.g., 'apex_predator', 'sloth_slow').",
             },
+            textZone: {
+              type: "string",
+              enum: ["top", "bottom"],
+              description:
+                "Where the headline + subline will be composited on this card. CRITICAL: this drives how you write the imagePrompt. Pick whichever zone leaves the most room for the metaphor's natural composition. Vary across the batch — don't pick all top or all bottom; aim for a roughly even split so layouts feel different across the 6 cards.",
+            },
             imagePrompt: {
               type: "string",
               description:
-                "Fully-formed Nano Banana Pro prompt (60-180 words) describing the IMAGE ONLY — no text, no letters, no signs, no logos, no banners. Riff off the seed creatively: subject, framing, lighting, mood, color palette, photorealistic vs illustrated. Use specific, evocative language. The image model takes this verbatim. CRITICAL: do not include any words in quotes, no headlines, no UI elements, no tagline visible in the image. Pure visual only.",
+                "Fully-formed Nano Banana Pro prompt (60-180 words) describing the IMAGE ONLY — no text, no letters, no signs, no logos, no banners. The composition MUST honor the textZone you picked: place the focal subject in the OPPOSITE zone, and explicitly leave the textZone as calm atmospheric negative space (e.g., for textZone=bottom: 'subject in the upper two-thirds, the lower third fading to dark void / soft gradient / out-of-focus blur — pure calm space for typography'; for textZone=top: 'subject in the lower two-thirds, the upper third opens to soft sky / atmospheric haze / minimal backdrop'). Be specific about subject framing, lighting, mood, palette, photoreal vs illustrated. CRITICAL: do not include any words in quotes, no headlines, no UI elements, no tagline visible in the image. Pure visual only.",
             },
             headline: {
               type: "string",
@@ -390,7 +397,7 @@ const AI_POSTER_TOOL = {
                 "3-5 sentence IG caption body in the requested language. Newline + 3-5 hashtags at the end. No URLs, no DM/CTA language, no em dashes.",
             },
           },
-          required: ["angle", "conceptKey", "imagePrompt", "headline", "subline", "body"],
+          required: ["angle", "conceptKey", "textZone", "imagePrompt", "headline", "subline", "body"],
         },
       },
     },
@@ -646,6 +653,13 @@ Hard rules:
 - Each card in the batch should feel like a different ad in the same campaign — vary subject category (animals / landscape / surreal scene / object), framing, lighting, and tone across the 6 cards.
 - Every metaphor must clearly argue for ONE of the brand value props (an angle from the list below).
 
+COMPOSE WITH INTENT (most important rule):
+- For each card, FIRST decide where the headline + subline will land — top of the frame OR bottom of the frame. This is the textZone field.
+- Then write the imagePrompt to honor that decision: place the FOCAL SUBJECT in the OPPOSITE zone (the bottom two-thirds if textZone=top; the upper two-thirds if textZone=bottom), and explicitly leave the textZone as CALM ATMOSPHERIC NEGATIVE SPACE — out-of-focus blur, soft gradient, atmospheric haze, dark void, cloud cover, or solid color. The text must have somewhere clean to land.
+- Examples of explicit composition language to include in imagePrompt: "subject anchored in lower two-thirds, upper third opens to soft hazy sky for typography"; "tight macro of the subject filling the upper portion, lower third fades to deep black void"; "subject left-of-center in bottom half, top half is empty atmospheric backdrop". Be this specific.
+- Vary textZone across the 6 cards — aim for roughly 3 top + 3 bottom so layouts feel different at a glance.
+- Some metaphors naturally suit one zone: extreme close-ups of eyes/faces tend to work top (subject in upper half, calm bottom) — like the tiger seed. Standing/centered subjects work bottom (subject anchored in upper, calm bottom). Pick what suits the metaphor.
+
 How to compose the batch:
 - Use 2-3 of the seed metaphors below as direct inspiration. You can rephrase the seed prompt; do NOT copy it verbatim.
 - INVENT 3-4 brand-new metaphors that fit the same vibe but aren't on the list. The bar: striking, unusual, instantly metaphorical, photographable. (Examples of fresh territory: an iceberg with most of its mass underwater for 'most of an agent's value is invisible'; a single matchstick lit in a dark stadium for 'one right agent in a market of thousands'; a chef's knife next to a butter knife for 'the right tool matters'; rotten apple in a perfect bushel for 'one bad apple kills the deal'. These are illustrative — your inventions should be different from these AND from the seeds.)
@@ -659,7 +673,8 @@ ${angleList}
 For each card, write:
 - conceptKey: a short snake_case label for your metaphor (e.g., 'iceberg_hidden_mass', 'matchstick_in_stadium'). Use the exact seed key when reusing a seed.
 - angle: the angle this metaphor argues for, from the list above.
-- imagePrompt: 60-180 words describing the bare visual (subject, framing, lighting, mood, palette, photoreal vs illustrated, atmosphere). NO TEXT ANYWHERE IN THE IMAGE.
+- textZone: 'top' or 'bottom' — where the headline + subline will live on this card.
+- imagePrompt: 60-180 words describing the bare visual, WITH explicit composition guidance that honors textZone (subject in opposite zone, calm negative space in textZone). NO TEXT ANYWHERE IN THE IMAGE.
 - headline: ≤5 words ending in . or ?
 - subline: ≤10 words supporting the headline + linking to the matching mission (top 10%, vetted, pre-interviewed, 4.8 stars, situation/price-fit).
 - body: 3-5 sentence IG caption tying the metaphor back to the angle.
@@ -672,11 +687,13 @@ Return your results by calling the ${AI_POSTER_TOOL.name} tool — exactly ${GRA
       const headline = stripDashes(p.headline).trim();
       const subline = stripDashes(p.subline).trim();
       const imagePrompt = stripDashes(p.imagePrompt).trim();
+      const textZone: "top" | "bottom" = p.textZone === "top" ? "top" : "bottom";
       const graphic: AiPosterGraphicData = {
         template: "ai_poster",
         headline,
         subline,
         imagePrompt,
+        textZone,
         conceptKey: p.conceptKey,
       };
       return {
