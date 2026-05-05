@@ -458,11 +458,18 @@ function buildBaseHeader(language: Language, template: GraphicTemplate): string 
 function extractToolPostsTyped<T>(resp: Anthropic.Messages.Message, toolName: string): T[] {
   const tu = resp.content.find((b) => b.type === "tool_use");
   if (!tu || tu.type !== "tool_use") {
-    throw new Error(`Claude did not call the ${toolName} tool`);
+    throw new Error(
+      `Claude did not call the ${toolName} tool (stop_reason=${resp.stop_reason})`,
+    );
   }
   const input = tu.input as { posts?: T[] };
   if (!input.posts || !Array.isArray(input.posts)) {
-    throw new Error(`${toolName} tool call missing 'posts' array`);
+    // Almost always means the response was truncated mid-tool-call by
+    // max_tokens. Surface stop_reason so the operator knows whether to
+    // raise the cap or to look at a malformed tool schema.
+    throw new Error(
+      `${toolName} tool call missing 'posts' array (stop_reason=${resp.stop_reason}; bump max_tokens if 'max_tokens')`,
+    );
   }
   return input.posts;
 }
@@ -475,7 +482,10 @@ type GraphicTool = { name: string; description: string; input_schema: Record<str
 async function callTool<T>(prompt: string, tool: GraphicTool): Promise<T[]> {
   const resp = await client().messages.create({
     model: MODEL,
-    max_tokens: 4096,
+    // 8192 — the DYK prompt now spans 4 angle pools + tighter field
+    // descriptions, and the AI poster tool call carries a 60-180-word
+    // imagePrompt per card. 4096 was clipping mid-call on long batches.
+    max_tokens: 8192,
     system: [
       { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
     ],
