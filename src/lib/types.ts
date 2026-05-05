@@ -77,6 +77,7 @@ export interface StatGraphicData {
   statement: string;     // one-line context
   source: string;        // attribution line
   index?: string;        // "01", "02" — eyebrow counter (optional, default "01")
+  palette?: PaletteKey;  // color palette; default "classic"
 }
 
 export interface DykGraphicData {
@@ -84,6 +85,7 @@ export interface DykGraphicData {
   fact: string;          // 1-2 sentence headline
   body: string;          // 1-2 sentence elaboration
   index: string;         // "01", "02"
+  palette?: PaletteKey;  // color palette; default "classic"
 }
 
 export interface PromoGraphicData {
@@ -91,6 +93,7 @@ export interface PromoGraphicData {
   headline: string;       // catchphrase, 4-12 words, may render across 2-4 lines
   subline: string;        // single supporting sentence (~10-18 words)
   kicker?: string;        // optional small line above CTA, defaults to brand kicker
+  palette?: PaletteKey;   // color palette; default "classic"
 }
 
 // AI poster v2 splits the old text-baked-into-Nano flow into three
@@ -105,6 +108,67 @@ export interface PromoGraphicData {
 export type AiPosterTextZone = "top" | "bottom";
 
 export type CompositeTextZone = "top" | "bottom";
+
+// Color palettes for the Stat / DYK / Promo graphic templates. Each
+// post defaults to the "classic" white-on-black palette but the user
+// can flip to any of the others via the swatch row on the card. The
+// palette key is persisted on the graphic data so re-rendering after
+// a copy edit keeps the chosen colors.
+//
+// Palette anatomy:
+//   bg       — card background (fills the 1080x1350 canvas)
+//   ink      — primary headline / number / fact ink
+//   mute     — secondary text (eyebrow, source line, body subtext)
+//   rule     — accent rule (the 40-80px x 2-3px line under eyebrows)
+//   wordmark — which logo variant to use ("black" or "white")
+//
+// Tuned by feel — light palettes pair near-black ink + neutral mutes;
+// dark palettes pair cream ink + slightly desaturated mutes.
+export type PaletteKey =
+  | "classic"
+  | "cream"
+  | "pastel_pink"
+  | "pastel_blue"
+  | "deep_navy"
+  | "forest";
+
+export interface Palette {
+  bg: string;
+  ink: string;
+  mute: string;
+  rule: string;
+  wordmark: "black" | "white";
+}
+
+export const PALETTES: Record<PaletteKey, Palette> = {
+  classic:     { bg: "#FFFFFF", ink: "#000000", mute: "#9A9A9A", rule: "#000000", wordmark: "black" },
+  cream:       { bg: "#F4EDE0", ink: "#1F1B16", mute: "#7B6E58", rule: "#1F1B16", wordmark: "black" },
+  pastel_pink: { bg: "#F6D9D9", ink: "#2A0F0F", mute: "#8C5050", rule: "#2A0F0F", wordmark: "black" },
+  pastel_blue: { bg: "#D7E3F0", ink: "#102338", mute: "#4D6786", rule: "#102338", wordmark: "black" },
+  deep_navy:   { bg: "#102338", ink: "#F4EDE0", mute: "#A9B5C4", rule: "#F4EDE0", wordmark: "white" },
+  forest:      { bg: "#1F3B2F", ink: "#F4EDE0", mute: "#A9B5A0", rule: "#F4EDE0", wordmark: "white" },
+};
+
+export const PALETTE_KEYS: PaletteKey[] = [
+  "classic",
+  "cream",
+  "pastel_pink",
+  "pastel_blue",
+  "deep_navy",
+  "forest",
+];
+
+export const DEFAULT_PALETTE: PaletteKey = "classic";
+
+// Short user-facing labels for the swatches' a11y title.
+export const PALETTE_LABELS: Record<PaletteKey, string> = {
+  classic: "Classic",
+  cream: "Cream",
+  pastel_pink: "Pastel pink",
+  pastel_blue: "Pastel blue",
+  deep_navy: "Deep navy",
+  forest: "Forest",
+};
 
 export interface PhotoCompositeData {
   template: "photo";

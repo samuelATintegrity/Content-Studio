@@ -12,10 +12,12 @@ import type {
   AiPosterGraphicData,
   DykGraphicData,
   GraphicData,
+  Palette,
   PhotoCompositeData,
   PromoGraphicData,
   StatGraphicData,
 } from "./types";
+import { PALETTES, DEFAULT_PALETTE } from "./types";
 import type {
   PosterPlacement,
   PosterRegion,
@@ -48,11 +50,13 @@ function Wordmark({ src, size = 28 }: { src: string; size?: number }) {
   );
 }
 
-// Pill-shaped CTA button used at the bottom of every template. Black
-// bg / white text on light themes, inverted on dark.
-function CTAButton({ label, inverse = false }: { label: string; inverse?: boolean }) {
-  const bg = inverse ? "#fff" : "#000";
-  const fg = inverse ? "#000" : "#fff";
+// Pill-shaped CTA button used at the bottom of every template. The
+// pill inverts the palette's bg/ink so it pops off the card surface
+// regardless of which palette the user picked (e.g. on a navy card,
+// the pill becomes cream with navy text).
+function CTAButton({ label, palette }: { label: string; palette: Palette }) {
+  const bg = palette.ink;
+  const fg = palette.bg;
   return (
     <div
       style={{
@@ -82,6 +86,13 @@ function CTAButton({ label, inverse = false }: { label: string; inverse?: boolea
       </svg>
     </div>
   );
+}
+
+// Resolve a palette from optional GraphicData.palette field, falling
+// back to the classic white/black default. Centralized so all three
+// templates stay in lockstep.
+function resolvePalette(key: string | undefined): Palette {
+  return PALETTES[(key ?? DEFAULT_PALETTE) as keyof typeof PALETTES] ?? PALETTES[DEFAULT_PALETTE];
 }
 
 // ── Stat Light ──────────────────────────────────────────────────────
@@ -118,10 +129,14 @@ function StarAdornment({ size, color = "#000" }: { size: number; color?: string 
 export function StatPostLight({
   fields,
   logoBlackUrl,
+  logoWhiteUrl,
 }: {
   fields: StatGraphicData;
   logoBlackUrl: string;
+  logoWhiteUrl: string;
 }) {
+  const palette = resolvePalette(fields.palette);
+  const wordmarkSrc = palette.wordmark === "white" ? logoWhiteUrl : logoBlackUrl;
   const numberFontSize = statNumberFontSize(fields.number);
   // Star unit gets rendered as SVG; everything else stays as text at a
   // proportionally smaller fontSize than the number so the unit reads
@@ -135,8 +150,8 @@ export function StatPostLight({
       style={{
         width: 1080,
         height: 1350,
-        background: "#fff",
-        color: "#000",
+        background: palette.bg,
+        color: palette.ink,
         display: "flex",
         flexDirection: "column",
         justifyContent: "space-between",
@@ -146,14 +161,14 @@ export function StatPostLight({
     >
       {/* Header row */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <Wordmark src={logoBlackUrl} size={28} />
+        <Wordmark src={wordmarkSrc} size={28} />
         <div
           style={{
             fontFamily: "JetBrainsMono, monospace",
             fontSize: 18,
             letterSpacing: "0.08em",
             textTransform: "uppercase",
-            color: "#999",
+            color: palette.mute,
           }}
         >
           {headerLabel}
@@ -168,14 +183,14 @@ export function StatPostLight({
             fontSize: 20,
             letterSpacing: "0.08em",
             textTransform: "uppercase",
-            color: "#000",
+            color: palette.ink,
             marginBottom: 32,
             display: "flex",
             alignItems: "center",
             gap: 16,
           }}
         >
-          <div style={{ width: 40, height: 2, background: "#000" }} />
+          <div style={{ width: 40, height: 2, background: palette.rule }} />
           {"The Stat"}
         </div>
         <div
@@ -185,7 +200,7 @@ export function StatPostLight({
             fontSize: numberFontSize,
             letterSpacing: "-0.06em",
             lineHeight: 0.85,
-            color: "#000",
+            color: palette.ink,
             display: "flex",
             alignItems: "flex-start",
           }}
@@ -193,7 +208,7 @@ export function StatPostLight({
           <span>{fields.number}</span>
           {isStarUnit ? (
             <div style={{ display: "flex", marginLeft: 8, marginTop: numberFontSize * 0.05 }}>
-              <StarAdornment size={Math.round(numberFontSize * 0.55)} />
+              <StarAdornment size={Math.round(numberFontSize * 0.55)} color={palette.ink} />
             </div>
           ) : unitText ? (
             <span style={{ fontSize: unitFontSize }}>{unitText}</span>
@@ -208,6 +223,7 @@ export function StatPostLight({
             lineHeight: 1.1,
             marginTop: 48,
             maxWidth: 880,
+            color: palette.ink,
           }}
         >
           {fields.statement}
@@ -216,7 +232,7 @@ export function StatPostLight({
           style={{
             fontFamily: "JetBrainsMono, monospace",
             fontSize: 18,
-            color: "#999",
+            color: palette.mute,
             marginTop: 32,
             letterSpacing: "0.04em",
           }}
@@ -227,14 +243,14 @@ export function StatPostLight({
 
       {/* Footer */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
-        <CTAButton label="Find Your Agent" />
+        <CTAButton label="Find Your Agent" palette={palette} />
         <div
           style={{
             display: "flex",
             flexDirection: "column",
             fontFamily: "JetBrainsMono, monospace",
             fontSize: 16,
-            color: "#999",
+            color: palette.mute,
             textAlign: "right",
             lineHeight: 1.5,
           }}
@@ -251,17 +267,21 @@ export function StatPostLight({
 export function DykPostLight({
   fields,
   logoBlackUrl,
+  logoWhiteUrl,
 }: {
   fields: DykGraphicData;
   logoBlackUrl: string;
+  logoWhiteUrl: string;
 }) {
+  const palette = resolvePalette(fields.palette);
+  const wordmarkSrc = palette.wordmark === "white" ? logoWhiteUrl : logoBlackUrl;
   return (
     <div
       style={{
         width: 1080,
         height: 1350,
-        background: "#fff",
-        color: "#000",
+        background: palette.bg,
+        color: palette.ink,
         display: "flex",
         flexDirection: "column",
         justifyContent: "space-between",
@@ -271,14 +291,14 @@ export function DykPostLight({
     >
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <Wordmark src={logoBlackUrl} size={28} />
+        <Wordmark src={wordmarkSrc} size={28} />
         <div
           style={{
             fontFamily: "JetBrainsMono, monospace",
             fontSize: 18,
             letterSpacing: "0.08em",
             textTransform: "uppercase",
-            color: "#999",
+            color: palette.mute,
           }}
         >
           {`FACT / ${fields.index}`}
@@ -287,15 +307,16 @@ export function DykPostLight({
 
       {/* Body */}
       <div style={{ display: "flex", flexDirection: "column" }}>
-        {/* Eyebrow row */}
+        {/* Eyebrow row — the question-mark badge inverts the palette
+            (ink bg, bg fg) so it pops off the card surface. */}
         <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 32 }}>
           <div
             style={{
               width: 56,
               height: 56,
               borderRadius: 999,
-              background: "#000",
-              color: "#fff",
+              background: palette.ink,
+              color: palette.bg,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
@@ -314,6 +335,7 @@ export function DykPostLight({
               fontSize: 36,
               letterSpacing: "-0.02em",
               lineHeight: 1,
+              color: palette.ink,
             }}
           >
             Did you know?
@@ -328,13 +350,14 @@ export function DykPostLight({
             fontSize: 84,
             letterSpacing: "-0.035em",
             lineHeight: 1.0,
+            color: palette.ink,
           }}
         >
           {fields.fact}
         </div>
 
         {/* Rule */}
-        <div style={{ width: 80, height: 3, background: "#000", marginTop: 48, marginBottom: 32 }} />
+        <div style={{ width: 80, height: 3, background: palette.rule, marginTop: 48, marginBottom: 32 }} />
 
         {/* Body */}
         <div
@@ -344,7 +367,7 @@ export function DykPostLight({
             fontSize: 32,
             letterSpacing: "-0.01em",
             lineHeight: 1.4,
-            color: "#444",
+            color: palette.mute,
             maxWidth: 880,
           }}
         >
@@ -354,14 +377,14 @@ export function DykPostLight({
 
       {/* Footer */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
-        <CTAButton label="Get Started" />
+        <CTAButton label="Get Started" palette={palette} />
         <div
           style={{
             display: "flex",
             flexDirection: "column",
             fontFamily: "JetBrainsMono, monospace",
             fontSize: 16,
-            color: "#999",
+            color: palette.mute,
             textAlign: "right",
             lineHeight: 1.5,
           }}
@@ -396,10 +419,14 @@ function promoSublineFontSize(text: string): number {
 export function PromoPostLight({
   fields,
   logoBlackUrl,
+  logoWhiteUrl,
 }: {
   fields: PromoGraphicData;
   logoBlackUrl: string;
+  logoWhiteUrl: string;
 }) {
+  const palette = resolvePalette(fields.palette);
+  const wordmarkSrc = palette.wordmark === "white" ? logoWhiteUrl : logoBlackUrl;
   const headlineFontSize = promoHeadlineFontSize(fields.headline);
   const sublineFontSize = promoSublineFontSize(fields.subline);
   const kicker = fields.kicker?.trim() || DEFAULT_PROMO_KICKER;
@@ -408,8 +435,8 @@ export function PromoPostLight({
       style={{
         width: 1080,
         height: 1350,
-        background: "#fff",
-        color: "#000",
+        background: palette.bg,
+        color: palette.ink,
         display: "flex",
         flexDirection: "column",
         justifyContent: "space-between",
@@ -419,14 +446,14 @@ export function PromoPostLight({
     >
       {/* Header */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <Wordmark src={logoBlackUrl} size={28} />
+        <Wordmark src={wordmarkSrc} size={28} />
         <div
           style={{
             fontFamily: "JetBrainsMono, monospace",
             fontSize: 18,
             letterSpacing: "0.08em",
             textTransform: "uppercase",
-            color: "#999",
+            color: palette.mute,
           }}
         >
           {"Find your match"}
@@ -442,13 +469,13 @@ export function PromoPostLight({
             fontSize: headlineFontSize,
             letterSpacing: "-0.045em",
             lineHeight: 0.95,
-            color: "#000",
+            color: palette.ink,
             maxWidth: 920,
           }}
         >
           {fields.headline}
         </div>
-        <div style={{ width: 80, height: 3, background: "#000", marginTop: 44, marginBottom: 44 }} />
+        <div style={{ width: 80, height: 3, background: palette.rule, marginTop: 44, marginBottom: 44 }} />
         <div
           style={{
             fontFamily: "Geist, Inter, sans-serif",
@@ -456,7 +483,7 @@ export function PromoPostLight({
             fontSize: sublineFontSize,
             letterSpacing: "-0.025em",
             lineHeight: 1.15,
-            color: "#444",
+            color: palette.mute,
             maxWidth: 920,
           }}
         >
@@ -472,18 +499,18 @@ export function PromoPostLight({
             fontWeight: 600,
             fontSize: 36,
             letterSpacing: "-0.02em",
-            color: "#000",
+            color: palette.ink,
             marginBottom: 24,
           }}
         >
           {kicker}
         </div>
-        <CTAButton label="Get Started" />
+        <CTAButton label="Get Started" palette={palette} />
         <div
           style={{
             fontFamily: "JetBrainsMono, monospace",
             fontSize: 16,
-            color: "#999",
+            color: palette.mute,
             textAlign: "right",
             lineHeight: 1.5,
             marginTop: 16,
@@ -1055,11 +1082,11 @@ export function renderTemplate(args: {
   const { graphic, logoBlackUrl, logoWhiteUrl, aiPosterImage, aiPosterPlacement } = args;
   switch (graphic.template) {
     case "stat":
-      return <StatPostLight fields={graphic} logoBlackUrl={logoBlackUrl} />;
+      return <StatPostLight fields={graphic} logoBlackUrl={logoBlackUrl} logoWhiteUrl={logoWhiteUrl} />;
     case "did_you_know":
-      return <DykPostLight fields={graphic} logoBlackUrl={logoBlackUrl} />;
+      return <DykPostLight fields={graphic} logoBlackUrl={logoBlackUrl} logoWhiteUrl={logoWhiteUrl} />;
     case "promo":
-      return <PromoPostLight fields={graphic} logoBlackUrl={logoBlackUrl} />;
+      return <PromoPostLight fields={graphic} logoBlackUrl={logoBlackUrl} logoWhiteUrl={logoWhiteUrl} />;
     case "ai_poster":
       if (!aiPosterImage || !aiPosterPlacement) {
         throw new Error(

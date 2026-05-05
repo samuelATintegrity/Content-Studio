@@ -6,10 +6,12 @@ import type {
   CompositeTextZone,
   FitMode,
   Framing,
+  PaletteKey,
   PhotoCompositeData,
   Post,
   StyleVariant,
 } from "@/lib/types";
+import { PALETTE_KEYS, PALETTE_LABELS, PALETTES } from "@/lib/types";
 import { brand } from "../../brand.config";
 import {
   composeGraphicDataUrl,
@@ -144,6 +146,24 @@ export function PostCard({ post }: { post: Post }) {
       });
     } catch (e) {
       alert("Copy regen failed: " + (e instanceof Error ? e.message : "unknown"));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function applyPalette(nextPalette: PaletteKey) {
+    if (!post.graphic) return;
+    if (post.graphic.template !== "stat" && post.graphic.template !== "did_you_know" && post.graphic.template !== "promo") {
+      return;
+    }
+    if (post.graphic.palette === nextPalette) return;
+    setBusy("tweak");
+    try {
+      const nextGraphic = { ...post.graphic, palette: nextPalette };
+      const imageDataUrl = await composeGraphicDataUrl(nextGraphic);
+      updatePost(post.id, { graphic: nextGraphic, imageDataUrl });
+    } catch (e) {
+      alert("Palette swap failed: " + (e instanceof Error ? e.message : "unknown"));
     } finally {
       setBusy(null);
     }
@@ -305,6 +325,48 @@ export function PostCard({ post }: { post: Post }) {
             </span>
           )}
         </div>
+
+        {/* Palette swatches. Only Stat / DYK / Promo support palette
+            swap (AI poster + photo composite use Vision-picked colors
+            instead of fixed palettes). Click a swatch to recompose. */}
+        {isGraphic &&
+          post.graphic &&
+          (post.graphic.template === "stat" ||
+            post.graphic.template === "did_you_know" ||
+            post.graphic.template === "promo") && (
+            <div className="flex gap-1.5 pt-1" role="group" aria-label="Palette">
+              {PALETTE_KEYS.map((k) => {
+                const p = PALETTES[k];
+                const isActive = (post.graphic && "palette" in post.graphic
+                  ? post.graphic.palette
+                  : undefined) === k ||
+                  (k === "classic" &&
+                    (!post.graphic || !("palette" in post.graphic) || !post.graphic.palette));
+                return (
+                  <button
+                    key={k}
+                    onClick={() => applyPalette(k)}
+                    disabled={busy !== null}
+                    title={PALETTE_LABELS[k]}
+                    aria-label={`Palette: ${PALETTE_LABELS[k]}`}
+                    className={`w-5 h-5 rounded-full border transition disabled:opacity-50 ${
+                      isActive
+                        ? "ring-2 ring-offset-1 ring-offset-white dark:ring-offset-neutral-950 ring-neutral-900 dark:ring-neutral-100 border-transparent"
+                        : "border-neutral-300 dark:border-neutral-700 hover:scale-110"
+                    }`}
+                    style={{ background: p.bg }}
+                  >
+                    {/* Small ink dot inside so the white-on-white classic
+                        palette doesn't disappear against light card bg. */}
+                    <span
+                      className="block w-1.5 h-1.5 rounded-full mx-auto"
+                      style={{ background: p.ink }}
+                    />
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
         {/* Caption with hover-to-copy. Scrollable so the full body is readable
             without truncation; the surrounding card grows to a sane height via
