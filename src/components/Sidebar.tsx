@@ -168,6 +168,11 @@ export function Sidebar({ drawerOpen = false, onClose }: SidebarProps = {}) {
 
       <div className="h-px bg-neutral-100 dark:bg-neutral-900" />
 
+      {/* Scheduled-posts review lives at the top so the user can
+          glance at what's queued in Buffer regardless of which
+          format/template they're currently working in. */}
+      <ScheduledPostsSection />
+
       <Section title="Format">
         <div className="grid grid-cols-2 gap-2">
           {FORMATS.map((f) => (
@@ -208,8 +213,6 @@ export function Sidebar({ drawerOpen = false, onClose }: SidebarProps = {}) {
       {format === "video" && subMode === "narration" && <SavedSetsSection />}
 
       {format === "video" && <MusicLibrarySection />}
-
-      {format === "video" && <ScheduledPostsSection />}
 
       <Section title="Language">
         <div className="grid grid-cols-2 gap-2">
