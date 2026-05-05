@@ -1,9 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { SYSTEM_PROMPT } from "./prompts/system";
-import { CONTENT_TYPE_SPECS } from "./prompts/content-types";
+import { CONTENT_TYPE_SPECS, AI_POSTER_CONCEPTS } from "./prompts/content-types";
 import { buildCaption, CTA_TEXT, stripDashes } from "./copy";
 import {
   LANGUAGE_LABELS,
+  type AiPosterGraphicData,
   type ContentType,
   type DykGraphicData,
   type GenerateBatchResponse,
@@ -225,6 +226,8 @@ interface RawPromoPost {
 
 interface RawAiPosterPost {
   angle: string;
+  conceptKey: string;
+  imagePrompt: string;
   headline: string;
   subline: string;
   body: string;
@@ -351,7 +354,8 @@ const PROMO_TOOL = {
 
 const AI_POSTER_TOOL = {
   name: "ai_poster_results",
-  description: "Return one entry per requested angle for the AI-generated poster template.",
+  description:
+    "Return one entry per requested concept for the AI-generated poster template. Each entry is a striking visual + branded copy combo. The image model renders only the bare visual (no text); the headline + subline are composited separately by our own typography pipeline, so write copy you'd be proud to set in a serious display weight.",
   input_schema: {
     type: "object" as const,
     properties: {
@@ -360,15 +364,25 @@ const AI_POSTER_TOOL = {
         items: {
           type: "object",
           properties: {
-            angle: { type: "string", description: "Echo the angle key." },
+            angle: { type: "string", description: "Echo the angle/concept key passed in the prompt." },
+            conceptKey: {
+              type: "string",
+              description: "Echo the concept key passed in the prompt (e.g., 'apex_predator', 'sloth_slow').",
+            },
+            imagePrompt: {
+              type: "string",
+              description:
+                "Fully-formed Nano Banana Pro prompt (60-180 words) describing the IMAGE ONLY — no text, no letters, no signs, no logos, no banners. Riff off the seed creatively: subject, framing, lighting, mood, color palette, photorealistic vs illustrated. Use specific, evocative language. The image model takes this verbatim. CRITICAL: do not include any words in quotes, no headlines, no UI elements, no tagline visible in the image. Pure visual only.",
+            },
             headline: {
               type: "string",
               description:
-                "Short tagline (≤6 words). The image model sets it as a large display headline. Don't use specific numbers, dollar amounts, or percentages — image-model typography is unreliable on long or numeric text.",
+                "ON-IMAGE catchphrase that pairs with the metaphor, MAX 5 words, MAX 35 characters. End with a period or question mark. Reinforces the angle the concept maps to (e.g., apex predator → 'Apex performers only.'; chameleon → 'Spot the pretender.'). Render-quality matters — we set this in Geist Black at 100+ pt.",
             },
             subline: {
               type: "string",
-              description: "Single supporting line (≤12 words).",
+              description:
+                "Single supporting sentence under the headline, MAX 10 words, MAX 70 characters. Bridges the metaphor back to the matching mission (top 10%, vetted, pre-interviewed, 4.8 stars). Plain English, no buzzwords.",
             },
             body: {
               type: "string",
@@ -376,7 +390,7 @@ const AI_POSTER_TOOL = {
                 "3-5 sentence IG caption body in the requested language. Newline + 3-5 hashtags at the end. No URLs, no DM/CTA language, no em dashes.",
             },
           },
-          required: ["angle", "headline", "subline", "body"],
+          required: ["angle", "conceptKey", "imagePrompt", "headline", "subline", "body"],
         },
       },
     },
@@ -584,28 +598,68 @@ Return your results by calling the ${PROMO_TOOL.name} tool.`;
   }
 }
 
+// Pick GRAPHIC_BATCH_POSTS distinct concepts from AI_POSTER_CONCEPTS
+// for one batch. Shuffles per-call so the same UI-driven generate
+// doesn't always lead with the same metaphor. If we ever have fewer
+// concepts than batch posts, the picker wraps with replacement —
+// today we have 8 concepts vs 6 cards so wrap never triggers.
+function pickAiPosterConcepts(): typeof AI_POSTER_CONCEPTS {
+  const pool = AI_POSTER_CONCEPTS.slice();
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return Array.from({ length: GRAPHIC_BATCH_POSTS }, (_, i) => pool[i % pool.length]);
+}
+
 async function generateAiPosterBatch(language: Language): Promise<GenerateBatchResponse> {
   const captionContentType = captionContentTypeFor("ai_poster");
+  const concepts = pickAiPosterConcepts();
+  const conceptList = concepts
+    .map(
+      (c, i) =>
+        `${i + 1}. concept="${c.key}" (maps to angle "${c.mapsTo}")\n   seed: ${c.seed}\n   tone: ${c.tone}`,
+    )
+    .join("\n");
+
   const prompt = `${buildBaseHeader(language, "ai_poster")}
 
-This batch generates ${GRAPHIC_BATCH_POSTS} AI-generated posters. The image model (Nano Banana Pro) renders typography from the headline + subline, so keep both VERY short — long or numeric text comes back garbled. No specific numbers, dollar amounts, or percentages.
+This batch generates ${GRAPHIC_BATCH_POSTS} AI-poster cards. Each card pairs a striking, scroll-stopping AI-generated image with a sharp branded tagline. The IMAGE and the TEXT are now generated separately — the image model gets ONLY a visual prompt (no words to render), and we composite the headline + subline ourselves with our own typography. Implications:
 
-Angles:
-${buildAngleList("ai_poster")}
+- Your imagePrompt MUST describe pure visuals. NEVER quote text the model should "render", NEVER mention signs/banners/billboards/UI/captions/labels/typography. The composited image will have no readable text whatsoever besides what we add later.
+- The headline + subline are set in Geist Black at large display weight, so they can be properly typeset — write copy you'd be proud to set in a serious font. Aim for sharp, declarative, scroll-stopping ad copy that pairs with the metaphor.
+- Each card should feel like a different ad in the same campaign.
 
-Return your results by calling the ${AI_POSTER_TOOL.name} tool.`;
+For each concept below, write:
+- imagePrompt: 60-180 words describing the bare visual (riff off the seed, add specifics: framing, lighting, mood, palette, photoreal vs illustrated). NO TEXT ANYWHERE IN THE IMAGE.
+- headline: ≤5 words ending in . or ?
+- subline: ≤10 words supporting the headline + linking to the matching mission (top 10%, vetted, pre-interviewed, 4.8 stars, situation/price-fit).
+- body: 3-5 sentence IG caption tying the metaphor back to the angle.
+
+Concepts:
+${conceptList}
+
+Return your results by calling the ${AI_POSTER_TOOL.name} tool — one entry per concept above, echoing the concept key in conceptKey and the mapsTo angle in angle.`;
 
   try {
     const raw = await callTool<RawAiPosterPost>(prompt, AI_POSTER_TOOL);
     const posts = raw.map<GenerateBatchResponse["posts"][number]>((p) => {
       const headline = stripDashes(p.headline).trim();
       const subline = stripDashes(p.subline).trim();
+      const imagePrompt = stripDashes(p.imagePrompt).trim();
+      const graphic: AiPosterGraphicData = {
+        template: "ai_poster",
+        headline,
+        subline,
+        imagePrompt,
+        conceptKey: p.conceptKey,
+      };
       return {
         angle: p.angle,
         headline,
         cta: CTA_TEXT[language],
         caption: buildCaption(language, captionContentType, p.body),
-        graphic: { template: "ai_poster", headline, subline },
+        graphic,
       };
     });
     return { posts };

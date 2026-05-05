@@ -76,10 +76,19 @@ export interface PromoGraphicData {
   kicker?: string;        // optional small line above CTA, defaults to brand kicker
 }
 
+// AI poster v2 splits the old text-baked-into-Nano flow into three
+// stages: (1) Claude writes the imagePrompt + copy, (2) Nano renders a
+// bare image (no text), (3) ImageResponse composites Geist-typeset
+// headline/subline over the image with placement chosen by Claude
+// Vision. The imagePrompt is captured here so the route can hash it
+// for R2 caching and so regen with the same image but different copy
+// doesn't re-spend a Nano generation.
 export interface AiPosterGraphicData {
   template: "ai_poster";
   headline: string;
   subline: string;
+  imagePrompt: string;
+  conceptKey?: string;  // which metaphor seed produced this card
 }
 
 export type GraphicData =

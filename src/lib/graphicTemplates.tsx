@@ -9,11 +9,17 @@
 
 import React from "react";
 import type {
+  AiPosterGraphicData,
   DykGraphicData,
   GraphicData,
   PromoGraphicData,
   StatGraphicData,
 } from "./types";
+import type {
+  PosterPlacement,
+  PosterRegion,
+  PosterScrim,
+} from "./aiPosterPlacement";
 
 export type LogoVariant = "black" | "white";
 
@@ -489,14 +495,240 @@ export function PromoPostLight({
   );
 }
 
+// ── AI Poster Composite (text over Nano-generated bare image) ──────
+
+// Auto-shrink the headline based on character length. Tuned for Geist
+// Black on a 1080-wide canvas with comfortable margins. Subline scales
+// proportionally so the visual weight ratio stays consistent.
+function aiHeadlineFontSize(text: string): number {
+  const len = text.trim().length;
+  if (len <= 12) return 156;
+  if (len <= 22) return 124;
+  if (len <= 32) return 100;
+  return 84;
+}
+function aiSublineFontSize(headlinePx: number): number {
+  // Subline is ~36-42% of headline size — strong hierarchy without
+  // crowding the type stack.
+  return Math.max(30, Math.round(headlinePx * 0.38));
+}
+
+// Map a placement region to flexbox alignment + padding for the
+// text block. The full canvas is 1080x1350; we leave a generous
+// 80px gutter on every side and let the chosen region pin the text
+// block accordingly.
+function blockLayoutForRegion(region: PosterRegion): React.CSSProperties {
+  const base: React.CSSProperties = {
+    position: "absolute",
+    display: "flex",
+    flexDirection: "column",
+    padding: "80px",
+    width: "100%",
+    height: "100%",
+    boxSizing: "border-box",
+  };
+  switch (region) {
+    case "top":
+      return { ...base, justifyContent: "flex-start", alignItems: "flex-start" };
+    case "bottom":
+      return { ...base, justifyContent: "flex-end", alignItems: "flex-start" };
+    case "left":
+      return { ...base, justifyContent: "center", alignItems: "flex-start" };
+    case "right":
+      // Right-rail layouts read better with right-anchored text.
+      return { ...base, justifyContent: "center", alignItems: "flex-end" };
+    case "center":
+      return { ...base, justifyContent: "center", alignItems: "center" };
+  }
+}
+
+// Map a scrim choice to a CSS gradient backgroundImage. Each fade is
+// strong enough to lift white text off a busy region but soft enough
+// to keep the image readable as the hero. The vignette uses a radial
+// edge fade (Satori does support radial-gradient).
+function scrimStyle(scrim: PosterScrim): React.CSSProperties | null {
+  switch (scrim) {
+    case "none":
+      return null;
+    case "bottom-fade":
+      return {
+        backgroundImage:
+          "linear-gradient(to top, rgba(0,0,0,0.78) 0%, rgba(0,0,0,0.55) 28%, rgba(0,0,0,0.0) 60%)",
+      };
+    case "top-fade":
+      return {
+        backgroundImage:
+          "linear-gradient(to bottom, rgba(0,0,0,0.78) 0%, rgba(0,0,0,0.55) 28%, rgba(0,0,0,0.0) 60%)",
+      };
+    case "left-fade":
+      return {
+        backgroundImage:
+          "linear-gradient(to right, rgba(0,0,0,0.78) 0%, rgba(0,0,0,0.55) 30%, rgba(0,0,0,0.0) 65%)",
+      };
+    case "right-fade":
+      return {
+        backgroundImage:
+          "linear-gradient(to left, rgba(0,0,0,0.78) 0%, rgba(0,0,0,0.55) 30%, rgba(0,0,0,0.0) 65%)",
+      };
+    case "vignette":
+      return {
+        backgroundImage:
+          "radial-gradient(ellipse at center, rgba(0,0,0,0.0) 35%, rgba(0,0,0,0.55) 75%, rgba(0,0,0,0.78) 100%)",
+      };
+  }
+}
+
+// The wordmark sits in the corner OPPOSITE the text, so it doesn't
+// crowd the headline. For center-text layouts we tuck it bottom-right
+// since the vignette protects it.
+function wordmarkCornerForRegion(region: PosterRegion): {
+  top?: number;
+  bottom?: number;
+  left?: number;
+  right?: number;
+} {
+  switch (region) {
+    case "top":    return { bottom: 64, left: 64 };
+    case "bottom": return { top: 64, right: 64 };
+    case "left":   return { top: 64, right: 64 };
+    case "right":  return { top: 64, left: 64 };
+    case "center": return { bottom: 64, right: 64 };
+  }
+}
+
+export function AiPosterCompositeLight({
+  fields,
+  imageDataUrl,
+  placement,
+  logoBlackUrl,
+  logoWhiteUrl,
+}: {
+  fields: AiPosterGraphicData;
+  imageDataUrl: string;       // base64 data URL of the bare AI image
+  placement: PosterPlacement;
+  logoBlackUrl: string;
+  logoWhiteUrl: string;
+}) {
+  const headlinePx = aiHeadlineFontSize(fields.headline);
+  const sublinePx = aiSublineFontSize(headlinePx);
+  const layoutStyle = blockLayoutForRegion(placement.region);
+  const scrim = scrimStyle(placement.scrim);
+  const corner = wordmarkCornerForRegion(placement.region);
+  const isWhiteText = placement.textColor === "white";
+  const textColor = isWhiteText ? "#fff" : "#000";
+  const sublineColor = isWhiteText ? "rgba(255,255,255,0.88)" : "rgba(0,0,0,0.78)";
+  // White wordmark on dark scrims; black wordmark otherwise.
+  const wordmarkSrc = isWhiteText ? logoWhiteUrl : logoBlackUrl;
+  // A subtle text shadow buys legibility on edges of the scrim where
+  // contrast is borderline. Skipped on black-on-light combos because
+  // dark glyphs against light pixels rarely need it and the shadow
+  // can muddy the type.
+  const textShadow = isWhiteText
+    ? "0 2px 6px rgba(0,0,0,0.55), 0 1px 2px rgba(0,0,0,0.5)"
+    : undefined;
+
+  // Text block is constrained to 880px so headlines wrap predictably
+  // even when the placement is left/right rail.
+  const textBlockMaxWidth = 880;
+
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: 1080,
+        height: 1350,
+        display: "flex",
+        backgroundColor: "#000",
+        backgroundImage: `url(${imageDataUrl})`,
+        backgroundSize: "1080px 1350px",
+        backgroundPosition: "center",
+        backgroundRepeat: "no-repeat",
+        fontFamily: "Geist, Inter, sans-serif",
+      }}
+    >
+      {/* Scrim layer (optional) — sits between image and text */}
+      {scrim ? (
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: 1080,
+            height: 1350,
+            display: "flex",
+            ...scrim,
+          }}
+        />
+      ) : null}
+
+      {/* Text block */}
+      <div style={layoutStyle}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            maxWidth: textBlockMaxWidth,
+            textAlign: placement.region === "right" ? "right" : "left",
+          }}
+        >
+          <div
+            style={{
+              fontFamily: "Geist, Inter, sans-serif",
+              fontWeight: 900,
+              fontSize: headlinePx,
+              letterSpacing: "-0.045em",
+              lineHeight: 0.95,
+              color: textColor,
+              textShadow,
+            }}
+          >
+            {fields.headline}
+          </div>
+          {fields.subline ? (
+            <div
+              style={{
+                fontFamily: "Geist, Inter, sans-serif",
+                fontWeight: 500,
+                fontSize: sublinePx,
+                letterSpacing: "-0.02em",
+                lineHeight: 1.2,
+                color: sublineColor,
+                marginTop: 28,
+                textShadow,
+              }}
+            >
+              {fields.subline}
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      {/* Wordmark in the corner opposite the text */}
+      <div
+        style={{
+          position: "absolute",
+          display: "flex",
+          ...corner,
+        }}
+      >
+        <Wordmark src={wordmarkSrc} size={26} />
+      </div>
+    </div>
+  );
+}
+
 // ── Public dispatcher ───────────────────────────────────────────────
 
 export function renderTemplate(args: {
   graphic: GraphicData;
   logoBlackUrl: string;
   logoWhiteUrl: string;
+  // Only required for ai_poster — the bare image as a base64 data URL
+  // and the Vision-picked text placement. Other templates ignore these.
+  aiPosterImage?: string;
+  aiPosterPlacement?: PosterPlacement;
 }): React.ReactElement {
-  const { graphic, logoBlackUrl } = args;
+  const { graphic, logoBlackUrl, logoWhiteUrl, aiPosterImage, aiPosterPlacement } = args;
   switch (graphic.template) {
     case "stat":
       return <StatPostLight fields={graphic} logoBlackUrl={logoBlackUrl} />;
@@ -505,9 +737,19 @@ export function renderTemplate(args: {
     case "promo":
       return <PromoPostLight fields={graphic} logoBlackUrl={logoBlackUrl} />;
     case "ai_poster":
-      // ai_poster is handled outside this module — fal.ai generates the
-      // image, no React rendering. The compose-graphic route branches
-      // on template before reaching this dispatcher.
-      throw new Error("ai_poster is rendered via fal.ai, not the React renderer");
+      if (!aiPosterImage || !aiPosterPlacement) {
+        throw new Error(
+          "ai_poster requires aiPosterImage (data URL) + aiPosterPlacement",
+        );
+      }
+      return (
+        <AiPosterCompositeLight
+          fields={graphic}
+          imageDataUrl={aiPosterImage}
+          placement={aiPosterPlacement}
+          logoBlackUrl={logoBlackUrl}
+          logoWhiteUrl={logoWhiteUrl}
+        />
+      );
   }
 }

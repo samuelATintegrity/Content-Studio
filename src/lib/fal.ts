@@ -61,11 +61,47 @@ export async function generateImage(userPrompt: string): Promise<{ url: string }
   return { url };
 }
 
-// Generate a 4:5 designed-graphic poster via Nano Banana Pro. The
-// caller supplies copy fields (headline / subline / cta) and a public
-// URL to the brand logo (passed as a reference image so the actual
-// mark appears, not a hallucinated lookalike). Returns the fal-hosted
-// image URL.
+// AI poster v2: image-only generation. Caller supplies a fully-formed
+// scene description (no text, no UI, no signs); Nano Banana Pro renders
+// the bare 4:5 visual and we composite typography ourselves with our
+// own typography pipeline. Hard guardrails in the system suffix
+// re-state "no text" because Gemini occasionally adds invented signage
+// when the prompt mentions a building or scene that "would" have a
+// label in real life. Returns the fal CDN URL.
+export async function generateBareAiPoster(scenePrompt: string): Promise<{ url: string }> {
+  configure();
+  const trimmed = scenePrompt.trim().replace(/\.$/, "");
+  const prompt = [
+    trimmed + ".",
+    "Vertical 4:5 portrait orientation, taller than wide.",
+    "Cinematic, scroll-stopping composition. Strong focal subject. Considered lighting and color palette.",
+    // Negative-text guardrail. Nano sometimes hallucinates signage,
+    // license plates, captions, or scribbles even when not asked, so
+    // we re-state this multiple ways.
+    "ABSOLUTELY NO TEXT in the image. No letters, no words, no signs, no banners, no billboards, no captions, no UI, no logos, no watermarks, no readable typography of any kind. Pure visual only — text will be composited separately.",
+  ].join(" ");
+
+  const result = await fal.subscribe(IMAGE_MODEL_PRO, {
+    input: {
+      prompt,
+      num_images: 1,
+      output_format: "png",
+      aspect_ratio: "4:5",
+    } as never,
+    logs: false,
+  });
+  type FalImage = { url?: string };
+  type FalData = { images?: FalImage[] };
+  const data = (result as { data?: FalData }).data;
+  const url = data?.images?.[0]?.url;
+  if (!url) throw new Error("fal.ai returned no AI poster URL");
+  return { url };
+}
+
+// Legacy v1 AI poster path — text was rendered inside the image by
+// Nano. Kept so we can roll back if the v2 (bare image + composited
+// text) flow regresses; nothing currently calls it. Delete once v2 is
+// proven on the live site.
 export async function generateAiPoster(args: {
   headline: string;
   subline: string;

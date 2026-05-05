@@ -1,9 +1,12 @@
 import { NextResponse } from "next/server";
 import { ImageResponse } from "next/og";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { composeGraphic } from "@/lib/composeGraphic";
 import { renderTemplate } from "@/lib/graphicTemplates";
+import { generateBareAiPoster } from "@/lib/fal";
+import { pickPosterPlacement } from "@/lib/aiPosterPlacement";
+import { getObjectBytes, putBytes } from "@/lib/r2Server";
 import type { GraphicData } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -65,6 +68,40 @@ async function loadFonts() {
   ];
 }
 
+// AI poster v2: fetch-or-generate the bare image, hashed by its prompt
+// so a regen with the same prompt is free. Returns the PNG bytes plus
+// the public URL (for debugging) — callers should base64 the bytes
+// and feed them to ImageResponse as a data URL.
+async function getOrGenerateBareAiPoster(prompt: string): Promise<Uint8Array> {
+  const hash = createHash("sha256").update(prompt).digest("hex").slice(0, 32);
+  const key = `cache/ai-poster-bare/${hash}.png`;
+
+  // Cache hit?
+  const cached = await getObjectBytes(key).catch((e) => {
+    console.warn("[compose-graphic] R2 cache lookup failed:", e instanceof Error ? e.message : e);
+    return null;
+  });
+  if (cached) return cached;
+
+  // Cache miss — generate via Nano, mirror to R2, return bytes.
+  const { url } = await generateBareAiPoster(prompt);
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`Bare poster fetch from fal failed: ${res.status}`);
+  }
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  // Best-effort R2 mirror; don't fail the request if R2 hiccups.
+  try {
+    await putBytes({ key, body: bytes, contentType: "image/png" });
+  } catch (e) {
+    console.warn(
+      "[compose-graphic] R2 mirror failed (proceeding anyway):",
+      e instanceof Error ? e.message : e,
+    );
+  }
+  return bytes;
+}
+
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as Body;
@@ -75,17 +112,40 @@ export async function POST(req: Request) {
       );
     }
 
-    // AI poster routes through fal.ai — keep the existing path. Returns
-    // a PNG buffer that we wrap in a Response below.
+    // Shared lazy-loads for fonts + logos.
+    if (!_fonts) _fonts = await loadFonts();
+    if (!_logos) _logos = await loadLogos();
+    const { black: logoBlackUrl, white: logoWhiteUrl } = _logos;
+
+    // ai_poster: 3-stage pipeline.
+    //   1. Look up / generate the bare image (hashed by imagePrompt).
+    //   2. Ask Claude Vision where to place the text + which color +
+    //      whether a scrim is needed.
+    //   3. Render the AiPosterCompositeLight component through
+    //      ImageResponse, just like the other graphic templates.
     if (body.graphic.template === "ai_poster") {
-      const png = await composeGraphic({
-        template: "ai_poster",
-        headline: body.graphic.headline,
-        subline: body.graphic.subline,
-        cta: "Connect with an Agent",
+      if (!body.graphic.imagePrompt) {
+        return NextResponse.json(
+          { error: "ai_poster requires imagePrompt" },
+          { status: 400 },
+        );
+      }
+      const imageBytes = await getOrGenerateBareAiPoster(body.graphic.imagePrompt);
+      const placement = await pickPosterPlacement(imageBytes, "image/png");
+      const imageDataUrl = `data:image/png;base64,${Buffer.from(imageBytes).toString("base64")}`;
+
+      const element = renderTemplate({
+        graphic: body.graphic,
+        logoBlackUrl,
+        logoWhiteUrl,
+        aiPosterImage: imageDataUrl,
+        aiPosterPlacement: placement,
       });
-      return new NextResponse(png as unknown as BodyInit, {
-        headers: { "Content-Type": "image/png", "Cache-Control": "no-store" },
+
+      return new ImageResponse(element, {
+        width: 1080,
+        height: 1350,
+        fonts: _fonts,
       });
     }
 
@@ -94,10 +154,6 @@ export async function POST(req: Request) {
     // fetch can't reliably reach the host's own public URL during a
     // function invocation (works on localhost dev, fails silently on
     // Vercel where the request loops back to the deployment).
-    if (!_fonts) _fonts = await loadFonts();
-    if (!_logos) _logos = await loadLogos();
-    const { black: logoBlackUrl, white: logoWhiteUrl } = _logos;
-
     const element = renderTemplate({
       graphic: body.graphic,
       logoBlackUrl,

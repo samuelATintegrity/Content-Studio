@@ -16,6 +16,73 @@ interface ContentTypeSpec {
   angles: AngleSpec[];
 }
 
+// AI-poster metaphor seeds — each one is a strikingly unusual visual
+// concept that maps back to a real-estate value prop. Claude rewrites
+// the seed into a fully-fleshed-out Nano Banana Pro prompt at batch
+// time, with a hard constraint to never include text/letters/signage
+// in the image (text is composited separately by ImageResponse).
+//
+// `mapsTo` is the good_agents angle key the concept argues for; the
+// matching headline/copy should reinforce that angle. `tone` nudges
+// Claude toward a coherent voice for the on-image text.
+export interface AiPosterConcept {
+  key: string;
+  seed: string;
+  mapsTo: string;
+  tone: string;
+}
+
+export const AI_POSTER_CONCEPTS: AiPosterConcept[] = [
+  {
+    key: "apex_predator",
+    seed: "ultra close-up macro portrait of a tiger's face, intense eye contact with the viewer, dramatic side lighting, fur detail, dark background, photorealistic",
+    mapsTo: "top_performers",
+    tone: "confident, declarative, top-of-the-food-chain",
+  },
+  {
+    key: "chameleon_pretender",
+    seed: "studio portrait of a chameleon wearing a tiny tailored business suit and tie, head and shoulders framing, soft key light on a neutral backdrop, photorealistic",
+    mapsTo: "filters_part_time",
+    tone: "wry, contrarian, calling out pretenders",
+  },
+  {
+    key: "underwater_home",
+    seed: "a pristine modern American suburban home fully submerged underwater in a vast deep ocean, sun rays piercing the water from above, bubbles, surreal cinematic composition, photorealistic",
+    mapsTo: "why_quality_matters",
+    tone: "warning, stakes-driven, what's at risk",
+  },
+  {
+    key: "lone_survivor",
+    seed: "a single pristine modern home standing untouched, surrounded by smoldering burnt-out wreckage of other homes, dawn light, atmospheric haze, photorealistic, dramatic",
+    mapsTo: "proven_reviews",
+    tone: "survivor, standout, results that hold up",
+  },
+  {
+    key: "shark_warning",
+    seed: "extreme close-up of a great white shark's open mouth and rows of teeth, viewed from below, dark blue water, light rays, photorealistic, ominous",
+    mapsTo: "filters_part_time",
+    tone: "warning, watch out for predators",
+  },
+  {
+    key: "sloth_slow",
+    seed: "extreme macro close-up portrait of a three-toed sloth's face, slow-blinking eyes, soft jungle backlight, mossy fur detail, photorealistic",
+    mapsTo: "pre_interviewed",
+    tone: "pointed, slow agents lose deals",
+  },
+  {
+    key: "performer_vs_poser",
+    seed: "studio shot of a majestic great dane standing tall next to a tiny chihuahua wearing an oversized business suit, neutral seamless backdrop, photorealistic",
+    mapsTo: "top_performers",
+    tone: "performer-vs-poser, side-by-side comparison",
+  },
+  {
+    key: "exploding_home",
+    seed: "a suburban American home mid-explosion captured at the peak frame, debris and shingles frozen in midair, fire and smoke billowing, dramatic golden-hour lighting, photorealistic",
+    mapsTo: "why_quality_matters",
+    tone: "high-stakes, what happens with the wrong agent",
+  },
+];
+
 // Headline variants the model should pick from, lightly tweaking word choice
 // (Buy / Purchase / Own / Options for / Homes with) but always keeping the topic
 // anchor (e.g. "$0 Down") in the phrase.
