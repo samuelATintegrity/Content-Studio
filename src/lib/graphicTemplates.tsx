@@ -596,6 +596,69 @@ function wordmarkCornerForRegion(region: PosterRegion): {
   }
 }
 
+// Localized "halo" backdrop behind the text block. This is the safety
+// net that guarantees legibility even when Vision picks a region that
+// turns out to overlap with image content (e.g., the chameleon's head
+// reaching into a TOP region). Unlike the full-edge scrim, the halo
+// is bounded to roughly the text's bounding box and feathers softly
+// to transparent at the edges via a radial gradient — the image
+// stays visible everywhere except directly behind the type, so the
+// effect reads as intentional editorial design rather than a fix.
+//
+// Geometry returned in pixel units against the 1080x1350 canvas. The
+// box is generously oversized vs. the actual text rect so the
+// feathered radial gradient has room to fall off without clipping
+// the readable zone.
+interface HaloBox {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+}
+function haloBoxForRegion(region: PosterRegion): HaloBox {
+  // Canvas is 1080x1350, padding is 80px on all sides for the text
+  // block. We oversize the halo box ~120px in each direction past the
+  // text padding so the gradient feathers into clean image area.
+  switch (region) {
+    case "top":
+      return { top: 0, left: 0, width: 1080, height: 540 };
+    case "bottom":
+      return { top: 810, left: 0, width: 1080, height: 540 };
+    case "left":
+      return { top: 0, left: 0, width: 720, height: 1350 };
+    case "right":
+      return { top: 0, left: 360, width: 720, height: 1350 };
+    case "center":
+      return { top: 270, left: 90, width: 900, height: 810 };
+  }
+}
+
+// Soft radial gradient bounded to the halo box. Strong opacity at the
+// center, fades to fully transparent before the box edges so the
+// image isn't visibly cropped — the falloff IS the feather.
+//
+// `tone` toggles dark vs light halo: dark behind white text, light
+// behind black text. Opacity tuned by feel — strong enough to lift
+// type off a busy photo, soft enough to feel intentional.
+function haloBackground(tone: "dark" | "light"): string {
+  if (tone === "dark") {
+    return [
+      "radial-gradient(ellipse 75% 75% at center,",
+      "rgba(0,0,0,0.62) 0%,",
+      "rgba(0,0,0,0.50) 35%,",
+      "rgba(0,0,0,0.28) 60%,",
+      "rgba(0,0,0,0.0) 88%)",
+    ].join(" ");
+  }
+  return [
+    "radial-gradient(ellipse 75% 75% at center,",
+    "rgba(255,255,255,0.72) 0%,",
+    "rgba(255,255,255,0.55) 35%,",
+    "rgba(255,255,255,0.30) 60%,",
+    "rgba(255,255,255,0.0) 88%)",
+  ].join(" ");
+}
+
 export function AiPosterCompositeLight({
   fields,
   imageDataUrl,
@@ -628,6 +691,13 @@ export function AiPosterCompositeLight({
     ? { textShadow: "0 2px 6px rgba(0,0,0,0.55), 0 1px 2px rgba(0,0,0,0.5)" }
     : {};
 
+  // Localized halo backdrop bounded to the chosen region. This is the
+  // safety net for cases where Vision picked a region that turns out
+  // to overlap with image content. Dark halo behind white text, light
+  // halo behind black text. Sits between the image and the text block.
+  const halo = haloBoxForRegion(placement.region);
+  const haloBg = haloBackground(isWhiteText ? "dark" : "light");
+
   // Text block is constrained to 880px so headlines wrap predictably
   // even when the placement is left/right rail.
   const textBlockMaxWidth = 880;
@@ -647,7 +717,7 @@ export function AiPosterCompositeLight({
         fontFamily: "Geist, Inter, sans-serif",
       }}
     >
-      {/* Scrim layer (optional) — sits between image and text */}
+      {/* Scrim layer (optional) — full-edge gradient across the canvas */}
       {scrim ? (
         <div
           style={{
@@ -661,6 +731,19 @@ export function AiPosterCompositeLight({
           }}
         />
       ) : null}
+
+      {/* Localized halo — bounded to the text region with feathered edges */}
+      <div
+        style={{
+          position: "absolute",
+          top: halo.top,
+          left: halo.left,
+          width: halo.width,
+          height: halo.height,
+          display: "flex",
+          backgroundImage: haloBg,
+        }}
+      />
 
       {/* Text block */}
       <div style={layoutStyle}>
