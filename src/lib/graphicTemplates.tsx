@@ -32,18 +32,18 @@ export const PROMO_COPY = {
 
 // ── Shared subcomponents ────────────────────────────────────────────
 
-// Logo — public URL pointing at /brand/logo-{black,white}.png. Satori
-// fetches via the public URL at render time (the route resolves a
-// fully-qualified URL before passing it in). Native ratio is 1536:545
-// (~2.82); height = size * 2.4 per the spec.
+// Logo — base64 data URL passed in by the route (Satori can't reliably
+// reach the host's own public URL during a function invocation).
+// Native asset ratio is 1536:545 (~2.82); the design spec uses
+// height = size * 2.4 — Satori needs both width AND height set
+// explicitly on <img> or it silently drops the element.
+const LOGO_RATIO = 1536 / 545;
 function Wordmark({ src, size = 28 }: { src: string; size?: number }) {
+  const height = size * 2.4;
+  const width = Math.round(height * LOGO_RATIO);
   return (
     // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={src}
-      alt="Agent Match"
-      style={{ height: size * 2.4, width: "auto", display: "block" }}
-    />
+    <img src={src} alt="Agent Match" width={width} height={height} />
   );
 }
 
@@ -236,7 +236,7 @@ export function DykPostLight({
             color: "#999",
           }}
         >
-          FACT / {fields.index}
+          {`FACT / ${fields.index}`}
         </div>
       </div>
 

@@ -16,9 +16,22 @@ interface Body {
   graphic: GraphicData;
 }
 
-// Cache fonts in module scope so warm function invocations don't re-read
-// from disk. Loaded lazily on first call.
+// Cache fonts + logos in module scope so warm function invocations don't
+// re-read from disk. Loaded lazily on first call.
 let _fonts: Awaited<ReturnType<typeof loadFonts>> | null = null;
+let _logos: { black: string; white: string } | null = null;
+
+async function loadLogos() {
+  const brandDir = path.join(process.cwd(), "public", "brand");
+  const [black, white] = await Promise.all([
+    fs.readFile(path.join(brandDir, "logo-black.png")),
+    fs.readFile(path.join(brandDir, "logo-white.png")),
+  ]);
+  return {
+    black: `data:image/png;base64,${black.toString("base64")}`,
+    white: `data:image/png;base64,${white.toString("base64")}`,
+  };
+}
 
 async function loadFonts() {
   const fontsDir = path.join(process.cwd(), "public", "fonts");
@@ -52,11 +65,6 @@ async function loadFonts() {
   ];
 }
 
-function resolveOrigin(req: Request): string {
-  const url = new URL(req.url);
-  return `${url.protocol}//${url.host}`;
-}
-
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as Body;
@@ -82,13 +90,13 @@ export async function POST(req: Request) {
     }
 
     // React templates (stat / dyk / promo) — render via ImageResponse.
-    // Logos are passed as fully-qualified public URLs so Satori can
-    // fetch them; localhost works in dev, Vercel URL works in prod.
-    const origin = resolveOrigin(req);
-    const logoBlackUrl = `${origin}/brand/logo-black.png`;
-    const logoWhiteUrl = `${origin}/brand/logo-white.png`;
-
+    // Logos are inlined as base64 data URLs because Satori's network
+    // fetch can't reliably reach the host's own public URL during a
+    // function invocation (works on localhost dev, fails silently on
+    // Vercel where the request loops back to the deployment).
     if (!_fonts) _fonts = await loadFonts();
+    if (!_logos) _logos = await loadLogos();
+    const { black: logoBlackUrl, white: logoWhiteUrl } = _logos;
 
     const element = renderTemplate({
       graphic: body.graphic,
