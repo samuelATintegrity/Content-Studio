@@ -198,6 +198,25 @@ function buildMetadataBlock(platform: SocialPlatform, assetType: BufferAssetType
   }
 }
 
+// Buffer's createPost pipeline fetches the asset URL server-side to
+// validate dimensions / aspect ratio. When that fetch hits a 5xx (R2's
+// pub-r2.dev URL is rate-limited, Buffer's fetcher hiccups, etc.) the
+// mutation fails with a "Failed to fetch image dimensions: Bad Gateway"
+// message even though our request was perfectly valid. These errors are
+// transient — retrying after a short delay almost always succeeds.
+function isTransientBufferError(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes("bad gateway") ||
+    m.includes("fetch image dimensions") ||
+    m.includes("fetch video") ||
+    m.includes("502") ||
+    m.includes("503") ||
+    m.includes("504") ||
+    m.includes("timeout")
+  );
+}
+
 async function createSinglePost(args: {
   channelId: string;
   platform: SocialPlatform;
@@ -264,17 +283,35 @@ async function createSinglePost(args: {
     variables.dueAt = args.scheduledAtIso;
   }
 
-  try {
-    const data = await bufferGraphQL<{
-      createPost: { post?: { id: string }; message?: string };
-    }>(query, variables);
-    if (data.createPost.post?.id) {
-      return { postId: data.createPost.post.id };
+  // Retry on transient validation-fetch errors (Bad Gateway etc.).
+  // Buffer's image-dimension probe occasionally fails when our R2
+  // pub-r2.dev URL is briefly slow; the second attempt usually wins.
+  // 3 attempts total, with a longer delay between each so transient
+  // R2 / Buffer-edge issues have time to settle.
+  const MAX_ATTEMPTS = 3;
+  let lastError = "createPost failed";
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    try {
+      const data = await bufferGraphQL<{
+        createPost: { post?: { id: string }; message?: string };
+      }>(query, variables);
+      if (data.createPost.post?.id) {
+        return { postId: data.createPost.post.id };
+      }
+      lastError = data.createPost.message ?? "Buffer returned no post id";
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : "createPost failed";
     }
-    return { error: data.createPost.message ?? "Buffer returned no post id" };
-  } catch (err) {
-    return { error: err instanceof Error ? err.message : "createPost failed" };
+    if (attempt < MAX_ATTEMPTS && isTransientBufferError(lastError)) {
+      // 1.5s, then 4s — gives Buffer's image-fetch pipeline / R2's edge
+      // a real window to recover before we surface the failure.
+      const delayMs = attempt === 1 ? 1500 : 4000;
+      await new Promise((r) => setTimeout(r, delayMs));
+      continue;
+    }
+    break;
   }
+  return { error: lastError };
 }
 
 // Fan out createPost across N channels (Buffer's GraphQL only accepts
