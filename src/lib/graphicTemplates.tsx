@@ -85,6 +85,35 @@ function CTAButton({ label, inverse = false }: { label: string; inverse?: boolea
 
 // ── Stat Light ──────────────────────────────────────────────────────
 
+// Auto-shrink the giant stat number when the value runs long. Tuned for
+// Geist-ExtraBold at 920px content width — anything over ~3 characters
+// starts to crowd the gutters at the design's 380px target.
+function statNumberFontSize(text: string): number {
+  const len = text.length;
+  if (len <= 3) return 380;
+  if (len === 4) return 300;
+  if (len === 5) return 240;
+  return 200;
+}
+
+// Star adornment rendered as inline SVG. The bundled Geist subset
+// doesn't include the U+2605 glyph, so a literal ★ character renders
+// as tofu — we paint it ourselves at the same visual weight as the
+// number so "4.8★" reads correctly.
+function StarAdornment({ size, color = "#000" }: { size: number; color?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill={color}
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <path d="M12 2l2.94 6.42L22 9.27l-5 4.87L18.18 21 12 17.77 5.82 21 7 14.14l-5-4.87 7.06-.85L12 2z" />
+    </svg>
+  );
+}
+
 export function StatPostLight({
   fields,
   logoBlackUrl,
@@ -92,6 +121,14 @@ export function StatPostLight({
   fields: StatGraphicData;
   logoBlackUrl: string;
 }) {
+  const numberFontSize = statNumberFontSize(fields.number);
+  // Star unit gets rendered as SVG; everything else stays as text at a
+  // proportionally smaller fontSize than the number so the unit reads
+  // as a suffix rather than a peer.
+  const unitText = fields.unit?.trim() ?? "";
+  const isStarUnit = unitText === "★" || unitText.toLowerCase() === "stars";
+  const unitFontSize = Math.round(numberFontSize * 0.5);
+  const headerLabel = `BY THE NUMBERS / ${fields.index ?? "01"}`;
   return (
     <div
       style={{
@@ -118,7 +155,7 @@ export function StatPostLight({
             color: "#999",
           }}
         >
-          By the numbers / 01
+          {headerLabel}
         </div>
       </div>
 
@@ -138,21 +175,28 @@ export function StatPostLight({
           }}
         >
           <div style={{ width: 40, height: 2, background: "#000" }} />
-          The Stat
+          {"The Stat"}
         </div>
         <div
           style={{
             fontFamily: "Geist, Inter, sans-serif",
             fontWeight: 800,
-            fontSize: 380,
+            fontSize: numberFontSize,
             letterSpacing: "-0.06em",
             lineHeight: 0.85,
             color: "#000",
             display: "flex",
+            alignItems: "flex-start",
           }}
         >
-          {fields.number}
-          {fields.unit ? <span style={{ fontSize: 200 }}>{fields.unit}</span> : null}
+          <span>{fields.number}</span>
+          {isStarUnit ? (
+            <div style={{ display: "flex", marginLeft: 8, marginTop: numberFontSize * 0.05 }}>
+              <StarAdornment size={Math.round(numberFontSize * 0.55)} />
+            </div>
+          ) : unitText ? (
+            <span style={{ fontSize: unitFontSize }}>{unitText}</span>
+          ) : null}
         </div>
         <div
           style={{

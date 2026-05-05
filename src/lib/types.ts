@@ -55,6 +55,7 @@ export interface StatGraphicData {
   unit: string;          // "%", " days", "★"
   statement: string;     // one-line context
   source: string;        // attribution line
+  index?: string;        // "01", "02" — eyebrow counter (optional, default "01")
 }
 
 export interface DykGraphicData {

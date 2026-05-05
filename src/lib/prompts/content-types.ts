@@ -72,9 +72,9 @@ export const CONTENT_TYPE_SPECS: Record<ContentType, ContentTypeSpec> = {
   },
 
   good_agents: {
-    topic: "How we match homebuyers with the right agent (our mission and matching process)",
+    topic: "How we match homebuyers with the right agent (our mission and matching process), plus industry data on why agent quality matters",
     guardrails:
-      "Use specifics from the reference document below; rephrase naturally, never copy verbatim. Do NOT invent numbers or claims beyond what the document says (the only quantitative claims allowed are 'top 10%' and '4.8 stars or higher'). Do NOT promise outcomes (sale prices, savings, timelines). The headline must contain 'agent' or 'agents'.",
+      "Use specifics from the reference document below; rephrase naturally, never copy verbatim. Permitted quantitative claims are ONLY: (a) 'top 10%' and '4.8 stars or higher' from the matching mission, and (b) the industry stats explicitly listed in the INDUSTRY DATA section below — every one of those is sourced and you may use any of them verbatim or paraphrased. Do NOT invent any other numbers, percentages, dollar amounts, or counts. Do NOT promise outcomes (sale prices, savings, timelines). The headline must contain 'agent' or 'agents'.",
     referenceDocument: `HOW WE MATCH YOU WITH THE RIGHT AGENT
 Different agents have different specialties. We review multiple factors to connect each homebuyer with the right fit.
 
@@ -94,7 +94,29 @@ We prioritize agents who rank in the top 10% within their market and price range
 We only match agents with an aggregate rating of 4.8 stars or higher across major platforms. This ensures a consistent track record of strong client experiences.
 
 6. Interviewed Before Introduction
-Before making an introduction, we speak directly with the agent. This ensures they are responsive, professional, and ready to help when you're connected.`,
+Before making an introduction, we speak directly with the agent. This ensures they are responsive, professional, and ready to help when you're connected.
+
+INDUSTRY DATA (every stat below is sourced; you may use the number verbatim and paraphrase the meaning)
+
+A. NAR 2024 Member Profile — typical agent volume
+The median REALTOR® closed 10 transaction sides in the prior 12 months. About half of all licensed agents close fewer than 10 sides per year. Source: National Association of REALTORS® 2024 Member Profile. Permitted number: 10. Permitted phrasing: "median agent closes about 10 sides a year", "half of agents close fewer than 10 a year".
+
+B. NAR 2024 Member Profile — newer agents
+Roughly 4 in 10 REALTORS® have 5 or fewer years of experience in the industry. Source: NAR 2024 Member Profile. Permitted numbers: 40 (as a percentage), 5 (years). Permitted phrasing: "40% of agents have 5 years or less experience", "4 in 10 agents have under 5 years in the business".
+
+C. NAR 2024 Profile of Home Buyers and Sellers — buyers shopping for an agent
+Most homebuyers interview just one agent before hiring. NAR's 2024 Profile of Home Buyers and Sellers shows the typical buyer contacted only one agent before choosing one. Source: NAR 2024 Profile of Home Buyers and Sellers. Permitted phrasing: "most buyers interview only one agent", "the typical buyer contacts just one agent". Avoid quoting an exact percentage — keep it qualitative.
+
+D. NAR 2024 Profile of Home Buyers and Sellers — would use again
+89% of buyers said they would use their real estate agent again or recommend the agent to others. Source: NAR 2024 Profile of Home Buyers and Sellers. Permitted number: 89. Permitted phrasing: "89% of buyers would use their agent again or recommend them".
+
+E. Agent retention in the industry
+Roughly 75–80% of new real estate agents leave the business within their first 5 years. Source: widely reported NAR / industry retention data; the round figure most often cited is "about 8 in 10". Permitted phrasing: "roughly 8 in 10 new agents leave the business within 5 years", "most new agents are gone within 5 years". Permitted number: 80 (or "8 in 10"). Do NOT pin to a year other than "the first 5 years".
+
+F. Production concentration
+A small share of agents handles a large share of transactions — the top 10% of agents handle the majority of deals in most markets. This aligns with our matching mission ("top 10%"). Permitted phrasing: "the top 10% of agents close most of the deals in their market". Source: industry production data.
+
+How to use the data above for stat callouts: pick ONE number per post. Put the bare number in the 'number' field (e.g., "10", "40", "89", "80"), the suffix in the 'unit' field ("%", "+", or empty), and a one-line meaning in the 'statement' field that explicitly ties the stat to the value of choosing a vetted agent (e.g., "of agents close fewer than 10 deals a year — yours should not be one of them"). Always credit the source generically (e.g., "NAR Member Profile, 2024") in the source field.`,
     angles: [
       { key: "mission_overview", brief: "Plain-English intro to how the matching process works.", headlineHint: "How We Match Agents" },
       { key: "buy_sell_focus", brief: "Why agents who focus on buyers vs. sellers matters, and how we match by side of transaction.", headlineHint: "Buyer-Side Agents" },
@@ -106,6 +128,17 @@ Before making an introduction, we speak directly with the agent. This ensures th
       { key: "filters_part_time", brief: "Why our screening filters out part-time and inexperienced agents.", headlineHint: "No Part-Time Agents" },
       { key: "why_quality_matters", brief: "Why working with the right agent matters more than working with any agent.", headlineHint: "The Right Agent Matters" },
       { key: "cta_get_matched", brief: "Direct invitation to fill out the form and get matched with a vetted agent.", headlineHint: "Find Your Agent" },
+      // Industry-data angles. Each one anchors on a specific stat from
+      // the INDUSTRY DATA section above and ties it to why a vetted
+      // agent matters. Only used for stat-template batches in practice
+      // (the photo-static + video pipelines pull from the matching-
+      // mission angles), but they're valid here too.
+      { key: "stat_median_volume", brief: "Use the NAR median (10 transaction sides per year) to underscore that most agents are part-time-volume agents — and why a top performer is a different tier. Source the number to NAR.", headlineHint: "Most Agents Close 10 a Year" },
+      { key: "stat_newer_agents", brief: "Use the NAR figure that ~40% of agents have 5 years or less experience. Frame as: a vetted match avoids learning on your dime.", headlineHint: "40% Are New Agents" },
+      { key: "stat_one_interview", brief: "Use the NAR finding that most buyers interview only one agent. Frame as: most buyers don't shop, which is why getting matched to a top performer up front matters. Keep the stat qualitative — don't quote a percent.", headlineHint: "Buyers Interview Just One" },
+      { key: "stat_would_use_again", brief: "Use the NAR figure that 89% of buyers would use their agent again. Frame as: when the match is right, buyers stick with that agent for life — start with the right one.", headlineHint: "89% Would Use Again" },
+      { key: "stat_attrition", brief: "Use the industry figure that roughly 8 in 10 new agents leave the business within 5 years. Frame as: experience and longevity are signal, not noise — our top 10% have proven staying power.", headlineHint: "8 in 10 Agents Quit" },
+      { key: "stat_top_10_concentration", brief: "Use the production-concentration data — the top 10% of agents close the majority of deals in their market. Frame as: that's exactly the cohort we match you to.", headlineHint: "Top 10% Closes Most Deals" },
     ],
   },
 

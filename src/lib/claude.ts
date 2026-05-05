@@ -234,12 +234,12 @@ const STAT_TOOL = {
             number: {
               type: "string",
               description:
-                "The bare numeric anchor that will be rendered HUGE (e.g., '10', '4.8', '$0'). Use ONLY documented values — top 10% and 4.8 stars or higher are explicitly allowed. Never invent percentages, dollar amounts, or counts. Keep it short, just the number itself, no descriptive text.",
+                "STRICT FORMAT: digits only, max 4 characters. Examples: '10', '4.8', '73', '87', '$0', '25k'. NEVER include words like 'Top' or 'Only' here — those go in the statement. NEVER include the percent sign, star, or 'stars' here — those go in unit. Use ONLY documented values from the reference document. Never invent percentages, dollar amounts, or counts.",
             },
             unit: {
               type: "string",
               description:
-                "The smaller suffix shown next to the number ('%', '★', ' down', '+'). Empty string is fine if the number stands alone.",
+                "Short suffix shown next to the number. Allowed: '%', '★', '+', 'k', 'M', 'x'. Use '★' (single character) when the stat is a star rating. Empty string when the number stands alone (e.g., a count like '10').",
             },
             statement: {
               type: "string",
@@ -446,13 +446,14 @@ Return your results by calling the ${STAT_TOOL.name} tool.`;
 
   try {
     const raw = await callTool<RawStatPost>(prompt, STAT_TOOL);
-    const posts = raw.map<GenerateBatchResponse["posts"][number]>((p) => {
+    const posts = raw.map<GenerateBatchResponse["posts"][number]>((p, i) => {
       const graphic: StatGraphicData = {
         template: "stat",
         number: stripDashes(p.number).trim(),
         unit: stripDashes(p.unit ?? "").trim(),
         statement: stripDashes(p.statement).trim(),
         source: stripDashes(p.source).trim(),
+        index: String(i + 1).padStart(2, "0"),
       };
       return {
         angle: p.angle,
