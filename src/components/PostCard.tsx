@@ -398,7 +398,10 @@ export function PostCard({ post }: { post: Post }) {
           </div>
         )}
 
-        {isGraphic && post.imageDataUrl && (
+        {/* Send-to-Buffer is available on every static post with a
+            rendered image — photo or graphic. The upload + queue flow
+            doesn't care which template produced the PNG. */}
+        {post.imageDataUrl && (
           <div className="flex flex-col gap-2 pt-1">
             {bufferReceipt ? (
               <div className="rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2.5 text-[12px] text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
