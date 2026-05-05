@@ -232,6 +232,63 @@ export async function composeGraphicDataUrl(graphic: GraphicData): Promise<strin
   });
 }
 
+// Re-encode a PNG data URL as a high-quality JPEG via canvas, on the
+// client. AI-poster PNGs are 2-3 MB; JPEG at quality 0.9 brings the
+// same image down to ~300-500 KB with no visible loss for social
+// posts (Instagram/Facebook re-encode to JPEG server-side anyway).
+//
+// Why this matters: mobile uploads of 2-3 MB bodies routinely hit
+// carrier middlebox compression or Vercel edge size thresholds that
+// can mangle the response. Smaller body = no chance of tripping any
+// of those. Stat/DYK/Promo PNGs are already tiny (50-90 KB) so this
+// no-ops them.
+async function shrinkForUpload(dataUrl: string): Promise<{ blob: Blob; mime: string }> {
+  // Quick path: tiny PNGs (Stat/DYK/Promo) skip re-encode. The
+  // threshold is in characters of the data URL; roughly 1.4 MB raw
+  // bytes converts to ~1.9 MB base64 string. Anything below that is
+  // already small enough that compression isn't worth the canvas hop.
+  const SHRINK_ABOVE = 600 * 1024; // 600 KB of data-URL string
+  if (dataUrl.length < SHRINK_ABOVE) {
+    const blob = dataUrlToBlob(dataUrl);
+    return { blob, mime: blob.type || "image/png" };
+  }
+
+  // Canvas re-encode. Wrap in try/catch and fall back to the raw
+  // PNG if anything in the canvas pipeline misbehaves on this
+  // browser (Safari has historically had quirks).
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error("image decode failed"));
+      i.src = dataUrl;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("2d context unavailable");
+    // White background so any transparent regions don't render black
+    // when JPEG-flattened. Static posters have no intentional
+    // transparency.
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0);
+    const jpegBlob: Blob | null = await new Promise((resolve) =>
+      canvas.toBlob((b) => resolve(b), "image/jpeg", 0.9),
+    );
+    if (!jpegBlob) throw new Error("canvas.toBlob returned null");
+    return { blob: jpegBlob, mime: "image/jpeg" };
+  } catch (e) {
+    console.warn(
+      "[uploadStaticImage] JPEG shrink failed; uploading raw PNG:",
+      e instanceof Error ? e.message : e,
+    );
+    const blob = dataUrlToBlob(dataUrl);
+    return { blob, mime: blob.type || "image/png" };
+  }
+}
+
 // Upload a finished static-post PNG (already rendered as a data URL on
 // the client) to R2 and return its public URL. Buffer's GraphQL API
 // needs a public URL for the image asset, so this is the prerequisite
@@ -244,13 +301,13 @@ export async function composeGraphicDataUrl(graphic: GraphicData): Promise<strin
 // on a slow link, etc.) we want a useful error string, not a cryptic
 // "Unexpected token 'e' is not valid JSON".
 export async function uploadStaticImage(dataUrl: string): Promise<{ cachedUrl: string }> {
-  const blob = dataUrlToBlob(dataUrl);
+  const { blob, mime } = await shrinkForUpload(dataUrl);
   const res = await fetchWithRetry("/api/static/upload-image", {
     method: "POST",
-    headers: { "content-type": blob.type || "image/png" },
+    headers: { "content-type": mime },
     body: blob,
     label: "Upload image",
-    // Generous: a slow mobile uplink on a 2-3 MB PNG can take 20s+
+    // Generous: a slow mobile uplink on a multi-MB body can take 20s+
     // before any reply, and we don't want to give up before the
     // server has even started reading the body.
     retries: 1,
