@@ -73,6 +73,26 @@ export async function fetchWithRetry(
   throw friendlyNetworkError(lastErr, label);
 }
 
+// /api/generate-batch streams space bytes every 3 seconds while
+// Claude is working, then emits "\n" followed by the result JSON as
+// the final chunk. The heartbeat keeps iOS Safari and intermediate
+// proxies from idle-killing the connection during the long Anthropic
+// call. This helper reads the streamed body and returns the parsed
+// payload.
+async function readHeartbeatStreamed(res: Response): Promise<unknown> {
+  const text = await res.text();
+  // Last newline-delimited segment is the JSON payload; everything
+  // before it is whitespace heartbeats. Falls back gracefully if the
+  // server sent a regular JSON body (e.g. a 4xx with no streaming).
+  const idx = text.lastIndexOf("\n");
+  const json = idx >= 0 ? text.slice(idx + 1) : text;
+  try {
+    return JSON.parse(json);
+  } catch {
+    throw new Error("generate-batch returned malformed payload");
+  }
+}
+
 export async function fetchBatchCopy(
   language: Language,
   contentType: ContentType,
@@ -85,8 +105,15 @@ export async function fetchBatchCopy(
     body: JSON.stringify({ language, contentType, staticSubMode, graphicTemplate }),
     label: "Generate batch",
   });
-  if (!res.ok) throw new Error((await res.json()).error ?? "generate-batch failed");
-  return res.json();
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "generate-batch failed" }));
+    throw new Error(err.error ?? "generate-batch failed");
+  }
+  const data = (await readHeartbeatStreamed(res)) as
+    | GenerateBatchResponse
+    | { error: string };
+  if ("error" in data && data.error) throw new Error(data.error);
+  return data as GenerateBatchResponse;
 }
 
 export async function fetchOneCopy(
@@ -100,8 +127,13 @@ export async function fetchOneCopy(
     body: JSON.stringify({ language, contentType, angleKey }),
     label: "Regenerate copy",
   });
-  if (!res.ok) throw new Error((await res.json()).error ?? "regenerate-copy failed");
-  const data = (await res.json()) as { posts: Post[] };
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "regenerate-copy failed" }));
+    throw new Error(err.error ?? "regenerate-copy failed");
+  }
+  const data = (await readHeartbeatStreamed(res)) as { posts?: Post[]; error?: string };
+  if (data.error) throw new Error(data.error);
+  if (!data.posts?.[0]) throw new Error("regenerate-copy returned no post");
   return data.posts[0];
 }
 

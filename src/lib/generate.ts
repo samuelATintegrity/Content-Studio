@@ -64,9 +64,17 @@ export async function generateBatch(): Promise<void> {
       // for debugging instead of just stuffing the message into the
       // caption where it's invisible. The toast / error state still
       // surfaces in the caption so the user sees something on the card.
-      await Promise.all(
-        initial.map(async (post) => {
-          if (!post.graphic) return;
+      //
+      // Concurrency cap: iOS Safari only allows 6 connections per host,
+      // and we share that budget with the page's other fetches (library
+      // sync, image preloads). 3 in flight at a time leaves room for
+      // those and avoids starving any single render of TCP throughput.
+      const COMPOSE_CONCURRENCY = 3;
+      const queue = initial.slice();
+      const workers = Array.from({ length: COMPOSE_CONCURRENCY }, async () => {
+        while (queue.length > 0) {
+          const post = queue.shift();
+          if (!post || !post.graphic) continue;
           try {
             const imageDataUrl = await composeGraphicDataUrl(post.graphic);
             useBatchStore.getState().updatePost(post.id, { imageDataUrl });
@@ -82,8 +90,9 @@ export async function generateBatch(): Promise<void> {
                 `\n\n[graphic error — open browser console for details: ${message}]`,
             });
           }
-        }),
-      );
+        }
+      });
+      await Promise.all(workers);
     } catch (e) {
       setError(e instanceof Error ? e.message : "unknown error");
     } finally {
