@@ -168,29 +168,17 @@ export function PostCard({ post }: { post: Post }) {
 
   async function cycleStyle() {
     if (!post.photoUrl) return;
-    const order: StyleVariant[] = ["branded", "light", "sepia", "plain"];
-    const idx = order.indexOf(post.style);
-    const next = order[(idx + 1) % order.length];
+    // Only Light ↔ Plain are exposed in the UI now; Branded and Sepia
+    // remain on the StyleVariant union for back-compat with old saved
+    // posts but never re-enter the rotation. If a post somehow already
+    // sits on "branded" or "sepia", the next click jumps to "light".
+    const next: StyleVariant = post.style === "light" ? "plain" : "light";
     setBusy("tweak");
     try {
       const imageDataUrl = await recompose({ style: next });
       updatePost(post.id, { style: next, imageDataUrl });
     } catch (e) {
       alert("Style swap failed: " + (e instanceof Error ? e.message : "unknown"));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function toggleFitMode() {
-    if (!post.photoUrl) return;
-    const next: FitMode = post.fitMode === "cover" ? "contain" : "cover";
-    setBusy("tweak");
-    try {
-      const imageDataUrl = await recompose({ fitMode: next });
-      updatePost(post.id, { fitMode: next, imageDataUrl });
-    } catch (e) {
-      alert("Fit toggle failed: " + (e instanceof Error ? e.message : "unknown"));
     } finally {
       setBusy(null);
     }
@@ -264,7 +252,6 @@ export function PostCard({ post }: { post: Post }) {
   }
 
   const fontLabel = post.fontVariant === "serif" ? "Serif" : "Sans";
-  const fitLabel = post.fitMode === "contain" ? "Fit" : "Fill";
   // Graphic posts skip every photo-specific affordance: no photo edit
   // (no underlying photo to reposition), no AI prompt input (the design
   // is pure SVG), no New-image / New-caption regen (graphics regen via
@@ -331,11 +318,8 @@ export function PostCard({ post }: { post: Post }) {
           </span>
           {!isGraphic && (
             <div className="flex gap-1 shrink-0 text-[10px] uppercase tracking-[0.1em] text-neutral-500">
-              <Chip onClick={cycleStyle} disabled={busy !== null || !post.photoUrl} title="Cycle visual style">
+              <Chip onClick={cycleStyle} disabled={busy !== null || !post.photoUrl} title="Toggle Light ↔ Plain">
                 {STYLE_LABELS[post.style]}
-              </Chip>
-              <Chip onClick={toggleFitMode} disabled={busy !== null || !post.photoUrl} title="Toggle Fit / Fill">
-                {fitLabel}
               </Chip>
               <Chip onClick={toggleFont} disabled={busy !== null || !post.photoUrl} title="Swap headline font">
                 Aa · {fontLabel}

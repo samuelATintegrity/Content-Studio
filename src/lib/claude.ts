@@ -68,7 +68,7 @@ const POST_TOOL = {
           type: "object",
           properties: {
             angle: { type: "string", description: "Echo back the angle key you were given." },
-            headline: { type: "string", description: "Top-band headline, max 4 words, no emojis." },
+            headline: { type: "string", description: "Top-band headline. HARD LIMITS: max 4 words AND max 32 characters total. Sharp, declarative, no emojis. The renderer composites this in a fixed-height band so anything longer wraps awkwardly — keep it tight." },
             body: { type: "string", description: "3-5 sentence post body in the requested language. End with a newline and 3-5 hashtags. No URLs, no DM/CTA language, no em dashes." },
           },
           required: ["angle", "headline", "body"],
@@ -125,11 +125,15 @@ Return your results by calling the post_results tool.`;
 function extractToolPosts(resp: Anthropic.Messages.Message): RawPost[] {
   const tu = resp.content.find((b) => b.type === "tool_use");
   if (!tu || tu.type !== "tool_use") {
-    throw new Error("Claude did not call the post_results tool");
+    throw new Error(
+      `Claude did not call the post_results tool (stop_reason=${resp.stop_reason})`,
+    );
   }
   const input = tu.input as { posts?: RawPost[] };
   if (!input.posts || !Array.isArray(input.posts)) {
-    throw new Error("post_results tool call missing 'posts' array");
+    throw new Error(
+      `post_results tool call missing 'posts' array (stop_reason=${resp.stop_reason}; bump max_tokens if 'max_tokens')`,
+    );
   }
   return input.posts;
 }
@@ -140,6 +144,7 @@ function finalizePosts(raw: RawPost[], language: Language, contentType: ContentT
     headline: stripDashes(p.headline).trim(),
     cta: CTA_TEXT[language],
     caption: buildCaption(language, contentType, p.body),
+    contentType,
   }));
 }
 
@@ -168,6 +173,48 @@ export async function generateBatch(
   } catch (e) {
     throw friendlyError(e);
   }
+}
+
+// Photo-blend batch: when the static UI's "Photo" pill is picked, we
+// don't ask the user to drill into a single content type. Instead we
+// fan out 4 parallel calls to generateBatch (one per topical content
+// type), take the first 3 posts from each (canonically angles 1-3 of
+// that pool), and interleave them so the 12-card output reads as
+// [ct1[0], ct2[0], ct3[0], ct4[0], ct1[1], ct2[1], ...] — every fourth
+// card is the same topic, so the strip feels varied as the user
+// scrolls.
+//
+// language_match is intentionally NOT in the blend; the audience for
+// English skips it entirely, and for non-English languages the user
+// can still get language_match content via the (older) single-content
+// path if we ever bring it back. For now the brand is pushing the
+// four core topical pools.
+const PHOTO_BLEND_CONTENT_TYPES: ContentType[] = [
+  "zero_down_generic",
+  "edu_zero_down_usda_local",
+  "edu_dpa_local",
+  "good_agents",
+];
+const PHOTO_BLEND_PER_POOL = 3;
+
+export async function generatePhotoBlendBatch(
+  language: Language,
+): Promise<GenerateBatchResponse> {
+  const subBatches = await Promise.all(
+    PHOTO_BLEND_CONTENT_TYPES.map((ct) => generateBatch(language, ct)),
+  );
+
+  // Take first PHOTO_BLEND_PER_POOL from each sub-batch and interleave
+  // by position. Each sub-batch already has each post tagged with its
+  // contentType via finalizePosts.
+  const interleaved: GenerateBatchResponse["posts"] = [];
+  for (let i = 0; i < PHOTO_BLEND_PER_POOL; i++) {
+    for (const sub of subBatches) {
+      const post = sub.posts[i];
+      if (post) interleaved.push(post);
+    }
+  }
+  return { posts: interleaved };
 }
 
 // ── Graphic batch ────────────────────────────────────────────────────

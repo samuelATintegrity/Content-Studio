@@ -116,6 +116,31 @@ export async function fetchBatchCopy(
   return data as GenerateBatchResponse;
 }
 
+// Photo-blend variant: when the static UI's "Photo" pill is selected,
+// the route fans out 4 parallel single-content-type calls and merges
+// the results into a 12-card batch (3 per topic, interleaved). Each
+// returned post carries its own contentType so the per-post photo
+// lookup pulls the right Pexels query and AI prompt seed.
+export async function fetchPhotoBlendCopy(
+  language: Language,
+): Promise<GenerateBatchResponse> {
+  const res = await fetchWithRetry("/api/generate-batch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ language, photoBlend: true }),
+    label: "Generate photo blend",
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "generate-batch failed" }));
+    throw new Error(err.error ?? "generate-batch failed");
+  }
+  const data = (await readHeartbeatStreamed(res)) as
+    | GenerateBatchResponse
+    | { error: string };
+  if ("error" in data && data.error) throw new Error(data.error);
+  return data as GenerateBatchResponse;
+}
+
 export async function fetchOneCopy(
   language: Language,
   contentType: ContentType,

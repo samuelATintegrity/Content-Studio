@@ -6,41 +6,69 @@ import {
   composeImageDataUrl,
   fetchAndCacheAiImage,
   fetchBatchCopy,
+  fetchPhotoBlendCopy,
   fetchPhotoFor,
 } from "@/lib/client";
 import { batchSeedPrompt, categoryFor, AI_CREDIT_LABEL, type BatchSeedIndex } from "@/lib/imagePrompts";
 import { pickRandomLibraryImages } from "@/lib/imageLibrary";
-import { DEFAULT_FIT_MODE, DEFAULT_FRAMING, DEFAULT_STYLE, type FontVariant } from "@/lib/types";
+import {
+  DEFAULT_FIT_MODE,
+  DEFAULT_FRAMING,
+  DEFAULT_STYLE,
+  type ContentType,
+  type FontVariant,
+} from "@/lib/types";
 import { brand } from "../../brand.config";
 
-// Per-post image-source assignment for the 10-post static batch:
-//   slots 0..3  → fresh AI (family / couple / exterior / interior)
-//   slots 4..7  → previously generated AI from the local image library
-//                 (mirrored to R2, persistent across sessions)
+// Photo batch (single content type, legacy slot math):
+//   slots 0..3  → fresh AI
+//   slots 4..7  → previously generated AI from the local library
 //   slots 8..9  → Pexels stock photos
-// If the library doesn't have enough cached images, the leftover slots
-// fall through to Pexels stock as a graceful degradation.
-const FRESH_AI_COUNT = 4;
-const CACHED_AI_COUNT = 4;
-// const STOCK_COUNT = 2;  // implicit: total - fresh - cached
+// Photo blend batch (12 posts, 4 content types interleaved):
+//   slots 0..3  → fresh AI for each topic's first card
+//   slots 4..7  → fresh AI for each topic's second card
+//   slots 8..11 → cached library / Pexels mix for each topic's third card
+// The slot rules below assume the 12-post layout when isBlend is true,
+// and the 10-post layout otherwise.
+const FRESH_AI_COUNT_SINGLE = 4;
+const CACHED_AI_COUNT_SINGLE = 4;
+const FRESH_AI_COUNT_BLEND = 8;   // 2 of each of 4 topics
+const CACHED_AI_COUNT_BLEND = 4;  // 1 of each of 4 topics
 
-// Kick off a new batch: copy from Claude (always 10 posts), then per-post
-// photo + compose in parallel. AI failures on the fresh-AI slots fall back
-// to Pexels. Mid-flight failures are isolated per-post and don't kill the
-// batch; the caption gets an [image error: ...] tail so it's visible.
+// Kick off a new batch. Dispatches by staticContentType:
+//   "photo" → blended 12-card flow across 4 topics (per-post contentType)
+//   else    → graphic flow (no photo lookup; just Claude copy + ImageResponse render)
 export async function generateBatch(): Promise<void> {
   const store = useBatchStore.getState();
-  const { language, contentType, staticSubMode, selectedGraphicTemplate, setLoading, setError, setPosts, resetUsedPhotoIds, addUsedPhotoId } = store;
+  const {
+    language,
+    staticContentType,
+    setLoading,
+    setError,
+    setPosts,
+    resetUsedPhotoIds,
+    addUsedPhotoId,
+  } = store;
 
-  // Graphic sub-mode is a wholly separate pipeline — no image fetching,
-  // no Pexels fallback, no library pick. Just Claude copy + an SVG render
-  // per post via the /api/compose-graphic route.
-  if (staticSubMode === "graphic") {
+  // Graphic templates are a wholly separate pipeline — no image
+  // fetching, no Pexels fallback, no library pick. Just Claude copy +
+  // an SVG/React render per post via the /api/compose-graphic route.
+  if (staticContentType !== "photo") {
     setLoading(true);
     setError(null);
     setPosts([]);
     try {
-      const copy = await fetchBatchCopy(language, contentType, "graphic", selectedGraphicTemplate);
+      // Graphic flows still pin to a single ContentType internally;
+      // the route uses staticSubMode="graphic" + graphicTemplate to
+      // dispatch. ContentType is a no-op for graphic generators (each
+      // template defines its own pool) but the API contract requires
+      // it, so pass a sensible default.
+      const copy = await fetchBatchCopy(
+        language,
+        "good_agents",
+        "graphic",
+        staticContentType,
+      );
       const initial = copy.posts.map((p, i) => ({
         id: `${Date.now()}-${i}`,
         angle: p.angle,
@@ -59,16 +87,10 @@ export async function generateBatch(): Promise<void> {
       }));
       setPosts(initial);
 
-      // AI poster runs are slow (Nano Banana Pro is 30-60s per image) and
-      // sometimes time out, so log the failures explicitly to the console
-      // for debugging instead of just stuffing the message into the
-      // caption where it's invisible. The toast / error state still
-      // surfaces in the caption so the user sees something on the card.
-      //
-      // Concurrency cap: iOS Safari only allows 6 connections per host,
-      // and we share that budget with the page's other fetches (library
-      // sync, image preloads). 3 in flight at a time leaves room for
-      // those and avoids starving any single render of TCP throughput.
+      // AI poster runs are slow (Nano Banana Pro is 30-60s per image)
+      // and sometimes time out. iOS Safari only allows 6 connections
+      // per host; 3 in flight at a time leaves room for the page's
+      // other fetches (library sync, image preloads).
       const COMPOSE_CONCURRENCY = 3;
       const queue = initial.slice();
       const workers = Array.from({ length: COMPOSE_CONCURRENCY }, async () => {
@@ -101,13 +123,15 @@ export async function generateBatch(): Promise<void> {
     return;
   }
 
+  // ── Photo (blended) flow ───────────────────────────────────────────
+
   setLoading(true);
   setError(null);
   setPosts([]);
   resetUsedPhotoIds();
 
   try {
-    const copy = await fetchBatchCopy(language, contentType);
+    const copy = await fetchPhotoBlendCopy(language);
 
     const initial = copy.posts.map((p, i) => ({
       id: `${Date.now()}-${i}`,
@@ -122,61 +146,61 @@ export async function generateBatch(): Promise<void> {
       fitMode: DEFAULT_FIT_MODE,
       style: DEFAULT_STYLE,
       language,
+      // Each photo-blend post carries its own topical contentType so
+      // the per-post Pexels query / AI seed pull the right stuff.
+      contentType: p.contentType,
     }));
     setPosts(initial);
 
-    // Pre-pick the cached library images up-front so multiple cached slots
-    // don't race for the same image and accidentally collide.
-    const cachedPicks = pickRandomLibraryImages(CACHED_AI_COUNT);
+    // Pre-pick cached library images up-front. Use the blend cap.
+    const cachedPicks = pickRandomLibraryImages(CACHED_AI_COUNT_BLEND);
 
     const used = new Set<number>();
     await Promise.all(
       initial.map(async (post, idx) => {
+        // Per-post contentType drives Pexels query + AI prompt seed.
+        // Fall back to "good_agents" if a post somehow arrived
+        // untagged (shouldn't happen with the new blend wiring, but
+        // defensively keeps the photo lookup working).
+        const postContentType: ContentType = post.contentType ?? "good_agents";
         try {
           let photoUrl: string;
           let credit: { photographer: string; sourceUrl: string };
 
-          // Slot 0..3: fresh AI generation (mirrored + cached automatically).
-          if (idx < FRESH_AI_COUNT) {
+          // Fresh-AI slots: first 8 of the 12-post blend (2 per topic).
+          if (idx < FRESH_AI_COUNT_BLEND) {
             try {
-              const seedIdx = idx as BatchSeedIndex;
-              const prompt = batchSeedPrompt(language, contentType, seedIdx);
+              // The seed index space (0..3) covers the four image
+              // categories (family/couple/exterior/interior). For the
+              // blend, alternate seeds across the 8 fresh slots so we
+              // hit each category roughly twice.
+              const seedIdx = (idx % 4) as BatchSeedIndex;
+              const prompt = batchSeedPrompt(language, postContentType, seedIdx);
               const ai = await fetchAndCacheAiImage(prompt, categoryFor(seedIdx));
               photoUrl = ai.url;
               credit = { photographer: AI_CREDIT_LABEL, sourceUrl: "" };
             } catch {
-              // Fresh AI failed (rate limit, safety, etc.) → Pexels fallback.
-              const photo = await fetchPhotoFor(contentType, [...used]);
+              const photo = await fetchPhotoFor(postContentType, [...used]);
               used.add(photo.id);
               addUsedPhotoId(photo.id);
               photoUrl = photo.url;
               credit = { photographer: photo.photographer, sourceUrl: photo.sourceUrl };
             }
           }
-          // Slot 4..7: pull from the cached library (oldest-first sampling
-          // is fine; pre-shuffled in pickRandomLibraryImages).
-          else if (idx < FRESH_AI_COUNT + CACHED_AI_COUNT) {
-            const cachedSlot = idx - FRESH_AI_COUNT;
+          // Cached-library / stock slots: last 4 of the 12-post blend.
+          else {
+            const cachedSlot = idx - FRESH_AI_COUNT_BLEND;
             const pick = cachedPicks[cachedSlot];
             if (pick) {
               photoUrl = pick.url;
               credit = { photographer: AI_CREDIT_LABEL, sourceUrl: "" };
             } else {
-              // Library not yet full enough — fall through to Pexels.
-              const photo = await fetchPhotoFor(contentType, [...used]);
+              const photo = await fetchPhotoFor(postContentType, [...used]);
               used.add(photo.id);
               addUsedPhotoId(photo.id);
               photoUrl = photo.url;
               credit = { photographer: photo.photographer, sourceUrl: photo.sourceUrl };
             }
-          }
-          // Slot 8..9: stock photos.
-          else {
-            const photo = await fetchPhotoFor(contentType, [...used]);
-            used.add(photo.id);
-            addUsedPhotoId(photo.id);
-            photoUrl = photo.url;
-            credit = { photographer: photo.photographer, sourceUrl: photo.sourceUrl };
           }
 
           const imageDataUrl = await composeImageDataUrl({
@@ -207,3 +231,8 @@ export async function generateBatch(): Promise<void> {
     setLoading(false);
   }
 }
+
+// Suppress TS unused-vars on the legacy single-content slot constants
+// — kept around in case we want a "single-topic" photo path back.
+void FRESH_AI_COUNT_SINGLE;
+void CACHED_AI_COUNT_SINGLE;

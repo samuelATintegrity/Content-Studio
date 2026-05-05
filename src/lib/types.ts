@@ -28,9 +28,9 @@ export const CONTENT_TYPE_LABELS: Record<ContentType, string> = {
 
 export type Format = "static" | "video";
 
-// Static-format sub-modes. "photo" is the original photo + text-bands
-// composition; "graphic" is the hand-built SVG template lane (stat
-// callouts, did-you-know cards, brand promos).
+// DEPRECATED: kept only so old persisted Post records that carry this
+// field still typecheck. The static UI no longer surfaces a sub-mode
+// toggle — see StaticContentType below.
 export type StaticSubMode = "photo" | "graphic";
 
 // Graphic templates. The first three are hand-built SVG layouts (one
@@ -47,8 +47,25 @@ export const GRAPHIC_TEMPLATE_LABELS: Record<GraphicTemplate, string> = {
   ai_poster: "AI poster",
 };
 
+// The single picker the static UI now exposes. "photo" runs the
+// blended-content-type photo flow (12 cards across 4 topical content
+// types); the four template values dispatch to the existing graphic
+// flows untouched.
+export type StaticContentType = "photo" | GraphicTemplate;
+
+export const STATIC_CONTENT_TYPE_LABELS: Record<StaticContentType, string> = {
+  photo: "Photo",
+  stat: "Statistic",
+  did_you_know: "Did you know",
+  promo: "Promo",
+  ai_poster: "AI poster",
+};
+
+// DEPRECATED — kept so any code still importing it compiles. New
+// code should rely on DEFAULT_STATIC_CONTENT_TYPE below.
 export const DEFAULT_STATIC_SUB_MODE: StaticSubMode = "photo";
 export const DEFAULT_GRAPHIC_TEMPLATE: GraphicTemplate = "stat";
+export const DEFAULT_STATIC_CONTENT_TYPE: StaticContentType = "photo";
 
 // Per-template field shapes. Each template displays a different set of
 // values, so we use a discriminated union keyed on template instead of
@@ -124,7 +141,11 @@ export const STYLE_LABELS: Record<StyleVariant, string> = {
   plain: "Plain",
 };
 
-export const DEFAULT_STYLE: StyleVariant = "branded";
+// "branded" / "sepia" remain on the union for back-compat (old saved
+// posts) but the UI no longer cycles to them — only Light ↔ Plain.
+// Default to "light" because most posts read better with the typography
+// overlay than as a bare photo; user can flip to Plain in one click.
+export const DEFAULT_STYLE: StyleVariant = "light";
 
 // "cover": photo fills the region, may crop (uses framing as percent of headroom).
 // "contain": full photo visible, brand-color side bars fill any extra space.
@@ -141,7 +162,10 @@ export interface Framing {
 }
 
 export const DEFAULT_FRAMING: Framing = { x: 0, y: 0, scale: 1.0 };
-export const DEFAULT_FIT_MODE: FitMode = "contain";
+// New default: photo posts now always full-bleed cover. The "contain"
+// (letterboxed) value is still on the union for back-compat with old
+// saved posts, but the UI no longer lets users pick it.
+export const DEFAULT_FIT_MODE: FitMode = "cover";
 
 export interface Post {
   id: string;
@@ -168,6 +192,12 @@ export interface Post {
   // language's profile set to target. Undefined for older posts in
   // localStorage from before this field landed.
   language?: Language;
+  // Each photo post in a blended batch carries its own topical
+  // content type so per-post operations (Pexels query, AI image
+  // seed, IG caption form-line) pull the right values regardless
+  // of what's currently selected in the sidebar. Undefined on
+  // graphic posts and on legacy single-content batches.
+  contentType?: ContentType;
 }
 
 export interface BatchRequest {
@@ -183,6 +213,10 @@ export interface GenerateBatchResponse {
       // Undefined for photo posts so the existing static path stays
       // untouched.
       graphic?: GraphicData;
+      // Stamped on photo-blend posts so each card pulls the right
+      // Pexels query / AI prompt seed for its own topic. Undefined
+      // on graphic posts and on legacy single-content batches.
+      contentType?: ContentType;
     }
   >;
 }

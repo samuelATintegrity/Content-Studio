@@ -3,16 +3,15 @@
 import { useEffect, useState } from "react";
 import { useBatchStore } from "@/store/batchStore";
 import {
-  CONTENT_TYPE_LABELS,
   FORMAT_LABELS,
-  GRAPHIC_TEMPLATE_LABELS,
   LANGUAGE_LABELS,
   MESSAGE_THEME_LABELS,
+  STATIC_CONTENT_TYPE_LABELS,
   type ContentType,
   type Format,
-  type GraphicTemplate,
   type Language,
   type MessageTheme,
+  type StaticContentType,
 } from "@/lib/types";
 import {
   deleteSavedSet,
@@ -40,13 +39,27 @@ const CONTENT_TYPES: ContentType[] = [
 ];
 
 const MESSAGE_THEMES: MessageTheme[] = ["agent_match", "dpa"];
-const GRAPHIC_TEMPLATES: GraphicTemplate[] = ["stat", "did_you_know", "promo", "ai_poster"];
+
+// Static-format options: a single picker that combines the old
+// Photo/Graphic toggle with the graphic-template picker. "photo" runs
+// the blended-content-type photo flow (12 cards across 4 topics);
+// each other value dispatches to its corresponding graphic template.
+const STATIC_CONTENT_TYPES: StaticContentType[] = [
+  "photo",
+  "stat",
+  "did_you_know",
+  "promo",
+  "ai_poster",
+];
 
 // Content types that don't make sense in certain (language, format)
-// combinations. English skips language_match (the audience already
-// speaks the agents' language). Video skips zero_down_generic — those
-// generic narrations end up educating about the same programs that the
-// USDA / DPA content types cover more crisply.
+// combinations. Used by the VIDEO content-type picker only — the
+// static UI no longer surfaces individual content types (Photo runs
+// a blended batch; the four graphic templates have their own pools).
+// English skips language_match (the audience already speaks the
+// agents' language). Video skips zero_down_generic — those generic
+// narrations end up educating about the same programs that the USDA
+// / DPA content types cover more crisply.
 function visibleContentTypes(language: Language, format: Format): ContentType[] {
   let allowed = CONTENT_TYPES.slice();
   if (language === "en") {
@@ -73,19 +86,17 @@ export function Sidebar({ drawerOpen = false, onClose }: SidebarProps = {}) {
     language,
     contentType,
     subMode,
-    staticSubMode,
-    selectedGraphicTemplate,
+    staticContentType,
     selectedAvatarName,
     selectedMessageTheme,
     setFormat,
     setLanguage,
     setContentType,
     setSubMode,
-    setSelectedGraphicTemplate,
+    setStaticContentType,
     setSelectedAvatarName,
     setSelectedMessageTheme,
   } = useBatchStore();
-  const isGraphic = format === "static" && staticSubMode === "graphic";
 
   // Esc closes the mobile drawer. No-op on desktop since onClose is a
   // no-op prop.
@@ -98,18 +109,20 @@ export function Sidebar({ drawerOpen = false, onClose }: SidebarProps = {}) {
     return () => window.removeEventListener("keydown", onKey);
   }, [drawerOpen, onClose]);
 
-  // If the user's current content type becomes invisible after a language
-  // or format swap (e.g. switching to video when zero_down_generic was
-  // selected), bounce them to the first allowed option so we never have
-  // an invisible-but-active content type.
+  // The video flow is the only one that still surfaces a per-topic
+  // ContentType picker. If the user's current content type becomes
+  // invisible after a language or format swap (e.g. switching to
+  // video when zero_down_generic was selected), bounce them to the
+  // first allowed option so we never have an invisible-but-active
+  // content type. Static no longer reads contentType from the store.
   useEffect(() => {
+    if (format !== "video") return;
     const allowed = visibleContentTypes(language, format);
     if (!allowed.includes(contentType)) {
       setContentType(allowed[0]);
     }
   }, [language, format, contentType, setContentType]);
 
-  const contentTypes = visibleContentTypes(language, format);
   const aspectBadge = format === "video" ? "9:16" : "4:5";
 
   return (
@@ -184,8 +197,6 @@ export function Sidebar({ drawerOpen = false, onClose }: SidebarProps = {}) {
         </Section>
       )}
 
-      {format === "static" && <StaticSubModeSection />}
-
       {format === "video" && subMode === "influencer" && (
         <AvatarSection
           language={language}
@@ -211,9 +222,10 @@ export function Sidebar({ drawerOpen = false, onClose }: SidebarProps = {}) {
       </Section>
 
       {/* Video mode (both narration and influencer sub-modes) uses the
-          Message theme picker. Narration consolidated from 5 content types
-          to these 2 themes; influencer was already locked to them. Static
-          mode keeps the full 5-content-type picker below. */}
+          Message theme picker. Narration consolidated from 5 content
+          types to these 2 themes; influencer was already locked to
+          them. Static mode uses a single 5-pill content-type picker
+          (Photo + the four graphic templates). */}
       {format === "video" ? (
         <Section title="Message">
           <div className="flex flex-col gap-2">
@@ -229,37 +241,20 @@ export function Sidebar({ drawerOpen = false, onClose }: SidebarProps = {}) {
             ))}
           </div>
         </Section>
-      ) : isGraphic ? (
-        // Graphic sub-mode replaces the content-type picker with a
-        // template picker — picking the template IS the categorization.
-        // Internally each template draws from an appropriate content
-        // type pool (stat / promo from good_agents, did-you-know from
-        // the educational angles).
-        <Section title="Graphic type">
-          <div className="flex flex-col gap-2">
-            {GRAPHIC_TEMPLATES.map((t) => (
-              <Pill
-                key={t}
-                selected={selectedGraphicTemplate === t}
-                onClick={() => setSelectedGraphicTemplate(t)}
-                align="left"
-              >
-                {GRAPHIC_TEMPLATE_LABELS[t]}
-              </Pill>
-            ))}
-          </div>
-        </Section>
       ) : (
+        // Static format — single picker. "Photo" runs the blended-
+        // content-type 12-card flow; the four graphic templates each
+        // dispatch to their existing per-template generator.
         <Section title="Content type">
           <div className="flex flex-col gap-2">
-            {contentTypes.map((c) => (
+            {STATIC_CONTENT_TYPES.map((t) => (
               <Pill
-                key={c}
-                selected={contentType === c}
-                onClick={() => setContentType(c)}
+                key={t}
+                selected={staticContentType === t}
+                onClick={() => setStaticContentType(t)}
                 align="left"
               >
-                {CONTENT_TYPE_LABELS[c]}
+                {STATIC_CONTENT_TYPE_LABELS[t]}
               </Pill>
             ))}
           </div>
@@ -414,29 +409,6 @@ function MusicLibrarySection() {
         </span>
       </button>
       {open && <MusicLibraryModal onClose={() => setOpen(false)} />}
-    </Section>
-  );
-}
-
-function StaticSubModeSection() {
-  const staticSubMode = useBatchStore((s) => s.staticSubMode);
-  const setStaticSubMode = useBatchStore((s) => s.setStaticSubMode);
-  return (
-    <Section title="Sub-mode">
-      <div className="flex flex-col gap-2">
-        <Pill
-          selected={staticSubMode === "photo"}
-          onClick={() => setStaticSubMode("photo")}
-        >
-          Photo
-        </Pill>
-        <Pill
-          selected={staticSubMode === "graphic"}
-          onClick={() => setStaticSubMode("graphic")}
-        >
-          Graphic
-        </Pill>
-      </div>
     </Section>
   );
 }

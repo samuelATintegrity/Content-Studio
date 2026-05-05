@@ -3,17 +3,15 @@
 import { create } from "zustand";
 import {
   DEFAULT_FORMAT,
-  DEFAULT_GRAPHIC_TEMPLATE,
   DEFAULT_MESSAGE_THEME,
-  DEFAULT_STATIC_SUB_MODE,
+  DEFAULT_STATIC_CONTENT_TYPE,
   type ContentType,
   type Format,
-  type GraphicTemplate,
   type ImageSlot,
   type Language,
   type MessageTheme,
   type Post,
-  type StaticSubMode,
+  type StaticContentType,
   type VideoPost,
 } from "@/lib/types";
 import { PICKED_CLIP_COUNT } from "@/lib/videoPrompts";
@@ -24,13 +22,12 @@ interface BatchState {
   format: Format;
   language: Language;
   contentType: ContentType;
-  // Static-format sub-mode: "photo" (Nano Banana + text bands) vs
-  // "graphic" (hand-built SVG templates). Mirrors the video subMode.
-  staticSubMode: StaticSubMode;
-  // Which template the entire graphic batch should use. Replaces the
-  // content-type picker in graphic mode — picking a template is the
-  // primary categorization knob there.
-  selectedGraphicTemplate: GraphicTemplate;
+  // Single picker for static-format content. "photo" runs the
+  // blended 12-card flow across all four topical content types;
+  // each other value dispatches to its corresponding graphic
+  // template. Replaces the older staticSubMode + selectedGraphicTemplate
+  // pair (those still ship in types.ts as deprecated for back-compat).
+  staticContentType: StaticContentType;
   posts: Post[];
   videoPosts: VideoPost[];
   imageSlots: ImageSlot[];
@@ -71,8 +68,7 @@ interface BatchState {
   deselectClip: (key: string) => void;
   clearClipSelection: () => void;
   setSubMode: (m: SubMode) => void;
-  setStaticSubMode: (m: StaticSubMode) => void;
-  setSelectedGraphicTemplate: (t: GraphicTemplate) => void;
+  setStaticContentType: (t: StaticContentType) => void;
   setSelectedAvatarName: (name: string | null) => void;
   setSelectedIntroClipUrl: (url: string | null) => void;
   setSelectedOutroClipUrl: (url: string | null) => void;
@@ -92,8 +88,7 @@ export const useBatchStore = create<BatchState>((set) => ({
   selectedClipUrls: [],
   selectedClipKeys: [],
   subMode: "narration",
-  staticSubMode: DEFAULT_STATIC_SUB_MODE,
-  selectedGraphicTemplate: DEFAULT_GRAPHIC_TEMPLATE,
+  staticContentType: DEFAULT_STATIC_CONTENT_TYPE,
   selectedAvatarName: null,
   selectedIntroClipUrl: null,
   selectedOutroClipUrl: null,
@@ -175,17 +170,12 @@ export const useBatchStore = create<BatchState>((set) => ({
       selectedIntroClipUrl: null,
       selectedOutroClipUrl: null,
     }),
-  // Switching static sub-mode (photo ↔ graphic) clears any in-progress
-  // batch — the two flows produce posts of different shapes (photo
-  // posts have photoUrl + framing, graphic posts have a graphic.* block)
-  // so leaving stale state across the swap creates rendering glitches.
-  setStaticSubMode: (staticSubMode) =>
-    set({ staticSubMode, posts: [] }),
-  // Picking a different graphic template clears the in-progress batch
-  // since posts are fully template-shaped — leaving stat-template posts
-  // visible after switching to did-you-know is misleading.
-  setSelectedGraphicTemplate: (selectedGraphicTemplate) =>
-    set({ selectedGraphicTemplate, posts: [] }),
+  // Switching static content type clears any in-progress batch.
+  // Photo posts and the four graphic templates all have very
+  // different shapes; leaving stale state across the swap shows
+  // posts that don't match the new picker selection.
+  setStaticContentType: (staticContentType) =>
+    set({ staticContentType, posts: [] }),
   // Switching the avatar invalidates the intro/outro picks, since both are
   // filtered by avatar.
   setSelectedAvatarName: (name) =>

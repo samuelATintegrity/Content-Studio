@@ -1,4 +1,9 @@
-import { generateBatch, generateGraphicBatch, regenerateOne } from "@/lib/claude";
+import {
+  generateBatch,
+  generateGraphicBatch,
+  generatePhotoBlendBatch,
+  regenerateOne,
+} from "@/lib/claude";
 import type { BatchRequest, GraphicTemplate } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -64,21 +69,37 @@ function streamWithHeartbeats<T>(work: Promise<T>): Response {
 }
 
 export async function POST(req: Request) {
-  let body: (BatchRequest & { angleKey?: string; graphicTemplate?: GraphicTemplate }) | null = null;
+  type RequestBody = BatchRequest & {
+    angleKey?: string;
+    graphicTemplate?: GraphicTemplate;
+    // When true, dispatch to the blended 12-card photo flow across
+    // four topical content types instead of the single-content-type
+    // photo flow. The body's contentType field is ignored in this
+    // case (the blend defines its own pool).
+    photoBlend?: boolean;
+  };
+  let body: RequestBody | null = null;
   try {
-    body = (await req.json()) as BatchRequest & {
-      angleKey?: string;
-      graphicTemplate?: GraphicTemplate;
-    };
+    body = (await req.json()) as RequestBody;
   } catch {
     return new Response(JSON.stringify({ error: "invalid JSON body" }), {
       status: 400,
       headers: { "Content-Type": "application/json" },
     });
   }
-  if (!body.language || !body.contentType) {
+  if (!body.language) {
     return new Response(
-      JSON.stringify({ error: "language and contentType are required" }),
+      JSON.stringify({ error: "language is required" }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
+  }
+  // Photo-blend / graphic flows don't need contentType; everything
+  // else does.
+  const isPhotoBlend = body.photoBlend === true;
+  const isGraphic = body.staticSubMode === "graphic";
+  if (!isPhotoBlend && !isGraphic && !body.contentType) {
+    return new Response(
+      JSON.stringify({ error: "contentType is required for single-content-type batches" }),
       { status: 400, headers: { "Content-Type": "application/json" } },
     );
   }
@@ -96,9 +117,13 @@ export async function POST(req: Request) {
       );
       return { posts: [post] };
     }
-    return reqBody.staticSubMode === "graphic"
-      ? generateGraphicBatch(reqBody.language, reqBody.graphicTemplate ?? "stat")
-      : generateBatch(reqBody.language, reqBody.contentType);
+    if (isPhotoBlend) {
+      return generatePhotoBlendBatch(reqBody.language);
+    }
+    if (isGraphic) {
+      return generateGraphicBatch(reqBody.language, reqBody.graphicTemplate ?? "stat");
+    }
+    return generateBatch(reqBody.language, reqBody.contentType);
   })();
 
   return streamWithHeartbeats(work);

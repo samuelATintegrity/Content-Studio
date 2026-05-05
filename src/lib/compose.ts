@@ -32,34 +32,100 @@ interface HeadlineLayout {
   size: number;
 }
 
-// Try to fit text on one line; if it can't even at the minimum size, split at the
-// best word boundary and find a size that fits both lines.
+// Greedy line-break: pack as many words as fit into each line at the
+// given font size, returning N lines (or undefined if even the longest
+// single word doesn't fit at this size).
+function greedyWrap(
+  words: string[],
+  size: number,
+  maxWidth: number,
+  charsPerEm: number,
+): string[] | undefined {
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    if (estWidth(word, size, charsPerEm) > maxWidth) {
+      // Even one word overflows at this size — caller should drop size.
+      return undefined;
+    }
+    const candidate = current ? current + " " + word : word;
+    if (estWidth(candidate, size, charsPerEm) <= maxWidth) {
+      current = candidate;
+    } else {
+      lines.push(current);
+      current = word;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+// Ellipsize a string in place by repeatedly dropping the last word and
+// appending "…" until it fits at the given size, or returning a hard
+// truncation by characters as a final fallback.
+function ellipsize(line: string, size: number, maxWidth: number, charsPerEm: number): string {
+  if (estWidth(line, size, charsPerEm) <= maxWidth) return line;
+  const words = line.split(/\s+/);
+  for (let i = words.length - 1; i >= 1; i--) {
+    const candidate = words.slice(0, i).join(" ") + "…";
+    if (estWidth(candidate, size, charsPerEm) <= maxWidth) return candidate;
+  }
+  // Single very-long word — chop characters.
+  let s = line;
+  while (s.length > 4 && estWidth(s + "…", size, charsPerEm) > maxWidth) {
+    s = s.slice(0, -1);
+  }
+  return s + "…";
+}
+
+// Layout the headline so it always fits inside the band:
+//   1. Try one line at base size, stepping down to minSize. If it
+//      still overflows, fall through to wrapping.
+//   2. Try 2 lines (then 3) at base, stepping the size down to minSize
+//      until every line fits. The first acceptable wrap wins.
+//   3. As a last resort, force 3 lines at minSize and ellipsize the
+//      last line so text never bleeds past the band edge.
+//
+// Min size is 44 px (down from 56) to give headlines a real chance to
+// fit without truncation. Combined with the upstream Claude prompt cap
+// (max 4 words / 32 chars), most calls land at 1-2 lines and the fall-
+// through paths are insurance, not the common case.
 function layoutHeadline(text: string, maxWidth: number, baseSize: number, minSize: number, charsPerEm: number): HeadlineLayout {
+  // 1. One line at any size between base and min.
   const oneLine = fitFontSize(text, maxWidth, baseSize, minSize, charsPerEm);
   if (estWidth(text, oneLine, charsPerEm) <= maxWidth) {
     return { lines: [text], size: oneLine };
   }
-  const words = text.split(/\s+/);
-  if (words.length < 2) return { lines: [text], size: minSize };
 
-  let bestSplit: [string, string] | null = null;
-  let bestDelta = Infinity;
-  for (let i = 1; i < words.length; i++) {
-    const a = words.slice(0, i).join(" ");
-    const b = words.slice(i).join(" ");
-    const delta = Math.abs(a.length - b.length);
-    if (delta < bestDelta) {
-      bestDelta = delta;
-      bestSplit = [a, b];
+  const words = text.split(/\s+/);
+  if (words.length < 2) {
+    // Single word that overflows — ellipsize at minSize.
+    return { lines: [ellipsize(text, minSize, maxWidth, charsPerEm)], size: minSize };
+  }
+
+  // 2. Wrapping. Step down by 4px from base; at each size, take the
+  //    first wrap whose line count is ≤ maxLines AND every line fits.
+  for (let size = baseSize; size >= minSize; size -= 4) {
+    for (const maxLines of [2, 3]) {
+      const lines = greedyWrap(words, size, maxWidth, charsPerEm);
+      if (!lines) continue;
+      if (lines.length <= maxLines && lines.every((ln) => estWidth(ln, size, charsPerEm) <= maxWidth)) {
+        return { lines, size };
+      }
     }
   }
-  if (!bestSplit) return { lines: [text], size: minSize };
 
-  let size = baseSize;
-  while (size > minSize && (estWidth(bestSplit[0], size, charsPerEm) > maxWidth || estWidth(bestSplit[1], size, charsPerEm) > maxWidth)) {
-    size -= 4;
+  // 3. Last resort — 3 lines at minSize, ellipsizing the final line.
+  const wrapped = greedyWrap(words, minSize, maxWidth, charsPerEm) ?? [text];
+  const trimmed = wrapped.slice(0, 3);
+  if (wrapped.length > 3) {
+    trimmed[2] = ellipsize(trimmed[2], minSize, maxWidth, charsPerEm);
   }
-  return { lines: [bestSplit[0], bestSplit[1]], size };
+  // Ensure no individual line still overflows at minSize.
+  return {
+    lines: trimmed.map((ln) => ellipsize(ln, minSize, maxWidth, charsPerEm)),
+    size: minSize,
+  };
 }
 
 // Per-variant cache of parsed opentype.Font instances. We render text by
@@ -344,7 +410,7 @@ export async function composeImage({
   const isSerif = fontVariant === "serif";
   const charsPerEm = isSerif ? 1.4 : 1.5;
   const headlineDisplay = isSerif ? headline : headline.toUpperCase();
-  const headlineLayout = layoutHeadline(headlineDisplay, CANVAS_W - 80, isSerif ? 120 : 110, 56, charsPerEm);
+  const headlineLayout = layoutHeadline(headlineDisplay, CANVAS_W - 80, isSerif ? 120 : 110, 44, charsPerEm);
   const ctaSize = fitFontSize(cta, CANVAS_W - 200, 64, 36, charsPerEm);
   const handleSize = 28;
 
@@ -451,13 +517,22 @@ export async function composeImage({
       })
     : `<text x="${CANVAS_W / 2}" y="${ctaCenterY}" font-family="${font.family}" font-size="${ctaSize}" font-weight="${font.weight}" fill="${textBottomColor}" text-anchor="middle" dominant-baseline="middle">${escapeXml(cta)}</text>`;
 
+  // Clip the headline + CTA glyphs to the band rectangles so any
+  // residual overflow (extreme headlines that not even the 3-line
+  // fallback can fit) is masked rather than visibly bleeding past
+  // the band edge into the photo region. The Light theme uses a
+  // semi-transparent band, so without this clip the photo behind
+  // it would show overflowing text outside the band's visual mass.
   const svg = `
 <svg width="${CANVAS_W}" height="${CANVAS_H}" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="topBandClip"><rect x="0" y="${topY}" width="${CANVAS_W}" height="${topHeightPx}"/></clipPath>
+    <clipPath id="bottomBandClip"><rect x="0" y="${bottomY}" width="${CANVAS_W}" height="${bottomHeightPx}"/></clipPath>
+  </defs>
   <rect x="0" y="${topY}" width="${CANVAS_W}" height="${topHeightPx}" fill="${bandTopColor}" fill-opacity="${styleCfg.bandAlpha}"/>
   <rect x="0" y="${bottomY}" width="${CANVAS_W}" height="${bottomHeightPx}" fill="${bandBottomColor}" fill-opacity="${styleCfg.bandAlpha}"/>
-  ${headlineTextEls}
-  ${ctaEl}
-  ${subEl}
+  <g clip-path="url(#topBandClip)">${headlineTextEls}</g>
+  <g clip-path="url(#bottomBandClip)">${ctaEl}${subEl}</g>
 </svg>`;
 
   const composites: sharp.OverlayOptions[] = [
