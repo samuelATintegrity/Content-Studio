@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { SYSTEM_PROMPT } from "./prompts/system";
 import { CONTENT_TYPE_SPECS, AI_POSTER_CONCEPTS } from "./prompts/content-types";
 import { buildCaption, CTA_TEXT, stripDashes } from "./copy";
+import { getRecentScheduledConcepts } from "./scheduledConcepts";
 import {
   LANGUAGE_LABELS,
   type AiPosterGraphicData,
@@ -643,6 +644,23 @@ async function generateAiPosterBatch(language: Language): Promise<GenerateBatchR
   ).join("\n");
   const angleList = AI_POSTER_TARGET_ANGLES.map((a) => `  - ${a}`).join("\n");
 
+  // Cooldown: skip concepts the user has scheduled in the last 14
+  // days so each new batch produces fresh visuals. Best-effort —
+  // tracker read failures don't block batch generation.
+  const recentlyScheduled = await getRecentScheduledConcepts(14).catch(() => []);
+  const cooldownLine =
+    recentlyScheduled.length > 0
+      ? `\n\nCOOLDOWN — DO NOT REPEAT (the user already scheduled these in the last 14 days):
+${recentlyScheduled.map((k) => `  - ${k}`).join("\n")}
+Skip these conceptKeys exactly AND avoid visually-similar metaphors. Examples of "similar":
+  - apex_predator on the list → avoid ALL big-cat metaphors (lion, jaguar, leopard, etc.)
+  - chameleon_pretender on the list → avoid ALL "animal in a suit" metaphors
+  - matchstick_in_stadium on the list → avoid any "single light in a dark vast space" metaphor
+  - lone_survivor on the list → avoid any "one untouched home in destruction" metaphor
+  - iceberg_* on the list → avoid all iceberg/glacier metaphors
+Pick a different seed OR invent a metaphor in fresh visual territory.`
+      : "";
+
   const prompt = `${buildBaseHeader(language, "ai_poster")}
 
 This batch generates ${GRAPHIC_BATCH_POSTS} AI-poster cards. Each card pairs a striking, scroll-stopping AI-generated image with a sharp branded tagline. The IMAGE and the TEXT are produced separately — the image model gets ONLY a visual prompt (no words to render), and we composite the headline + subline ourselves with our own typography.
@@ -668,7 +686,7 @@ Seed library (use 2-3 as inspiration, invent the rest):
 ${seedLibrary}
 
 Available value-prop angles (each card MUST tie its metaphor to one of these — pick the best fit for your metaphor):
-${angleList}
+${angleList}${cooldownLine}
 
 For each card, write:
 - conceptKey: a short snake_case label for your metaphor (e.g., 'iceberg_hidden_mass', 'matchstick_in_stadium'). Use the exact seed key when reusing a seed.

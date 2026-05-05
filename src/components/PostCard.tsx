@@ -481,6 +481,7 @@ export function PostCard({ post }: { post: Post }) {
           language={post.language}
           imageUrl={uploadedImageUrl}
           caption={post.caption}
+          conceptKey={post.graphic?.template === "ai_poster" ? post.graphic.conceptKey : undefined}
           onClose={() => setBufferSendOpen(false)}
           onSuccess={(queued) =>
             setBufferReceipt({ platforms: queued.map((q) => q.platform) })

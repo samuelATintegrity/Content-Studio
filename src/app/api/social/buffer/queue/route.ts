@@ -6,6 +6,7 @@ import {
   type BufferScheduleMode,
   type SocialPlatform,
 } from "@/lib/bufferServer";
+import { recordScheduledConcept } from "@/lib/scheduledConcepts";
 import type { Language } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -27,6 +28,10 @@ interface Body {
   scheduleMode?: BufferScheduleMode;
   // Required when scheduleMode === "scheduled". Unix seconds (UTC).
   scheduledAtSec?: number;
+  // Optional cooldown tracker hint — when an AI-poster card is
+  // scheduled, the client passes its conceptKey so the next batch
+  // can avoid repeating the same visual metaphor for ~14 days.
+  conceptKey?: string;
 }
 
 export async function POST(req: Request) {
@@ -107,6 +112,14 @@ export async function POST(req: Request) {
         profileId: t.profileId,
         message: failedByProfileId.get(t.profileId) ?? "unknown",
       }));
+
+    // Record the conceptKey for the cooldown tracker if at least one
+    // channel queued successfully. We only do this for image posts
+    // with a conceptKey provided — videos and unannotated posts skip.
+    // Best-effort: a failure here doesn't impact the user's response.
+    if (body.conceptKey && body.imageUrl && queued.length > 0) {
+      void recordScheduledConcept(body.conceptKey);
+    }
 
     return NextResponse.json({
       ok: true,

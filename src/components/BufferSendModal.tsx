@@ -51,6 +51,7 @@ export function BufferSendModal({
   videoUrl,
   imageUrl,
   caption: initialCaption,
+  conceptKey,
   onClose,
   onSuccess,
 }: {
@@ -61,6 +62,10 @@ export function BufferSendModal({
   videoUrl?: string;
   imageUrl?: string;
   caption: string;
+  // Optional cooldown hint — if this is an AI-poster card we want
+  // its conceptKey to land in the recently-scheduled tracker so
+  // future batches avoid repeating the same metaphor.
+  conceptKey?: string;
   onClose: () => void;
   onSuccess: (queued: { platform: SocialPlatform }[], mode: ScheduleMode) => void;
 }) {
@@ -150,6 +155,7 @@ export function BufferSendModal({
       if (scheduleMode === "scheduled") {
         body.scheduledAtSec = localStringToUnixSec(scheduledLocal);
       }
+      if (conceptKey) body.conceptKey = conceptKey;
       const res = await fetch("/api/social/buffer/queue", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
