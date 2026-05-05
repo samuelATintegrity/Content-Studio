@@ -142,6 +142,36 @@ How to use the data above for stat callouts: pick ONE number per post. Put the b
     ],
   },
 
+  edu_physician_loans: {
+    topic: "Physician / medical professional home loans (low- or no-down, no PMI)",
+    guardrails:
+      "Eligibility varies by lender — common eligible degrees include MD, DO, DDS, DMD, DVM, and many lenders also accept PA, NP, and pharmacists. Never guarantee approval, rates, or specific dollar terms. Don't name specific banks unless the user provides them. Student-loan handling differs by lender (income-driven payments often counted favorably) — describe directionally, not as a guaranteed rule. Avoid clinical jargon; this is for a general homebuyer audience.",
+    angles: [
+      { key: "physician_basics", brief: "Plain-English explainer: what a physician home loan is and why it exists.", headlineHint: "Physician Home Loans 101" },
+      { key: "physician_eligible_pros", brief: "Which medical professions typically qualify (MD, DO, DDS, DMD, DVM, often PA/NP/pharmacist).", headlineHint: "Who Qualifies" },
+      { key: "physician_no_pmi", brief: "Why physician loans usually skip PMI even with low down payment.", headlineHint: "Skip the PMI" },
+      { key: "physician_student_debt", brief: "How physician loans treat student-loan payments (often friendlier debt-to-income calc).", headlineHint: "Student Loans, Counted Right" },
+      { key: "physician_residency_buy", brief: "Buying during residency or fellowship with future-income provisions.", headlineHint: "Buy During Residency" },
+      { key: "physician_dental_vet", brief: "Dental and veterinary professionals are often eligible too — frequently overlooked.", headlineHint: "Dentists and Vets, Too" },
+    ],
+  },
+
+  edu_hero_loans: {
+    topic: "Home loan and down-payment programs for community heroes — first responders, nurses, teachers, military",
+    guardrails:
+      "Programs vary a lot by state, county, employer, and union. Never claim a specific program is available everywhere. Don't quote dollar amounts unless they're widely documented (e.g., HUD Good Neighbor Next Door 50% list-price discount). Distinguish forgivable grants from deferred second mortgages when relevant. Don't promise approval. Mention that VA loans are for eligible service members/veterans.",
+    angles: [
+      { key: "heroes_overview", brief: "Plain-English explainer: special-purpose loan and DPA programs for community heroes.", headlineHint: "Loans for Community Heroes" },
+      { key: "hero_teachers", brief: "Teacher-specific programs (state DPAs, Good Neighbor Next Door, employer-assisted).", headlineHint: "Teacher Home Programs" },
+      { key: "hero_nurses", brief: "Nurse-specific paths — state DPAs, hospital employer programs, sometimes physician-loan crossover.", headlineHint: "Nurse Home Programs" },
+      { key: "hero_first_responders", brief: "Firefighters and EMTs — state and local DPAs, plus Good Neighbor Next Door eligibility.", headlineHint: "First Responder Programs" },
+      { key: "hero_law_enforcement", brief: "Law enforcement — Good Neighbor Next Door 50% off list price in eligible revitalization areas, plus state DPAs.", headlineHint: "Law Enforcement Loans" },
+      { key: "hero_va_loans", brief: "VA loan basics for eligible service members and veterans — $0 down, no PMI.", headlineHint: "VA Loan Basics" },
+      { key: "hero_good_neighbor", brief: "HUD Good Neighbor Next Door — 50% off the list price for teachers, law enforcement, firefighters, EMTs in revitalization areas.", headlineHint: "Good Neighbor Next Door" },
+      { key: "hero_stack_dpa", brief: "Stacking hero programs with state and local DPAs for the lowest possible cash to close.", headlineHint: "Stack Hero + DPA" },
+    ],
+  },
+
   language_match: {
     topic: "Working with real estate agents and loan officers who speak your language",
     guardrails:

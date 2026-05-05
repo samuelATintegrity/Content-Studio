@@ -78,6 +78,39 @@ const QUERIES: Record<ContentType, { primary: string[]; broad: string[] }> = {
       "couple new house celebration",
     ],
   },
+  edu_physician_loans: {
+    primary: [
+      "doctor home keys",
+      "physician new home",
+      "medical professional home",
+      "young doctor with stethoscope",
+      "couple in scrubs at home",
+    ],
+    broad: [
+      "doctor outside hospital",
+      "medical professional smiling",
+      "physician family home",
+      "healthcare worker home",
+      "couple buying home",
+    ],
+  },
+  edu_hero_loans: {
+    primary: [
+      "firefighter home keys",
+      "nurse smiling outside home",
+      "police officer family",
+      "teacher in front of house",
+      "first responder family",
+    ],
+    broad: [
+      "community helper",
+      "first responder portrait",
+      "nurse in scrubs",
+      "teacher classroom portrait",
+      "firefighter portrait",
+      "family in front of home",
+    ],
+  },
   language_match: {
     primary: [
       "family home keys",

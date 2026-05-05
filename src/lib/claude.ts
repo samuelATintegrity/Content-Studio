@@ -186,7 +186,16 @@ export const GRAPHIC_BATCH_POSTS = 6;
 // mythbust briefs the format leans on.
 const TEMPLATE_CONTENT_TYPES: Record<GraphicTemplate, ContentType[]> = {
   stat: ["good_agents"],
-  did_you_know: ["edu_zero_down_usda_local", "edu_dpa_local"],
+  // DYK draws from four educational pools so a single batch can mix
+  // USDA, DPA, physician loans, and hero/first-responder programs
+  // instead of going six-deep on USDA. buildAngleList round-robins
+  // across these so you never get six of the same flavor.
+  did_you_know: [
+    "edu_zero_down_usda_local",
+    "edu_dpa_local",
+    "edu_physician_loans",
+    "edu_hero_loans",
+  ],
   promo: ["good_agents"],
   ai_poster: ["good_agents"],
 };
@@ -207,8 +216,10 @@ interface RawDykPost {
   caption_body: string;
 }
 
-interface RawCaptionOnlyPost {
+interface RawPromoPost {
   angle: string;
+  headline: string;
+  subline: string;
   body: string;
 }
 
@@ -280,12 +291,12 @@ const DYK_TOOL = {
             fact: {
               type: "string",
               description:
-                "1-2 sentence headline statement, the rendered hook. Punchy and educational, mythbust energy. The eyebrow 'Did you know?' is rendered automatically by the template — don't include it here.",
+                "QUICK-READ: ONE single sentence, MAX 14 words, MAX 80 characters. Punchy, scannable, mythbust energy. The eyebrow 'Did you know?' is rendered automatically — don't include it. NO compound sentences, NO clauses, NO 'and'-chains. Pick the single sharpest claim.",
             },
             body: {
               type: "string",
               description:
-                "1-2 sentence supporting paragraph (rendered below the fact). Elaborates the fact with practical context. Same voice + guardrails as photo-static post copy.",
+                "ONE short supporting sentence, MAX 22 words, MAX 130 characters. Adds the single most useful piece of practical context. NEVER multiple sentences. Same voice + guardrails as photo-static post copy.",
             },
             caption_body: {
               type: "string",
@@ -301,9 +312,10 @@ const DYK_TOOL = {
   },
 };
 
-const CAPTION_ONLY_TOOL = {
-  name: "caption_only_results",
-  description: "Return one IG caption body per requested angle. The image copy is fixed at the template level.",
+const PROMO_TOOL = {
+  name: "promo_post_results",
+  description:
+    "Return one entry per requested angle for the Promo graphic template. Each post has a fresh on-image catchphrase headline + supporting line + IG caption body. The on-image copy is NOT fixed boilerplate — invent a different catchphrase per card so the batch feels varied.",
   input_schema: {
     type: "object" as const,
     properties: {
@@ -313,13 +325,23 @@ const CAPTION_ONLY_TOOL = {
           type: "object",
           properties: {
             angle: { type: "string", description: "Echo the angle key." },
+            headline: {
+              type: "string",
+              description:
+                "ON-IMAGE catchphrase, the giant rendered hook. 3-9 words, MAX 60 characters, MUST end with a period or question mark. Marketing energy, sharp and confident. Examples of TONE only (do not reuse): 'The right agent changes everything.', 'Most agents won't tell you this.', 'Stop hiring the first agent who calls.', 'Your home deserves a top 10% agent.'. Vary the construction across the 6 cards: declarative, second-person command, rhetorical question, contrarian. Each card MUST be a different catchphrase, no repeats.",
+            },
+            subline: {
+              type: "string",
+              description:
+                "ON-IMAGE supporting sentence under the headline. ONE sentence, MAX 18 words, MAX 110 characters. Anchors the catchphrase back to a concrete value prop from the matching mission (top 10%, 4.8 stars, situation/price-range fit, pre-interviewed). Speaks directly to the buyer.",
+            },
             body: {
               type: "string",
               description:
                 "3-5 sentence IG caption body in the requested language, fitting the angle's brief. Newline + 3-5 hashtags at the end. No URLs, no DM/CTA language, no em dashes.",
             },
           },
-          required: ["angle", "body"],
+          required: ["angle", "headline", "subline", "body"],
         },
       },
     },
@@ -364,20 +386,43 @@ const AI_POSTER_TOOL = {
 
 function buildAngleList(template: GraphicTemplate): string {
   const sourceTypes = TEMPLATE_CONTENT_TYPES[template];
+
+  // For multi-pool templates (currently just DYK), round-robin across
+  // pools and shuffle the per-pool order so the batch covers different
+  // topics rather than going N-deep on the first pool. For single-pool
+  // templates, keep the simple sequential pick.
+  const pools = sourceTypes.map((ct) => {
+    const angles = CONTENT_TYPE_SPECS[ct].angles.slice();
+    // Fisher-Yates shuffle so we don't always lead with the same angle
+    // from each pool; the batch feels different each time.
+    for (let i = angles.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [angles[i], angles[j]] = [angles[j], angles[i]];
+    }
+    return angles;
+  });
+
   const seen = new Set<string>();
-  const flat: { key: string; brief: string }[] = [];
-  for (const ct of sourceTypes) {
-    for (const a of CONTENT_TYPE_SPECS[ct].angles) {
-      if (seen.has(a.key)) continue;
+  const picked: { key: string; brief: string }[] = [];
+  // Round-robin pool index so the batch interleaves: pool0[0], pool1[0],
+  // pool2[0], pool3[0], pool0[1], pool1[1] for a 4-pool, 6-card batch.
+  let exhausted = 0;
+  const cursors = pools.map(() => 0);
+  while (picked.length < GRAPHIC_BATCH_POSTS && exhausted < pools.length) {
+    exhausted = 0;
+    for (let p = 0; p < pools.length && picked.length < GRAPHIC_BATCH_POSTS; p++) {
+      const pool = pools[p];
+      while (cursors[p] < pool.length && seen.has(pool[cursors[p]].key)) cursors[p]++;
+      if (cursors[p] >= pool.length) {
+        exhausted++;
+        continue;
+      }
+      const a = pool[cursors[p]++];
       seen.add(a.key);
-      flat.push({ key: a.key, brief: a.brief });
+      picked.push({ key: a.key, brief: a.brief });
     }
   }
-  const angles =
-    flat.length === 0
-      ? []
-      : Array.from({ length: GRAPHIC_BATCH_POSTS }, (_, i) => flat[i % flat.length]);
-  return angles.map((a, i) => `${i + 1}. angle="${a.key}"\n   brief: ${a.brief}`).join("\n");
+  return picked.map((a, i) => `${i + 1}. angle="${a.key}"\n   brief: ${a.brief}`).join("\n");
 }
 
 function buildRefDocSection(template: GraphicTemplate): string {
@@ -475,7 +520,7 @@ async function generateDykBatch(language: Language): Promise<GenerateBatchRespon
   const captionContentType = captionContentTypeFor("did_you_know");
   const prompt = `${buildBaseHeader(language, "did_you_know")}
 
-This batch generates ${GRAPHIC_BATCH_POSTS} Did-You-Know graphic posts. Each post is a fact card: an opening hook fact (1-2 sentences) and a supporting elaboration (1-2 sentences). The eyebrow "Did you know?" is rendered automatically by the template — don't include it in the fact text.
+This batch generates ${GRAPHIC_BATCH_POSTS} Did-You-Know graphic posts. Each card is a QUICK-READ fact: a punchy single-sentence hook (≤14 words) and a single supporting sentence (≤22 words). Treat every word as expensive — these are scrolled-past posts, not articles. Cover a varied mix of topics across the batch (USDA, DPA, physician loans, hero/community programs) — each angle below comes from a different pool, do not collapse them into the same topic. The eyebrow "Did you know?" is rendered automatically by the template — don't include it in the fact text.
 
 Angles:
 ${buildAngleList("did_you_know")}
@@ -506,28 +551,33 @@ Return your results by calling the ${DYK_TOOL.name} tool.`;
 }
 
 async function generatePromoBatch(language: Language): Promise<GenerateBatchResponse> {
-  // Promo on-image copy is fixed brand boilerplate. Claude only writes
-  // distinct IG caption bodies per angle so the same visual posts have
-  // varied accompanying captions instead of being literally identical.
+  // Promo on-image copy is now fully dynamic — Claude invents a fresh
+  // catchphrase headline + supporting line per card. Each post in the
+  // batch should feel like a different ad pulled from the same brand
+  // family, not 6 identical copies of the brand tagline.
   const captionContentType = captionContentTypeFor("promo");
   const prompt = `${buildBaseHeader(language, "promo")}
 
-This batch generates ${GRAPHIC_BATCH_POSTS} Promo posts. The on-image copy is FIXED brand boilerplate (the canonical Agent Match tagline + value prop), so don't write it. Your only job is the IG caption body — one caption per angle, varied across the batch so the same visual post has different supporting copy each time.
+This batch generates ${GRAPHIC_BATCH_POSTS} Promo posts. Each post is a brand catchphrase ad: a giant on-image headline (3-9 words, MAX 60 characters, ends with . or ?), a single supporting sentence under it (≤18 words), and an IG caption body. Treat the 6 cards as a varied campaign — different constructions, different hooks, no two cards saying the same thing. Lean on classic Agent Match angles where useful (top 10%, 4.8 stars, situation/price-range fit, pre-interviewed) but the hook should feel like ad copy, not a feature list. AVOID 'tens of thousands' phrasing — that's been overused; reach for fresh constructions.
 
 Angles:
 ${buildAngleList("promo")}
 
-Return your results by calling the ${CAPTION_ONLY_TOOL.name} tool.`;
+Return your results by calling the ${PROMO_TOOL.name} tool.`;
 
   try {
-    const raw = await callTool<RawCaptionOnlyPost>(prompt, CAPTION_ONLY_TOOL);
-    const posts = raw.map<GenerateBatchResponse["posts"][number]>((p) => ({
-      angle: p.angle,
-      headline: "The wrong agent can cost you tens of thousands.",
-      cta: CTA_TEXT[language],
-      caption: buildCaption(language, captionContentType, p.body),
-      graphic: { template: "promo" },
-    }));
+    const raw = await callTool<RawPromoPost>(prompt, PROMO_TOOL);
+    const posts = raw.map<GenerateBatchResponse["posts"][number]>((p) => {
+      const headline = stripDashes(p.headline).trim();
+      const subline = stripDashes(p.subline).trim();
+      return {
+        angle: p.angle,
+        headline,
+        cta: CTA_TEXT[language],
+        caption: buildCaption(language, captionContentType, p.body),
+        graphic: { template: "promo", headline, subline },
+      };
+    });
     return { posts };
   } catch (e) {
     throw friendlyError(e);

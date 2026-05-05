@@ -37,6 +37,18 @@ export const FORM_LINE: Record<ContentType, Record<Language, string>> = {
     es: "Llena el formulario para conectarte con un agente y prestamista que pueden ayudarte con los programas de asistencia para el enganche.",
     zh: "填写表格，与可以帮助您了解首付援助项目的经纪人和贷款专员联系。",
   },
+  edu_physician_loans: {
+    en: "Fill out the form to connect with an agent and lender experienced with physician home loans.",
+    tl: "Punan ang form para makipag-ugnayan sa isang ahente at lender na may karanasan sa physician home loans.",
+    es: "Llena el formulario para conectarte con un agente y prestamista con experiencia en préstamos para médicos.",
+    zh: "填写表格，与熟悉医生住房贷款的经纪人和贷款专员联系。",
+  },
+  edu_hero_loans: {
+    en: "Fill out the form to connect with an agent and lender who can help you find programs for community heroes.",
+    tl: "Punan ang form para makipag-ugnayan sa isang ahente at lender na makakatulong sa mga programa para sa community heroes.",
+    es: "Llena el formulario para conectarte con un agente y prestamista que te ayuden con los programas para héroes de la comunidad.",
+    zh: "填写表格，与可以帮助您寻找社区英雄项目的经纪人和贷款专员联系。",
+  },
   language_match: {
     en: "Fill out the form to connect with an agent and lender who speaks your language and can help you navigate first-time-buyer programs.",
     tl: "Punan ang form para makipag-ugnayan sa isang ahente at lender na nagsasalita ng iyong wika at makakatulong sa first-time-buyer na programa.",

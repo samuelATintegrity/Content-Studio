@@ -11,6 +11,8 @@ export type ContentType =
   | "zero_down_generic"
   | "edu_zero_down_usda_local"
   | "edu_dpa_local"
+  | "edu_physician_loans"
+  | "edu_hero_loans"
   | "language_match"
   | "good_agents";
 
@@ -18,6 +20,8 @@ export const CONTENT_TYPE_LABELS: Record<ContentType, string> = {
   zero_down_generic: "$0 down — generic",
   edu_zero_down_usda_local: "Education: $0 down (USDA + local banks)",
   edu_dpa_local: "Education: Down payment assistance (local programs)",
+  edu_physician_loans: "Education: Physician / medical professional loans",
+  edu_hero_loans: "Education: Community-hero loans (nurses, first responders, teachers)",
   language_match: "Language match (agents/LOs who speak your language)",
   good_agents: "Good Agents (matching mission)",
 };
@@ -67,9 +71,9 @@ export interface DykGraphicData {
 
 export interface PromoGraphicData {
   template: "promo";
-  // No fields — promo uses canonical Agent Match brand copy. The
-  // surrounding code generates a fresh IG caption per post but the
-  // on-image text is identical across the batch.
+  headline: string;       // catchphrase, 4-12 words, may render across 2-4 lines
+  subline: string;        // single supporting sentence (~10-18 words)
+  kicker?: string;        // optional small line above CTA, defaults to brand kicker
 }
 
 export interface AiPosterGraphicData {
