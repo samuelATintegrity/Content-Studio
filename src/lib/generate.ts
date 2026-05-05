@@ -3,7 +3,6 @@
 import { useBatchStore } from "@/store/batchStore";
 import {
   composeGraphicDataUrl,
-  composeImageDataUrl,
   fetchAndCacheAiImage,
   fetchBatchCopy,
   fetchPhotoBlendCopy,
@@ -15,8 +14,10 @@ import {
   DEFAULT_FIT_MODE,
   DEFAULT_FRAMING,
   DEFAULT_STYLE,
+  type CompositeTextZone,
   type ContentType,
   type FontVariant,
+  type PhotoCompositeData,
 } from "@/lib/types";
 import { brand } from "../../brand.config";
 
@@ -149,6 +150,10 @@ export async function generateBatch(): Promise<void> {
       // Each photo-blend post carries its own topical contentType so
       // the per-post Pexels query / AI seed pull the right stuff.
       contentType: p.contentType,
+      // Where the typography lands. Drives the AI image prompt's
+      // composition guidance AND the Vision placement default at
+      // compose time.
+      textZone: (p.textZone ?? "bottom") as CompositeTextZone,
     }));
     setPosts(initial);
 
@@ -173,9 +178,17 @@ export async function generateBatch(): Promise<void> {
               // The seed index space (0..3) covers the four image
               // categories (family/couple/exterior/interior). For the
               // blend, alternate seeds across the 8 fresh slots so we
-              // hit each category roughly twice.
+              // hit each category roughly twice. The post's textZone
+              // is threaded into the prompt so the AI photo deliberately
+              // leaves the typography zone calm — same trick as AI
+              // posters but tuned for photorealistic content.
               const seedIdx = (idx % 4) as BatchSeedIndex;
-              const prompt = batchSeedPrompt(language, postContentType, seedIdx);
+              const prompt = batchSeedPrompt(
+                language,
+                postContentType,
+                seedIdx,
+                post.textZone,
+              );
               const ai = await fetchAndCacheAiImage(prompt, categoryFor(seedIdx));
               photoUrl = ai.url;
               credit = { photographer: AI_CREDIT_LABEL, sourceUrl: "" };
@@ -203,15 +216,22 @@ export async function generateBatch(): Promise<void> {
             }
           }
 
-          const imageDataUrl = await composeImageDataUrl({
-            photoUrl,
+          // Photo posts now go through the same compose-graphic
+          // pipeline as AI posters: server fetches the photo bytes,
+          // calls Vision for placement (with our textZone hint), and
+          // renders ImageResponse with grouped headline + cta + halo.
+          // Plain mode (post.style === "plain") suppresses the text
+          // overlay; the chip on the post card flips between Light
+          // (overlay on) and Plain.
+          const photoGraphic: PhotoCompositeData = {
+            template: "photo",
             headline: post.headline,
-            cta: post.cta,
-            fontVariant: post.fontVariant,
-            framing: post.framing,
-            fitMode: post.fitMode,
-            style: post.style,
-          });
+            subline: post.cta,
+            photoUrl,
+            textZone: post.textZone,
+            plain: post.style === "plain",
+          };
+          const imageDataUrl = await composeGraphicDataUrl(photoGraphic);
           useBatchStore.getState().updatePost(post.id, {
             photoUrl,
             photoCredit: credit,

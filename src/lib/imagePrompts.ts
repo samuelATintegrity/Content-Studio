@@ -164,33 +164,49 @@ function pickInterior(): string {
 const EXTERIOR_PROMPT =
   "a warm inviting suburban home exterior, golden-hour light, manicured lawn, professional real estate photography, no people, no text or signage";
 
+// Composition guidance appended to the prompt when a textZone is
+// known. Keeps the photo realistic but biases the framing so the
+// chosen zone has calm enough pixels to land typography on. Vision
+// still does the final placement at compose time — this is just to
+// nudge the AI photo away from filling the entire frame with the
+// subject.
+function compositionGuidance(textZone: "top" | "bottom" | undefined): string {
+  if (!textZone) return "";
+  if (textZone === "top") {
+    return ", composition: subject anchored in the lower two-thirds of the frame, leaving the upper third as soft sky / wall / atmospheric background, calm enough for a typography overlay";
+  }
+  return ", composition: subject in the upper two-thirds of the frame, leaving the lower third as soft floor / blurred background / negative space, calm enough for a typography overlay";
+}
+
 export function batchSeedPrompt(
   language: Language,
   contentType: ContentType,
   index: BatchSeedIndex,
+  textZone?: "top" | "bottom",
 ): string {
   const eth = ETHNICITY_BY_LANG[language];
   const ethPart = eth ? `${eth} ` : "";
+  const composition = compositionGuidance(textZone);
 
   // Index 2 + 3 are home shots; ethnicity hint doesn't apply.
-  if (index === 2) return EXTERIOR_PROMPT;
-  if (index === 3) return pickInterior();
+  if (index === 2) return EXTERIOR_PROMPT + composition;
+  if (index === 3) return pickInterior() + composition;
 
   if (contentType === "good_agents") {
     // Slot 0: portrait-style, looking at camera, warm smile.
     // Slot 1: candid working — phone call or laptop, focused, not posed.
     if (index === 0) {
-      return `a friendly ${ethPart}real estate agent standing in front of a home, professional editorial portrait, warm natural smile, looking at the camera`;
+      return `a friendly ${ethPart}real estate agent standing in front of a home, professional editorial portrait, warm natural smile, looking at the camera${composition}`;
     }
-    return `a ${ethPart}real estate agent on a phone call in a bright modern office, candid professional photography, focused on work, not looking at the camera`;
+    return `a ${ethPart}real estate agent on a phone call in a bright modern office, candid professional photography, focused on work, not looking at the camera${composition}`;
   }
 
   // All other content types: candid lifestyle scenes, no posing, no eye contact
   // with the camera. Still professional quality — editorial/documentary feel.
   if (index === 0) {
-    return `a candid lifestyle photo of a ${ethPart}family at home together, unposed, not looking at the camera, sharing a natural everyday moment, soft natural light, professional editorial photography`;
+    return `a candid lifestyle photo of a ${ethPart}family at home together, unposed, not looking at the camera, sharing a natural everyday moment, soft natural light, professional editorial photography${composition}`;
   }
-  return `a candid lifestyle photo of a young ${ethPart}couple in their new home, unposed and natural, looking at each other or off to the side, not looking at the camera, soft natural light, professional editorial photography`;
+  return `a candid lifestyle photo of a young ${ethPart}couple in their new home, unposed and natural, looking at each other or off to the side, not looking at the camera, soft natural light, professional editorial photography${composition}`;
 }
 
 // Map BatchSeedIndex to a category label for the image library (used for

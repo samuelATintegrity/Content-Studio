@@ -2,11 +2,17 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useBatchStore } from "@/store/batchStore";
-import type { FitMode, FontVariant, Framing, Post, StyleVariant } from "@/lib/types";
-import { STYLE_LABELS } from "@/lib/types";
+import type {
+  CompositeTextZone,
+  FitMode,
+  Framing,
+  PhotoCompositeData,
+  Post,
+  StyleVariant,
+} from "@/lib/types";
 import { brand } from "../../brand.config";
 import {
-  composeImageDataUrl,
+  composeGraphicDataUrl,
   dataUrlToBlob,
   fetchOneCopy,
   fetchPhotoFor,
@@ -19,10 +25,11 @@ import { BufferSendModal } from "./BufferSendModal";
 type RecomposeOverrides = Partial<{
   headline: string;
   cta: string;
-  fontVariant: FontVariant;
   framing: Post["framing"];
   fitMode: FitMode;
   style: StyleVariant;
+  textZone: CompositeTextZone;
+  photoUrl: string;
 }>;
 
 export function PostCard({ post }: { post: Post }) {
@@ -43,16 +50,22 @@ export function PostCard({ post }: { post: Post }) {
   const [bufferReceipt, setBufferReceipt] = useState<{ platforms: string[] } | null>(null);
 
   async function recompose(overrides: RecomposeOverrides = {}) {
-    if (!post.photoUrl) return;
-    return composeImageDataUrl({
-      photoUrl: post.photoUrl,
+    const photoUrl = overrides.photoUrl ?? post.photoUrl;
+    if (!photoUrl) return;
+    // Photo posts now route through the same compose-graphic
+    // pipeline as AI posters (Vision-picked placement + halo +
+    // grouped headline/cta), so we build a PhotoCompositeData on
+    // the fly from the post's fields.
+    const style = overrides.style ?? post.style;
+    const photoGraphic: PhotoCompositeData = {
+      template: "photo",
       headline: overrides.headline ?? post.headline,
-      cta: overrides.cta ?? post.cta,
-      fontVariant: overrides.fontVariant ?? post.fontVariant,
-      framing: overrides.framing ?? post.framing,
-      fitMode: overrides.fitMode ?? post.fitMode,
-      style: overrides.style ?? post.style,
-    });
+      subline: overrides.cta ?? post.cta,
+      photoUrl,
+      textZone: (overrides.textZone ?? post.textZone ?? "bottom") as CompositeTextZone,
+      plain: style === "plain",
+    };
+    return composeGraphicDataUrl(photoGraphic);
   }
 
   // "New image" shuffle. With the image library, this is a 50/50 mix:
@@ -83,17 +96,9 @@ export function PostCard({ post }: { post: Post }) {
         credit = { photographer: photo.photographer, sourceUrl: photo.sourceUrl };
       }
 
-      const imageDataUrl = await composeImageDataUrl({
-        photoUrl,
-        headline: post.headline,
-        cta: post.cta,
-        fontVariant: post.fontVariant,
-        framing: post.framing,
-        fitMode: post.fitMode,
-        style: post.style,
-      });
+      const imageDataUrl = await recompose({ photoUrl: photoUrl ?? undefined });
       updatePost(post.id, {
-        photoUrl,
+        photoUrl: photoUrl ?? post.photoUrl,
         photoCredit: credit ?? { photographer: AI_CREDIT_LABEL, sourceUrl: "" },
         imageDataUrl,
       });
@@ -113,15 +118,7 @@ export function PostCard({ post }: { post: Post }) {
       // image library (mirrored to R2, available in future batches).
       const { fetchAndCacheAiImage } = await import("@/lib/client");
       const ai = await fetchAndCacheAiImage(prompt, "manual");
-      const imageDataUrl = await composeImageDataUrl({
-        photoUrl: ai.url,
-        headline: post.headline,
-        cta: post.cta,
-        fontVariant: post.fontVariant,
-        framing: post.framing,
-        fitMode: post.fitMode,
-        style: post.style,
-      });
+      const imageDataUrl = await recompose({ photoUrl: ai.url });
       updatePost(post.id, {
         photoUrl: ai.url,
         photoCredit: { photographer: AI_CREDIT_LABEL, sourceUrl: "" },
@@ -147,20 +144,6 @@ export function PostCard({ post }: { post: Post }) {
       });
     } catch (e) {
       alert("Copy regen failed: " + (e instanceof Error ? e.message : "unknown"));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function toggleFont() {
-    if (!post.photoUrl) return;
-    const next: FontVariant = post.fontVariant === "sans" ? "serif" : "sans";
-    setBusy("tweak");
-    try {
-      const imageDataUrl = await recompose({ fontVariant: next });
-      updatePost(post.id, { fontVariant: next, imageDataUrl });
-    } catch (e) {
-      alert("Font swap failed: " + (e instanceof Error ? e.message : "unknown"));
     } finally {
       setBusy(null);
     }
@@ -251,7 +234,10 @@ export function PostCard({ post }: { post: Post }) {
     setTimeout(() => setImageDownloaded(false), 1500);
   }
 
-  const fontLabel = post.fontVariant === "serif" ? "Serif" : "Sans";
+  // The Style chip toggles between full overlay (Light) and bare-photo
+  // mode (Plain). Branded / Sepia stay on the StyleVariant union for
+  // back-compat but never re-enter the rotation.
+  const styleChipLabel = post.style === "plain" ? "Plain" : "Overlay";
   // Graphic posts skip every photo-specific affordance: no photo edit
   // (no underlying photo to reposition), no AI prompt input (the design
   // is pure SVG), no New-image / New-caption regen (graphics regen via
@@ -276,16 +262,6 @@ export function PostCard({ post }: { post: Post }) {
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={post.imageDataUrl} alt={post.angle} className="w-full h-full object-cover" />
             <div className="absolute top-2.5 right-2.5 flex gap-1.5 opacity-100 lg:opacity-0 lg:group-hover/image:opacity-100 transition focus-within:opacity-100">
-              {!isGraphic && (
-                <button
-                  onClick={() => setEditingPhoto(true)}
-                  disabled={!post.photoUrl}
-                  className="px-3.5 py-1.5 rounded-full text-xs font-semibold bg-black/70 text-white backdrop-blur-md hover:bg-black/85 disabled:opacity-40"
-                  title="Zoom and reposition the photo"
-                >
-                  Edit
-                </button>
-              )}
               <button
                 onClick={downloadImage}
                 className="px-3.5 py-1.5 rounded-full text-xs font-semibold bg-black/70 text-white backdrop-blur-md hover:bg-black/85"
@@ -318,11 +294,8 @@ export function PostCard({ post }: { post: Post }) {
           </span>
           {!isGraphic && (
             <div className="flex gap-1 shrink-0 text-[10px] uppercase tracking-[0.1em] text-neutral-500">
-              <Chip onClick={cycleStyle} disabled={busy !== null || !post.photoUrl} title="Toggle Light ↔ Plain">
-                {STYLE_LABELS[post.style]}
-              </Chip>
-              <Chip onClick={toggleFont} disabled={busy !== null || !post.photoUrl} title="Swap headline font">
-                Aa · {fontLabel}
+              <Chip onClick={cycleStyle} disabled={busy !== null || !post.photoUrl} title="Toggle text overlay on/off">
+                {styleChipLabel}
               </Chip>
             </div>
           )}

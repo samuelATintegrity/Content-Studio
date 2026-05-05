@@ -157,6 +157,71 @@ export async function POST(req: Request) {
       });
     }
 
+    // photo: same ImageResponse + Vision pipeline as ai_poster, but
+    // the background is a user-supplied photo URL (Pexels, R2 cache,
+    // or fal.ai CDN) instead of a Nano-generated bare image. Plain
+    // mode renders the bare photo with just a wordmark; Overlay mode
+    // composites grouped headline + cta with halo + scrim.
+    if (body.graphic.template === "photo") {
+      if (!body.graphic.photoUrl) {
+        return NextResponse.json(
+          { error: "photo requires photoUrl" },
+          { status: 400 },
+        );
+      }
+      let imageBytes: Uint8Array;
+      try {
+        const res = await fetch(body.graphic.photoUrl);
+        if (!res.ok) {
+          return NextResponse.json(
+            { error: `photo fetch failed: HTTP ${res.status}` },
+            { status: 502 },
+          );
+        }
+        imageBytes = new Uint8Array(await res.arrayBuffer());
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return NextResponse.json({ error: `photo fetch failed: ${msg}` }, { status: 502 });
+      }
+      // Determine the source content type so the Vision call hands
+      // Anthropic the right media_type. Pexels usually serves jpeg.
+      const photoContentType = body.graphic.photoUrl.match(/\.png(\?|$)/i)
+        ? "image/png"
+        : "image/jpeg";
+      // Plain mode skips the Vision call entirely — there's no text
+      // to place — but still renders through ImageResponse so the
+      // wordmark sits cleanly in the corner. Pass a fixed placement
+      // so renderTemplate's photo branch is happy.
+      const placement = body.graphic.plain
+        ? {
+            region: "bottom" as const,
+            textColor: "white" as const,
+            scrim: "none" as const,
+            rationale: "plain mode (no text overlay)",
+          }
+        : await pickPosterPlacement(
+            imageBytes,
+            photoContentType,
+            body.graphic.textZone,
+          );
+      const mime = photoContentType;
+      const imageDataUrl = `data:${mime};base64,${Buffer.from(imageBytes).toString("base64")}`;
+
+      const element = renderTemplate({
+        graphic: body.graphic,
+        logoBlackUrl,
+        logoWhiteUrl,
+        aiPosterImage: imageDataUrl,
+        aiPosterPlacement: placement,
+      });
+
+      return new ImageResponse(element, {
+        width: 1080,
+        height: 1350,
+        fonts: _fonts,
+      });
+    }
+
     // React templates (stat / dyk / promo) — render via ImageResponse.
     // Logos are inlined as base64 data URLs because Satori's network
     // fetch can't reliably reach the host's own public URL during a

@@ -12,6 +12,7 @@ import type {
   AiPosterGraphicData,
   DykGraphicData,
   GraphicData,
+  PhotoCompositeData,
   PromoGraphicData,
   StatGraphicData,
 } from "./types";
@@ -868,14 +869,186 @@ export function AiPosterCompositeLight({
   );
 }
 
+// ── Photo Composite (text grouped over photo, AI-poster style) ─────
+
+// PhotoCompositeLight is the photo equivalent of
+// AiPosterCompositeLight: same canvas size, same halo + scrim
+// pipeline, same Vision-picked placement, but the headline cap is
+// tighter (≤4 words / 32 chars per the photo Claude prompt) and the
+// subline is the post's cta string ("Connect with an Agent")
+// instead of a value-prop sentence. Plain mode skips the entire text
+// stack and just drops the wordmark in the bottom-right corner so
+// the user can opt out of the typography overlay.
+export function PhotoCompositeLight({
+  fields,
+  imageDataUrl,
+  placement,
+  logoBlackUrl,
+  logoWhiteUrl,
+}: {
+  fields: PhotoCompositeData;
+  imageDataUrl: string;
+  placement: PosterPlacement;
+  logoBlackUrl: string;
+  logoWhiteUrl: string;
+}) {
+  // Plain mode: bare photo + small wordmark in bottom-right. We use
+  // the dark wordmark by default since most photographic content has
+  // mid-to-bright pixels in the corners; if the user picks a
+  // primarily-dark photo and the corner reads as dark, they can flip
+  // the overlay back on.
+  if (fields.plain) {
+    return (
+      <div
+        style={{
+          position: "relative",
+          width: 1080,
+          height: 1350,
+          display: "flex",
+          backgroundColor: "#000",
+          backgroundImage: `url(${imageDataUrl})`,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          backgroundRepeat: "no-repeat",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            bottom: 64,
+            right: 64,
+            display: "flex",
+          }}
+        >
+          <Wordmark src={logoBlackUrl} size={26} />
+        </div>
+      </div>
+    );
+  }
+
+  const layoutStyle = blockLayoutForRegion(placement.region);
+  const scrim = scrimStyle(placement.scrim);
+  const corner = wordmarkCornerForRegion(placement.region);
+  const isWhiteText = placement.textColor === "white";
+  const textColor = isWhiteText ? "#fff" : "#000";
+  const sublineColor = isWhiteText ? "rgba(255,255,255,0.88)" : "rgba(0,0,0,0.78)";
+  const wordmarkSrc = isWhiteText ? logoWhiteUrl : logoBlackUrl;
+  const headlineShadowStyle: React.CSSProperties = isWhiteText
+    ? { textShadow: "0 2px 6px rgba(0,0,0,0.55), 0 1px 2px rgba(0,0,0,0.5)" }
+    : {};
+
+  const textBlockMaxWidth = textBlockMaxWidthFor(placement.region);
+  const headlinePx = aiHeadlineFontSize(fields.headline, textBlockMaxWidth);
+  const sublinePx = aiSublineFontSize(headlinePx);
+  const textAlign = regionTextAlign(placement.region);
+
+  const halo = haloBoxForRegion(placement.region);
+  const haloBg = haloBackground(isWhiteText ? "dark" : "light");
+
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: 1080,
+        height: 1350,
+        display: "flex",
+        backgroundColor: "#000",
+        backgroundImage: `url(${imageDataUrl})`,
+        backgroundSize: "1080px 1350px",
+        backgroundPosition: "center",
+        backgroundRepeat: "no-repeat",
+        fontFamily: "Geist, Inter, sans-serif",
+      }}
+    >
+      {scrim ? (
+        <div
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: 1080,
+            height: 1350,
+            display: "flex",
+            ...scrim,
+          }}
+        />
+      ) : null}
+
+      <div
+        style={{
+          position: "absolute",
+          top: halo.top,
+          left: halo.left,
+          width: halo.width,
+          height: halo.height,
+          display: "flex",
+          backgroundImage: haloBg,
+        }}
+      />
+
+      <div style={layoutStyle}>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            maxWidth: textBlockMaxWidth,
+            textAlign,
+          }}
+        >
+          <div
+            style={{
+              fontFamily: "Geist, Inter, sans-serif",
+              fontWeight: 900,
+              fontSize: headlinePx,
+              letterSpacing: "-0.045em",
+              lineHeight: 0.95,
+              color: textColor,
+              ...headlineShadowStyle,
+            }}
+          >
+            {fields.headline}
+          </div>
+          {fields.subline ? (
+            <div
+              style={{
+                fontFamily: "Geist, Inter, sans-serif",
+                fontWeight: 500,
+                fontSize: sublinePx,
+                letterSpacing: "-0.02em",
+                lineHeight: 1.2,
+                color: sublineColor,
+                marginTop: 28,
+                ...headlineShadowStyle,
+              }}
+            >
+              {fields.subline}
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      <div
+        style={{
+          position: "absolute",
+          display: "flex",
+          ...corner,
+        }}
+      >
+        <Wordmark src={wordmarkSrc} size={26} />
+      </div>
+    </div>
+  );
+}
+
 // ── Public dispatcher ───────────────────────────────────────────────
 
 export function renderTemplate(args: {
   graphic: GraphicData;
   logoBlackUrl: string;
   logoWhiteUrl: string;
-  // Only required for ai_poster — the bare image as a base64 data URL
-  // and the Vision-picked text placement. Other templates ignore these.
+  // Only required for ai_poster + photo — the background image as a
+  // base64 data URL and the Vision-picked text placement. Other
+  // templates ignore these.
   aiPosterImage?: string;
   aiPosterPlacement?: PosterPlacement;
 }): React.ReactElement {
@@ -895,6 +1068,21 @@ export function renderTemplate(args: {
       }
       return (
         <AiPosterCompositeLight
+          fields={graphic}
+          imageDataUrl={aiPosterImage}
+          placement={aiPosterPlacement}
+          logoBlackUrl={logoBlackUrl}
+          logoWhiteUrl={logoWhiteUrl}
+        />
+      );
+    case "photo":
+      if (!aiPosterImage || !aiPosterPlacement) {
+        throw new Error(
+          "photo requires aiPosterImage (data URL) + aiPosterPlacement",
+        );
+      }
+      return (
+        <PhotoCompositeLight
           fields={graphic}
           imageDataUrl={aiPosterImage}
           placement={aiPosterPlacement}

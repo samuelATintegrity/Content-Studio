@@ -53,11 +53,16 @@ interface RawPost {
   angle: string;
   headline: string;
   body: string;
+  // Where the headline + cta will be composited on the photo. Drives
+  // both the AI photo composition guidance (subject placed in the
+  // opposite zone, calm negative space in textZone) and the Vision-
+  // placement default at render time.
+  textZone: "top" | "bottom";
 }
 
 const POST_TOOL = {
   name: "post_results",
-  description: "Return the generated social media posts. Call this exactly once with one entry per requested angle.",
+  description: "Return the generated social media posts. Call this exactly once with one entry per requested angle. The image is generated separately; you decide upfront where the typography will sit on each card and the photo prompt will be tuned to leave that zone calm.",
   input_schema: {
     type: "object" as const,
     properties: {
@@ -68,10 +73,15 @@ const POST_TOOL = {
           type: "object",
           properties: {
             angle: { type: "string", description: "Echo back the angle key you were given." },
-            headline: { type: "string", description: "Top-band headline. HARD LIMITS: max 4 words AND max 32 characters total. Sharp, declarative, no emojis. The renderer composites this in a fixed-height band so anything longer wraps awkwardly — keep it tight." },
+            textZone: {
+              type: "string",
+              enum: ["top", "bottom"],
+              description: "Where the headline + cta will land on this card. Pick whichever zone feels right for the angle (e.g., a hopeful angle leans top; a stakes-heavy angle leans bottom). Vary across the batch — aim for a roughly even mix so the 12-card strip feels visually different at a glance.",
+            },
+            headline: { type: "string", description: "On-image headline. HARD LIMITS: max 4 words AND max 32 characters total. Sharp, declarative, no emojis. We render this in Geist Black at large display weight grouped with the cta in your chosen textZone." },
             body: { type: "string", description: "3-5 sentence post body in the requested language. End with a newline and 3-5 hashtags. No URLs, no DM/CTA language, no em dashes." },
           },
-          required: ["angle", "headline", "body"],
+          required: ["angle", "textZone", "headline", "body"],
         },
       },
     },
@@ -145,6 +155,9 @@ function finalizePosts(raw: RawPost[], language: Language, contentType: ContentT
     cta: CTA_TEXT[language],
     caption: buildCaption(language, contentType, p.body),
     contentType,
+    // Default to "bottom" if Claude omits the field for any reason —
+    // bottom-fade + halo is the most universally legible placement.
+    textZone: (p.textZone === "top" ? "top" : "bottom") as "top" | "bottom",
   }));
 }
 

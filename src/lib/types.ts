@@ -104,6 +104,32 @@ export interface PromoGraphicData {
 // Nano generation.
 export type AiPosterTextZone = "top" | "bottom";
 
+export type CompositeTextZone = "top" | "bottom";
+
+export interface PhotoCompositeData {
+  template: "photo";
+  headline: string;
+  // Photo-post equivalent of the AI-poster subline: this is the
+  // post's cta string ("Connect with an Agent"), reused as the
+  // grouped supporting line below the headline. The photo route
+  // wires post.cta in here at compose time.
+  subline: string;
+  // Public URL of the photo (Pexels, R2 cache, or fal.ai CDN).
+  // The compose-graphic route fetches the bytes server-side and
+  // base64-inlines them so Satori has a stable backgroundImage to
+  // render against.
+  photoUrl: string;
+  // Where the headline + subline land on this card. Vision uses
+  // this as a strong default and confirms or overrides based on
+  // the actual photo.
+  textZone: CompositeTextZone;
+  // When true, suppress the headline + subline + halo and render
+  // only the photo with the small Agent Match wordmark in the
+  // bottom corner. The user toggles this with the Overlay ↔ Plain
+  // chip on photo cards.
+  plain?: boolean;
+}
+
 export interface AiPosterGraphicData {
   template: "ai_poster";
   headline: string;
@@ -121,7 +147,8 @@ export type GraphicData =
   | StatGraphicData
   | DykGraphicData
   | PromoGraphicData
-  | AiPosterGraphicData;
+  | AiPosterGraphicData
+  | PhotoCompositeData;
 
 export const FORMAT_LABELS: Record<Format, string> = {
   static: "Static · 4:5",
@@ -198,6 +225,12 @@ export interface Post {
   // of what's currently selected in the sidebar. Undefined on
   // graphic posts and on legacy single-content batches.
   contentType?: ContentType;
+  // Where the typography lands on this card. For AI photos, this
+  // also drives composition guidance baked into the Nano Banana 2
+  // image prompt so the subject sits in the opposite zone. For
+  // Pexels/library photos there's no upstream composition control,
+  // but Vision still uses this as its placement default.
+  textZone?: CompositeTextZone;
 }
 
 export interface BatchRequest {
@@ -217,6 +250,11 @@ export interface GenerateBatchResponse {
       // Pexels query / AI prompt seed for its own topic. Undefined
       // on graphic posts and on legacy single-content batches.
       contentType?: ContentType;
+      // Where Claude planned the typography on this card (photo
+      // posts only). Drives composition guidance for AI image
+      // prompts and Vision-placement default. Undefined on graphic
+      // posts (which carry their own textZone inside `graphic`).
+      textZone?: CompositeTextZone;
     }
   >;
 }
