@@ -121,19 +121,19 @@ export const CONTENT_TYPE_SPECS: Record<ContentType, ContentTypeSpec> = {
   },
 
   edu_dpa_local: {
-    topic: "Down payment assistance through local programs",
+    topic: "Down payment assistance through local (state, county, and city) programs",
     guardrails:
-      "DPA programs vary by state, county, and city. Don't claim specific dollar amounts unless given. Funds run out, say so. Some DPAs are forgivable, some are second mortgages, clarify which when relevant.",
+      "Stay focused on STATE, COUNTY, and CITY-level DPA programs. Don't claim specific dollar amounts unless given. Funds run out, say so. Some DPAs are forgivable grants, some are silent second mortgages, some are 0% deferred loans — clarify which when relevant. Do NOT promote federal HUD-Good-Neighbor, employer-assisted DPA, or other niche/national paths — the brand is steering toward locally-administered programs that any qualifying buyer can access. Programs vary by state/county/city, so don't claim universal availability.",
     angles: [
-      { key: "dpa_what_is", brief: "What is down payment assistance, in plain terms?", headlineHint: "Down Payment Assistance" },
-      { key: "dpa_grant_vs_loan", brief: "Grant vs. forgivable loan vs. silent second, the three flavors of DPA.", headlineHint: "Types of DPA Programs" },
-      { key: "dpa_who_qualifies", brief: "Typical qualification criteria for local DPA programs.", headlineHint: "DPA Qualifications" },
+      { key: "dpa_what_is", brief: "What is down payment assistance, in plain terms? Frame as state/county/city programs.", headlineHint: "Down Payment Assistance" },
+      { key: "dpa_grant_vs_loan", brief: "Grant vs. forgivable loan vs. silent second, the three flavors of local DPA.", headlineHint: "Types of DPA Programs" },
+      { key: "dpa_who_qualifies", brief: "Typical qualification criteria for state/county/city DPA programs.", headlineHint: "DPA Qualifications" },
       { key: "dpa_first_time_def", brief: "What counts as a first-time buyer for DPA purposes (often broader than people think).", headlineHint: "DPA First-Time Buyers" },
-      { key: "dpa_stack_with_loan", brief: "How DPA stacks on top of FHA, conventional, or VA loans.", headlineHint: "Stacking DPA Programs" },
+      { key: "dpa_stack_with_loan", brief: "How local DPA stacks on top of FHA, conventional, or VA loans.", headlineHint: "Stacking DPA Programs" },
       { key: "dpa_funds_run_out", brief: "Why DPA programs run out of funds and how to plan around it.", headlineHint: "DPA Funds Run Out" },
-      { key: "dpa_employer", brief: "Employer-assisted DPA, a path many buyers miss.", headlineHint: "Employer DPA Programs" },
-      { key: "dpa_teacher_nurse", brief: "DPA for teachers, nurses, first responders, community hero programs.", headlineHint: "DPA for Heroes" },
+      { key: "dpa_state_vs_local", brief: "Why a city or county program sometimes beats a state program (and vice-versa).", headlineHint: "State or Local DPA" },
       { key: "dpa_credit_score", brief: "Minimum credit considerations for most local DPA programs.", headlineHint: "Credit and DPA" },
+      { key: "dpa_homebuyer_class", brief: "Most local DPAs require a HUD-approved homebuyer education class — what that involves.", headlineHint: "DPA Education Classes" },
       { key: "cta_program_match", brief: "Invite reader to fill out the form to get matched to local DPA programs.", headlineHint: "Find Your DPA Match" },
     ],
   },
@@ -224,18 +224,18 @@ How to use the data above for stat callouts: pick ONE number per post. Put the b
   },
 
   edu_hero_loans: {
-    topic: "Home loan and down-payment programs for community heroes — first responders, nurses, teachers, military",
+    topic: "Local (state, county, city) down-payment assistance programs that include enhanced tiers for community professionals — teachers, nurses, first responders, law enforcement",
     guardrails:
-      "Programs vary a lot by state, county, employer, and union. Never claim a specific program is available everywhere. Don't quote dollar amounts unless they're widely documented (e.g., HUD Good Neighbor Next Door 50% list-price discount). Distinguish forgivable grants from deferred second mortgages when relevant. Don't promise approval. Mention that VA loans are for eligible service members/veterans.",
+      "These angles are about LOCAL DPAs (state / county / city) that often have a separate enhanced tier or bonus benefit for community-service professions. Stay general — never name a specific city or state program unless given by the user. Don't promote federal HUD Good Neighbor Next Door, the VA loan, or employer-assisted DPA — the brand is steering toward locally-administered programs. Frame: 'your state or county DPA program may have a higher loan amount, lower interest rate, or extra grant for [profession]'. Funds run out, eligibility varies, never guarantee a specific dollar amount or approval. The hero benefit is a TIER on top of standard local DPA, not a separate federal program.",
     angles: [
-      { key: "heroes_overview", brief: "Plain-English explainer: special-purpose loan and DPA programs for community heroes.", headlineHint: "Loans for Community Heroes" },
-      { key: "hero_teachers", brief: "Teacher-specific programs (state DPAs, Good Neighbor Next Door, employer-assisted).", headlineHint: "Teacher Home Programs" },
-      { key: "hero_nurses", brief: "Nurse-specific paths — state DPAs, hospital employer programs, sometimes physician-loan crossover.", headlineHint: "Nurse Home Programs" },
-      { key: "hero_first_responders", brief: "Firefighters and EMTs — state and local DPAs, plus Good Neighbor Next Door eligibility.", headlineHint: "First Responder Programs" },
-      { key: "hero_law_enforcement", brief: "Law enforcement — Good Neighbor Next Door 50% off list price in eligible revitalization areas, plus state DPAs.", headlineHint: "Law Enforcement Loans" },
-      { key: "hero_va_loans", brief: "VA loan basics for eligible service members and veterans — $0 down, no PMI.", headlineHint: "VA Loan Basics" },
-      { key: "hero_good_neighbor", brief: "HUD Good Neighbor Next Door — 50% off the list price for teachers, law enforcement, firefighters, EMTs in revitalization areas.", headlineHint: "Good Neighbor Next Door" },
-      { key: "hero_stack_dpa", brief: "Stacking hero programs with state and local DPAs for the lowest possible cash to close.", headlineHint: "Stack Hero + DPA" },
+      { key: "heroes_overview", brief: "Plain-English explainer: many local (state/county/city) DPAs include enhanced tiers for community professionals on top of the standard program.", headlineHint: "Local DPA for Community Heroes" },
+      { key: "hero_teachers", brief: "How local DPAs often add a teacher tier (e.g., higher grant amount, lower rate) on top of the standard program — varies by state/county/city.", headlineHint: "Teacher DPA Tiers" },
+      { key: "hero_nurses", brief: "Nurses and other healthcare workers frequently qualify for an enhanced tier on local DPAs — the bonus stacks on the standard program.", headlineHint: "Nurse DPA Tiers" },
+      { key: "hero_first_responders", brief: "Firefighters and EMTs often qualify for the same community-professional bonus tier on local DPAs.", headlineHint: "First Responder DPA" },
+      { key: "hero_law_enforcement", brief: "Law enforcement officers commonly qualify for an enhanced tier on local DPAs — extra grant or better terms vs. the standard program.", headlineHint: "Law Enforcement DPA" },
+      { key: "hero_eligibility_check", brief: "How to check whether your state, county, or city has a community-professional tier on its local DPA program.", headlineHint: "Check Local Tiers" },
+      { key: "hero_stack_dpa", brief: "How a community-professional tier stacks WITH (not instead of) the standard local DPA — sometimes you qualify for both layers.", headlineHint: "Stack Both DPA Layers" },
+      { key: "hero_funds_run_out", brief: "Hero tiers run out of funds the same way standard DPA does — being matched with a lender who tracks your local funding window matters.", headlineHint: "Funds Run Fast" },
     ],
   },
 
