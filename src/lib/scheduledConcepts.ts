@@ -17,8 +17,14 @@
 import { getObjectBytes, putBytes } from "./r2Server";
 
 const MANIFEST_KEY = "library/scheduled-concepts.json";
+// Parallel manifest for the generation-side cooldown. Records every
+// AI-poster theme:visual that has been GENERATED (regardless of
+// whether the user scheduled it). Lets us rotate themes across
+// successive batches even when the user is just browsing.
+const GENERATED_MANIFEST_KEY = "library/generated-concepts.json";
 const PRUNE_OLDER_THAN_DAYS = 60;
 const DEFAULT_RECENT_DAYS = 14;
+const DEFAULT_GENERATED_RECENT_DAYS = 5;
 
 export interface ScheduledConceptEntry {
   conceptKey: string;
@@ -29,26 +35,29 @@ interface Manifest {
   entries: ScheduledConceptEntry[];
 }
 
-async function readManifest(): Promise<Manifest> {
+async function readManifestAt(key: string): Promise<Manifest> {
   try {
-    const bytes = await getObjectBytes(MANIFEST_KEY);
+    const bytes = await getObjectBytes(key);
     if (!bytes) return { entries: [] };
     const parsed = JSON.parse(new TextDecoder().decode(bytes)) as Partial<Manifest>;
     if (!parsed.entries || !Array.isArray(parsed.entries)) return { entries: [] };
     return { entries: parsed.entries };
   } catch (e) {
     console.warn(
-      "[scheduledConcepts] readManifest failed, treating as empty:",
+      `[scheduledConcepts] readManifest(${key}) failed, treating as empty:`,
       e instanceof Error ? e.message : String(e),
     );
     return { entries: [] };
   }
 }
 
-async function writeManifest(m: Manifest): Promise<void> {
+async function writeManifestAt(key: string, m: Manifest): Promise<void> {
   const body = new TextEncoder().encode(JSON.stringify(m, null, 2));
-  await putBytes({ key: MANIFEST_KEY, body, contentType: "application/json" });
+  await putBytes({ key, body, contentType: "application/json" });
 }
+
+const readManifest = () => readManifestAt(MANIFEST_KEY);
+const writeManifest = (m: Manifest) => writeManifestAt(MANIFEST_KEY, m);
 
 // Append a conceptKey to the cooldown list. Idempotent on the
 // (conceptKey, ISO-day) pair — if the user reschedules the same
@@ -104,6 +113,69 @@ export async function getRecentScheduledConcepts(days = DEFAULT_RECENT_DAYS): Pr
   } catch (e) {
     console.warn(
       "[scheduledConcepts] getRecentScheduledConcepts failed; returning empty list:",
+      e instanceof Error ? e.message : String(e),
+    );
+    return [];
+  }
+}
+
+// Generation-side cooldown. Same shape as the scheduling tracker but
+// records every AI-poster conceptKey produced by a successful Claude
+// batch. This is a softer signal than scheduling, so the default
+// window is shorter (5 days vs 14) — its job is to keep successive
+// batches from showing the same theme over and over while the user
+// browses without committing to schedule anything.
+export async function recordGeneratedConcepts(conceptKeys: string[]): Promise<void> {
+  const fresh = conceptKeys.map((k) => k?.trim()).filter((k): k is string => !!k);
+  if (fresh.length === 0) return;
+  try {
+    const m = await readManifestAt(GENERATED_MANIFEST_KEY);
+    const today = new Date().toISOString().slice(0, 10);
+    const existingTodayKeys = new Set(
+      m.entries
+        .filter((e) => e.scheduledAt.slice(0, 10) === today)
+        .map((e) => e.conceptKey),
+    );
+    const nowIso = new Date().toISOString();
+    for (const k of fresh) {
+      if (!existingTodayKeys.has(k)) {
+        m.entries.push({ conceptKey: k, scheduledAt: nowIso });
+        existingTodayKeys.add(k);
+      }
+    }
+    const cutoff = Date.now() - PRUNE_OLDER_THAN_DAYS * 86_400_000;
+    m.entries = m.entries.filter((e) => {
+      const t = Date.parse(e.scheduledAt);
+      return Number.isFinite(t) && t >= cutoff;
+    });
+    await writeManifestAt(GENERATED_MANIFEST_KEY, m);
+    console.log(
+      `[scheduledConcepts] recorded ${fresh.length} generated concept(s); ${m.entries.length} entries in cooldown`,
+    );
+  } catch (e) {
+    console.warn(
+      "[scheduledConcepts] recordGeneratedConcepts failed:",
+      e instanceof Error ? e.message : String(e),
+    );
+  }
+}
+
+export async function getRecentGeneratedConcepts(
+  days = DEFAULT_GENERATED_RECENT_DAYS,
+): Promise<string[]> {
+  try {
+    const m = await readManifestAt(GENERATED_MANIFEST_KEY);
+    const cutoff = Date.now() - days * 86_400_000;
+    const recent = m.entries
+      .filter((e) => {
+        const t = Date.parse(e.scheduledAt);
+        return Number.isFinite(t) && t >= cutoff;
+      })
+      .map((e) => e.conceptKey);
+    return Array.from(new Set(recent));
+  } catch (e) {
+    console.warn(
+      "[scheduledConcepts] getRecentGeneratedConcepts failed; returning empty list:",
       e instanceof Error ? e.message : String(e),
     );
     return [];

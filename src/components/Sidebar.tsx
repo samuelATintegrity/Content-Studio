@@ -27,6 +27,7 @@ import {
   subscribeMusicLibrary,
 } from "@/lib/musicLibrary";
 import { BufferQueueModal } from "./BufferQueueModal";
+import { FunnyCommercialSections } from "./FunnyCommercialSections";
 
 const FORMATS: Format[] = ["static", "video"];
 const LANGS: Language[] = ["en", "tl", "es", "zh"];
@@ -198,6 +199,12 @@ export function Sidebar({ drawerOpen = false, onClose }: SidebarProps = {}) {
             >
               Influencer
             </Pill>
+            <Pill
+              selected={subMode === "funny_commercial"}
+              onClick={() => setSubMode("funny_commercial")}
+            >
+              Funny commercial
+            </Pill>
           </div>
         </Section>
       )}
@@ -212,7 +219,13 @@ export function Sidebar({ drawerOpen = false, onClose }: SidebarProps = {}) {
 
       {format === "video" && subMode === "narration" && <SavedSetsSection />}
 
-      {format === "video" && <MusicLibrarySection />}
+      {format === "video" && subMode === "funny_commercial" && (
+        <FunnyCommercialSections />
+      )}
+
+      {format === "video" && subMode !== "funny_commercial" && (
+        <MusicLibrarySection />
+      )}
 
       <Section title="Language">
         <div className="grid grid-cols-2 gap-2">
@@ -224,12 +237,11 @@ export function Sidebar({ drawerOpen = false, onClose }: SidebarProps = {}) {
         </div>
       </Section>
 
-      {/* Video mode (both narration and influencer sub-modes) uses the
-          Message theme picker. Narration consolidated from 5 content
-          types to these 2 themes; influencer was already locked to
-          them. Static mode uses a single 5-pill content-type picker
-          (Photo + the four graphic templates). */}
-      {format === "video" ? (
+      {/* Video mode (narration + influencer) uses the Message theme
+          picker. Funny commercial doesn't — its messaging is encoded
+          in the chosen Scene 3 CTA. Static mode uses a single 5-pill
+          content-type picker (Photo + the four graphic templates). */}
+      {format === "video" && subMode !== "funny_commercial" ? (
         <Section title="Message">
           <div className="flex flex-col gap-2">
             {MESSAGE_THEMES.map((t) => (
@@ -244,7 +256,7 @@ export function Sidebar({ drawerOpen = false, onClose }: SidebarProps = {}) {
             ))}
           </div>
         </Section>
-      ) : (
+      ) : format === "video" ? null : (
         // Static format — single picker. "Photo" runs the blended-
         // content-type 12-card flow; the four graphic templates each
         // dispatch to their existing per-template generator.

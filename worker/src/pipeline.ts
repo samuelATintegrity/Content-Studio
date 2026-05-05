@@ -13,12 +13,14 @@ import { voiceIdFor } from "./voices.js";
 import { downloadClips } from "./clipDownload.js";
 import {
   compose,
+  composeFunnyCommercial,
   composeInfluencerFinal,
   composeIntroSegment,
   composeMiddleSegment,
   composeOutroSegment,
 } from "./ffmpeg.js";
 import { pickMusicTrack, pickSoundEffect } from "./music.js";
+import { buildFunnyCommercialSubtitles } from "./subtitles.js";
 import { probeBookendDurationS, probeDurationS } from "./probe.js";
 import { applyCaptionCutoff, transcribeMediaFile } from "./transcribe.js";
 import type { RenderRequest } from "./types.js";
@@ -67,6 +69,11 @@ export async function runPipeline(jobId: string, req: RenderRequest): Promise<vo
   try {
     if (req.mode === "influencer") {
       await runInfluencerPipeline(jobId, req, workDir);
+      return;
+    }
+
+    if (req.mode === "funny_commercial") {
+      await runFunnyCommercialPipeline(jobId, req, workDir);
       return;
     }
 
@@ -298,6 +305,106 @@ async function runInfluencerPipeline(
     videoUrl: url,
     durationS: totalDurationS,
   });
+}
+
+// Funny Commercial pipeline. Scene 1 + Scene 2 are pre-animated mp4s
+// the user picked from their libraries; Scene 3 (black + CTA) and
+// Scene 4 (logo) are synthesized at compose time. ASS subtitles carry
+// both text overlays. No TTS, no STT — text comes pre-formed (and
+// pre-translated) from the app.
+async function runFunnyCommercialPipeline(
+  jobId: string,
+  req: RenderRequest,
+  workDir: string,
+): Promise<void> {
+  if (req.clipUrls.length !== 2) {
+    throw new Error("funny_commercial requires exactly 2 clipUrls (scene1, scene2)");
+  }
+  if (!req.fcScene2Text?.trim() || !req.fcScene3Text?.trim()) {
+    throw new Error("funny_commercial requires fcScene2Text and fcScene3Text");
+  }
+
+  const scene1S = req.fcScene1DurationS ?? 5;
+  const scene2S = req.fcScene2DurationS ?? 4;
+  const scene3S = req.fcScene3DurationS ?? 3;
+  const scene4S = req.fcScene4DurationS ?? 2;
+
+  // ── Stage: Footage download ────────────────────────────────────────
+  setState(jobId, "footage", 0.3);
+  const downloaded = await downloadClips(req.clipUrls, workDir);
+  if (downloaded.length !== 2) {
+    throw new Error(`expected 2 clips, downloaded ${downloaded.length}`);
+  }
+  const scene1Path = downloaded[0]!.filePath;
+  const scene2Path = downloaded[1]!.filePath;
+
+  // ── Stage: Build subtitles ────────────────────────────────────────
+  // Scene 2 text appears 0.6s into Scene 2 (lets the actor settle in
+  // visually) and runs through the end of Scene 2. Scene 3 text shows
+  // for the full duration of Scene 3 (subtle 240ms fade in/out via the
+  // builder). Times are absolute against the final concatenated video.
+  const scene2Start = scene1S + 0.6;
+  const scene2End = scene1S + scene2S;
+  const scene3Start = scene1S + scene2S;
+  const scene3End = scene1S + scene2S + scene3S;
+  const ass = buildFunnyCommercialSubtitles(
+    [
+      { text: req.fcScene2Text, startS: scene2Start, endS: scene2End, placement: "scene2" },
+      { text: req.fcScene3Text, startS: scene3Start, endS: scene3End, placement: "scene3" },
+    ],
+    {
+      fontFamily: "Geist",
+      scene2FontSize: 88,
+      scene3FontSize: 96,
+      scene2MarginV: 240,
+      outlineWidth: 5,
+      shadowDepth: 4,
+      fadeMs: 240,
+    },
+  );
+  const assPath = join(workDir, "fc-subs.ass");
+  await writeFile(assPath, ass, "utf8");
+
+  // ── Stage: Render ──────────────────────────────────────────────────
+  setState(jobId, "rendering", 0.6);
+  const finalPath = join(workDir, "final.mp4");
+  // Music is opt-in. The muffled-noise gag IS the audio for Scenes 1+2;
+  // an underlying music bed often steps on the joke. Default off.
+  const musicPath = req.fcMusicTrackUrl
+    ? await downloadMusicByUrl(req.fcMusicTrackUrl, workDir).catch(() => null)
+    : null;
+
+  await composeFunnyCommercial({
+    scene1Path,
+    scene2Path,
+    assPath,
+    fontsDir: FONTS_DIR,
+    outPath: finalPath,
+    scene1DurationS: scene1S,
+    scene2DurationS: scene2S,
+    scene3DurationS: scene3S,
+    scene4DurationS: scene4S,
+    musicPath,
+  });
+
+  // ── Stage: Upload ─────────────────────────────────────────────────
+  setState(jobId, "uploading", 0.9);
+  const url = await uploadVideo(finalPath, `videos/${jobId}.mp4`);
+  const totalDurationS = scene1S + scene2S + scene3S + scene4S;
+  updateJob(jobId, { state: "ready", progress: 1, videoUrl: url, durationS: totalDurationS });
+}
+
+// Best-effort fetch + write a music URL into the work dir so ffmpeg
+// can feed it as a local file. The shared downloadClips helper is
+// designed for video; we use a plain fetch here because mp3 doesn't
+// need probing.
+async function downloadMusicByUrl(url: string, workDir: string): Promise<string> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`music fetch failed: ${res.status}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  const path = join(workDir, "fc-music.mp3");
+  await writeFile(path, buf);
+  return path;
 }
 
 // Transcribe a bookend file and apply the optional cutoff phrase. Returns

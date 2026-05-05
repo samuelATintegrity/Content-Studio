@@ -16,7 +16,7 @@ import {
 } from "@/lib/types";
 import { PICKED_CLIP_COUNT } from "@/lib/videoPrompts";
 
-export type SubMode = "narration" | "influencer";
+export type SubMode = "narration" | "influencer" | "funny_commercial";
 
 interface BatchState {
   format: Format;
@@ -51,6 +51,16 @@ interface BatchState {
   selectedOutroClipUrl: string | null;
   selectedMessageTheme: MessageTheme;
 
+  // Funny Commercial per-batch selection. The user picks one Scene 1
+  // video, one Scene 2 actor video, a Scene 2 text overlay, and a
+  // Scene 3 CTA before generating. Set independently as the user
+  // browses each library; cleared on sub-mode swap.
+  fcSelectedScene1VideoId: string | null;
+  fcSelectedScene2ActorId: string | null;
+  fcScene2Text: string;        // free-text input, may be loaded from a saved phrase
+  fcScene3PhraseId: string | null; // selected saved phrase, if any
+  fcScene3Text: string;        // English source text (free or pulled from selected phrase)
+
   setFormat: (f: Format) => void;
   setLanguage: (l: Language) => void;
   setContentType: (c: ContentType) => void;
@@ -73,6 +83,11 @@ interface BatchState {
   setSelectedIntroClipUrl: (url: string | null) => void;
   setSelectedOutroClipUrl: (url: string | null) => void;
   setSelectedMessageTheme: (t: MessageTheme) => void;
+  setFcSelectedScene1VideoId: (id: string | null) => void;
+  setFcSelectedScene2ActorId: (id: string | null) => void;
+  setFcScene2Text: (text: string) => void;
+  setFcScene3PhraseId: (id: string | null) => void;
+  setFcScene3Text: (text: string) => void;
 }
 
 export const useBatchStore = create<BatchState>((set) => ({
@@ -93,6 +108,11 @@ export const useBatchStore = create<BatchState>((set) => ({
   selectedIntroClipUrl: null,
   selectedOutroClipUrl: null,
   selectedMessageTheme: DEFAULT_MESSAGE_THEME,
+  fcSelectedScene1VideoId: null,
+  fcSelectedScene2ActorId: null,
+  fcScene2Text: "",
+  fcScene3PhraseId: null,
+  fcScene3Text: "",
 
   setFormat: (format) =>
     set((s) => ({
@@ -159,8 +179,9 @@ export const useBatchStore = create<BatchState>((set) => ({
     }),
   clearClipSelection: () => set({ selectedClipKeys: [], selectedClipUrls: [] }),
   // Switching sub-mode resets the picked clips and avatar/intro/outro
-  // selections, since the two flows pick into the same selection slice but
-  // have different shape requirements.
+  // selections, since the three flows pick into overlapping store
+  // slots with different shape requirements. Funny-commercial picks
+  // are also cleared so a stale Scene 1 video doesn't carry over.
   setSubMode: (subMode) =>
     set({
       subMode,
@@ -169,6 +190,11 @@ export const useBatchStore = create<BatchState>((set) => ({
       selectedAvatarName: null,
       selectedIntroClipUrl: null,
       selectedOutroClipUrl: null,
+      fcSelectedScene1VideoId: null,
+      fcSelectedScene2ActorId: null,
+      fcScene2Text: "",
+      fcScene3PhraseId: null,
+      fcScene3Text: "",
     }),
   // Switching static content type clears any in-progress batch.
   // Photo posts and the four graphic templates all have very
@@ -195,4 +221,13 @@ export const useBatchStore = create<BatchState>((set) => ({
       selectedIntroClipUrl: null,
       selectedOutroClipUrl: null,
     }),
+  setFcSelectedScene1VideoId: (fcSelectedScene1VideoId) =>
+    set({ fcSelectedScene1VideoId }),
+  setFcSelectedScene2ActorId: (fcSelectedScene2ActorId) =>
+    set({ fcSelectedScene2ActorId }),
+  setFcScene2Text: (fcScene2Text) => set({ fcScene2Text }),
+  // Picking a saved Scene 3 phrase syncs the free-text input to its
+  // English source so the "what will render" preview stays accurate.
+  setFcScene3PhraseId: (fcScene3PhraseId) => set({ fcScene3PhraseId }),
+  setFcScene3Text: (fcScene3Text) => set({ fcScene3Text }),
 }));

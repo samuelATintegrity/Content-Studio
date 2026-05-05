@@ -213,6 +213,83 @@ export function buildMultiSegmentAssSubtitles(
   return `${buildHeader(style)}\n${allLines.join("\n")}\n`;
 }
 
+// ── Funny Commercial subtitles ─────────────────────────────────────
+//
+// Two simple full-line dialogue overlays (one for Scene 2, one for
+// Scene 3) — no per-word karaoke. Both render in a large centered
+// style with a soft fade in. Scene 3's text appears for the entire
+// scene; Scene 2's appears with a small delay so the actor settles
+// in first.
+
+export interface FcSubtitleSegment {
+  text: string;
+  startS: number;     // absolute seconds in the final video
+  endS: number;
+  // "scene2" sits in the lower third (subject is overhead, lower
+  // third is bedding); "scene3" sits dead-center (full black canvas).
+  placement: "scene2" | "scene3";
+}
+
+export interface FcSubtitleStyle {
+  fontFamily: string;
+  // px sizes for each placement variant.
+  scene2FontSize: number;
+  scene3FontSize: number;
+  // distance from bottom for the scene2 placement
+  scene2MarginV: number;
+  outlineColor?: string;
+  outlineWidth?: number;
+  shadowDepth?: number;
+  fadeMs?: number;
+}
+
+function buildFcHeader(style: FcSubtitleStyle): string {
+  const primary = hexToAss("#FFFFFF");
+  const outline = hexToAss(style.outlineColor ?? "#000000");
+  const outlineWidth = style.outlineWidth ?? 5;
+  const shadow = style.shadowDepth ?? 4;
+
+  // Two styles: Scene2 is bottom-anchored (alignment 2); Scene3 is
+  // dead-center (alignment 5 = center-middle in libass).
+  return [
+    "[Script Info]",
+    "ScriptType: v4.00+",
+    `PlayResX: ${PLAY_RES_X}`,
+    `PlayResY: ${PLAY_RES_Y}`,
+    "WrapStyle: 0",
+    "ScaledBorderAndShadow: yes",
+    "YCbCr Matrix: TV.709",
+    "",
+    "[V4+ Styles]",
+    "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+    `Style: FcScene2,${style.fontFamily},${style.scene2FontSize},${primary},${primary},${outline},&H00000000&,1,0,0,0,100,100,0,0,1,${outlineWidth},${shadow},2,80,80,${style.scene2MarginV},1`,
+    `Style: FcScene3,${style.fontFamily},${style.scene3FontSize},${primary},${primary},${outline},&H00000000&,1,0,0,0,100,100,0,0,1,${outlineWidth},${shadow},5,80,80,0,1`,
+    "",
+    "[Events]",
+    "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
+  ].join("\n");
+}
+
+export function buildFunnyCommercialSubtitles(
+  segments: FcSubtitleSegment[],
+  style: FcSubtitleStyle,
+): string {
+  const fadeMs = style.fadeMs ?? 240;
+  const lines: string[] = [];
+  for (const seg of segments) {
+    if (!seg.text.trim()) continue;
+    const text = escapeText(seg.text.trim());
+    const startStr = fmtTime(seg.startS);
+    const endStr = fmtTime(seg.endS);
+    const styleName = seg.placement === "scene3" ? "FcScene3" : "FcScene2";
+    // Soft fade in + out so text doesn't pop on/off cuts.
+    const tags = `{\\fad(${fadeMs},${fadeMs})}`;
+    lines.push(`Dialogue: 0,${startStr},${endStr},${styleName},,0,0,0,,${tags}${text}`);
+  }
+  if (lines.length === 0) return buildFcHeader(style) + "\n";
+  return `${buildFcHeader(style)}\n${lines.join("\n")}\n`;
+}
+
 function buildHeader(style: SubtitleStyle): string {
   const primary = hexToAss(style.primaryColor);
   const outline = hexToAss(style.outlineColor ?? "#000000");

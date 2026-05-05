@@ -30,7 +30,7 @@ export interface JobState {
   updatedAt: number;
 }
 
-export type RenderMode = "narration" | "influencer";
+export type RenderMode = "narration" | "influencer" | "funny_commercial";
 
 // Body of POST /render from Vercel.
 export interface RenderRequest {
@@ -58,6 +58,17 @@ export interface RenderRequest {
   // and a fresh batchSeed per batch varies which 3 files are picked.
   // Falls back to random when undefined.
   musicShuffleIndex?: number;
+  // Funny Commercial mode. clipUrls = [scene1Url, scene2ActorUrl] in
+  // scene order; the worker bakes Scene 3 (black + CTA) and Scene 4
+  // (logo) on the fly. Both text overlays come pre-formed from the
+  // app — Scene 3 is already translated to the target language.
+  fcScene2Text?: string;
+  fcScene3Text?: string;
+  fcScene1DurationS?: number;
+  fcScene2DurationS?: number;
+  fcScene3DurationS?: number;
+  fcScene4DurationS?: number;
+  fcMusicTrackUrl?: string | null;
 }
 
 export interface RenderResponse {

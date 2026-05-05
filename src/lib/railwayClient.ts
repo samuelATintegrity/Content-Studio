@@ -31,13 +31,24 @@ export async function enqueueRender(args: {
   language: Language;
   contentType: ContentType;
   clipUrls: string[];
-  mode?: "narration" | "influencer";
+  mode?: "narration" | "influencer" | "funny_commercial";
   voiceId?: string;
   introClipUrl?: string;
   introCaptionCutoffPhrase?: string;
   outroClipUrl?: string;
   outroCaptionCutoffPhrase?: string;
   musicShuffleIndex?: number;
+  // Funny Commercial fields. Only used when mode === "funny_commercial".
+  // clipUrls in that mode is exactly [scene1Url, scene2ActorUrl] in
+  // scene order. The worker bakes Scene 3 (black + CTA) and Scene 4
+  // (logo) on the fly.
+  fcScene2Text?: string;
+  fcScene3Text?: string;        // already translated to the active language
+  fcScene1DurationS?: number;
+  fcScene2DurationS?: number;
+  fcScene3DurationS?: number;
+  fcScene4DurationS?: number;
+  fcMusicTrackUrl?: string | null;
 }): Promise<string> {
   if (!Array.isArray(args.clipUrls) || args.clipUrls.length === 0) {
     throw new Error("enqueueRender: clipUrls is required");

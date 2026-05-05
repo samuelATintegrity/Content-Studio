@@ -11,6 +11,12 @@ import type { LibraryClip } from "./clipLibrary";
 import type { SavedSet } from "./savedSets";
 import type { LibraryImage } from "./imageLibrary";
 import type { MusicTrack } from "./musicLibrary";
+import type {
+  FcSceneImage,
+  FcSceneVideo,
+  FcPhrase,
+  FcTranslatedPhrase,
+} from "./types";
 
 const MANIFEST_VERSION = 1;
 const LOCAL_MIRROR_KEY = "content-studio-library-mirror";
@@ -32,6 +38,12 @@ export interface Manifest {
   sets: SavedSet[];
   images: LibraryImage[];
   tracks: MusicTrack[];
+  // Funny Commercial scene libraries. Each library is independent.
+  fcScene1Images: FcSceneImage[];
+  fcScene1Videos: FcSceneVideo[];
+  fcScene2Actors: FcSceneVideo[];
+  fcScene2Phrases: FcPhrase[];
+  fcScene3Phrases: FcTranslatedPhrase[];
 }
 
 const EMPTY: Manifest = {
@@ -40,15 +52,34 @@ const EMPTY: Manifest = {
   sets: [],
   images: [],
   tracks: [],
+  fcScene1Images: [],
+  fcScene1Videos: [],
+  fcScene2Actors: [],
+  fcScene2Phrases: [],
+  fcScene3Phrases: [],
 };
 
-type Slice = "clips" | "sets" | "images" | "tracks";
+type Slice =
+  | "clips"
+  | "sets"
+  | "images"
+  | "tracks"
+  | "fcScene1Images"
+  | "fcScene1Videos"
+  | "fcScene2Actors"
+  | "fcScene2Phrases"
+  | "fcScene3Phrases";
 
 const SLICE_EVENT: Record<Slice, string> = {
   clips: "video-clip-library-changed",
   sets: "video-saved-sets-changed",
   images: "static-image-library-changed",
   tracks: "music-library-changed",
+  fcScene1Images: "fc-scene1-images-changed",
+  fcScene1Videos: "fc-scene1-videos-changed",
+  fcScene2Actors: "fc-scene2-actors-changed",
+  fcScene2Phrases: "fc-scene2-phrases-changed",
+  fcScene3Phrases: "fc-scene3-phrases-changed",
 };
 
 let _state: Manifest = { ...EMPTY };
@@ -139,6 +170,11 @@ function normalizeManifest(input: unknown): Manifest {
     sets: Array.isArray(obj.sets) ? obj.sets : [],
     images: Array.isArray(obj.images) ? obj.images : [],
     tracks: Array.isArray(obj.tracks) ? obj.tracks : [],
+    fcScene1Images: Array.isArray(obj.fcScene1Images) ? obj.fcScene1Images : [],
+    fcScene1Videos: Array.isArray(obj.fcScene1Videos) ? obj.fcScene1Videos : [],
+    fcScene2Actors: Array.isArray(obj.fcScene2Actors) ? obj.fcScene2Actors : [],
+    fcScene2Phrases: Array.isArray(obj.fcScene2Phrases) ? obj.fcScene2Phrases : [],
+    fcScene3Phrases: Array.isArray(obj.fcScene3Phrases) ? obj.fcScene3Phrases : [],
   };
 }
 

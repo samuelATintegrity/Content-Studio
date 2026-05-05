@@ -1,6 +1,6 @@
 "use client";
 
-import type { ContentType, FitMode, FontVariant, Framing, GenerateBatchResponse, GraphicData, GraphicTemplate, Language, Post, StaticSubMode, StyleVariant } from "./types";
+import type { ContentType, GenerateBatchResponse, GraphicData, GraphicTemplate, Language, Post, StaticSubMode } from "./types";
 
 interface PhotoResp {
   url: string;
@@ -207,34 +207,6 @@ export async function fetchPhotoFor(
   });
   if (!res.ok) throw new Error((await res.json()).error ?? "photo fetch failed");
   return res.json();
-}
-
-export async function composeImageDataUrl(args: {
-  photoUrl: string;
-  headline: string;
-  cta: string;
-  fontVariant?: FontVariant;
-  framing?: Framing;
-  fitMode?: FitMode;
-  style?: StyleVariant;
-}): Promise<string> {
-  const res = await fetchWithRetry("/api/compose", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(args),
-    label: "Render image",
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: "compose failed" }));
-    throw new Error(err.error ?? "compose failed");
-  }
-  const blob = await res.blob();
-  return await new Promise<string>((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(r.result as string);
-    r.onerror = () => reject(r.error);
-    r.readAsDataURL(blob);
-  });
 }
 
 export async function composeGraphicDataUrl(graphic: GraphicData): Promise<string> {

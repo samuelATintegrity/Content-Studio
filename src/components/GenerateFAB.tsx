@@ -8,6 +8,7 @@ import {
   generateVideoBatch,
   renderWithPickedClips,
 } from "@/lib/generateVideo";
+import { generateFunnyCommercialBatch } from "@/lib/generateFunnyCommercial";
 import {
   INFLUENCER_MIDDLE_COUNT,
   PICKED_CLIP_COUNT,
@@ -25,8 +26,14 @@ export function GenerateFAB() {
   const selectedIntroClipUrl = useBatchStore((s) => s.selectedIntroClipUrl);
   const selectedOutroClipUrl = useBatchStore((s) => s.selectedOutroClipUrl);
   const selectedMessageTheme = useBatchStore((s) => s.selectedMessageTheme);
+  const fcSelectedScene1VideoId = useBatchStore((s) => s.fcSelectedScene1VideoId);
+  const fcSelectedScene2ActorId = useBatchStore((s) => s.fcSelectedScene2ActorId);
+  const fcScene2Text = useBatchStore((s) => s.fcScene2Text);
+  const fcScene3PhraseId = useBatchStore((s) => s.fcScene3PhraseId);
+  const fcScene3Text = useBatchStore((s) => s.fcScene3Text);
   const isVideo = format === "video";
   const isInfluencer = isVideo && subMode === "influencer";
+  const isFunnyCommercial = isVideo && subMode === "funny_commercial";
   const selectedCount = selectedClipUrls.length;
 
   // Block re-trigger while an image set is mid-flight (any slot not finished
@@ -62,13 +69,38 @@ export function GenerateFAB() {
     }
   }
 
+  // Funny Commercial flow gating. Cheaper than influencer — just needs
+  // a Scene 1 clip, a Scene 2 actor, and both text fields.
+  let fcLabel: string | null = null;
+  let fcReady = false;
+  if (isFunnyCommercial) {
+    if (!fcSelectedScene1VideoId) {
+      fcLabel = "Pick a Scene 1 clip";
+    } else if (!fcSelectedScene2ActorId) {
+      fcLabel = "Pick a Scene 2 actor";
+    } else if (!fcScene2Text.trim()) {
+      fcLabel = "Add Scene 2 text";
+    } else if (!fcScene3Text.trim() && !fcScene3PhraseId) {
+      fcLabel = "Add Scene 3 CTA";
+    } else {
+      fcLabel = "Render commercial";
+      fcReady = true;
+    }
+  }
+
   const disabled =
     loading ||
     (isVideo && imageSetBusy) ||
-    (isInfluencer && !influencerReady);
+    (isInfluencer && !influencerReady) ||
+    (isFunnyCommercial && !fcReady);
 
   function onClick() {
     if (disabled) return;
+    if (isFunnyCommercial) {
+      if (!fcReady) return;
+      void generateFunnyCommercialBatch();
+      return;
+    }
     if (isInfluencer) {
       if (!influencerReady) return;
       if (
@@ -105,6 +137,7 @@ export function GenerateFAB() {
   let label: string;
   if (loading) label = isVideo ? "Starting batch" : "Generating";
   else if (isVideo && imageSetBusy) label = "Image set in progress";
+  else if (isFunnyCommercial) label = fcLabel ?? "Render commercial";
   else if (isInfluencer) label = influencerLabel ?? "Render influencer";
   else if (canRenderPicked) label = "Render with selected";
   else if (canRenderMixed) label = `Generate (${selectedCount} pick${selectedCount === 1 ? "" : "s"} + ${aiFillCount} AI)`;

@@ -16,70 +16,167 @@ interface ContentTypeSpec {
   angles: AngleSpec[];
 }
 
-// AI-poster metaphor seeds — each one is a strikingly unusual visual
-// concept that maps back to a real-estate value prop. Claude rewrites
-// the seed into a fully-fleshed-out Nano Banana Pro prompt at batch
-// time, with a hard constraint to never include text/letters/signage
-// in the image (text is composited separately by ImageResponse).
+// AI-poster THEMES — each theme is a message (e.g., "the best" or
+// "what's at stake") with multiple visual realizations. Claude picks
+// distinct themes for the batch, then picks a visual within each
+// theme. This pushes variety into the batch by structure: you don't
+// see two "top of the food chain" cards back-to-back, AND within a
+// theme there are 7-12 ways to say it so refreshing rotates the
+// visual without losing the angle.
 //
-// `mapsTo` is the good_agents angle key the concept argues for; the
-// matching headline/copy should reinforce that angle. `tone` nudges
-// Claude toward a coherent voice for the on-image text.
-export interface AiPosterConcept {
+// Each visual is a Nano Banana Pro seed prompt. Claude rewrites it
+// into a fully-fleshed-out prompt at batch time, with a hard
+// constraint to never include text/letters/signage in the image.
+//
+// conceptKey returned by Claude is "<themeKey>:<visualKey>" so the
+// cooldown tracker can dedupe at the visual level while the prompt
+// shows the theme structure.
+export interface AiPosterVisual {
   key: string;
   seed: string;
-  mapsTo: string;
-  tone: string;
 }
 
-export const AI_POSTER_CONCEPTS: AiPosterConcept[] = [
+export interface AiPosterTheme {
+  key: string;
+  message: string; // human-readable message this theme conveys
+  mapsTo: string; // good_agents angle this theme argues for
+  tone: string;
+  visuals: AiPosterVisual[];
+}
+
+export const AI_POSTER_THEMES: AiPosterTheme[] = [
   {
-    key: "apex_predator",
-    seed: "ultra close-up macro portrait of a tiger's face, intense eye contact with the viewer, dramatic side lighting, fur detail, dark background, photorealistic",
+    key: "the_best",
+    message: "Top of the food chain. Best in class. Elite, world-class, the apex.",
     mapsTo: "top_performers",
     tone: "confident, declarative, top-of-the-food-chain",
+    visuals: [
+      { key: "tiger_macro", seed: "ultra close-up macro portrait of a tiger's face, intense eye contact with the viewer, dramatic side lighting, fur detail, dark background, photorealistic" },
+      { key: "lion_ridge", seed: "majestic male lion standing on a savanna ridge at golden hour, mane rim-lit by the setting sun, deep cinematic shadow on the body, photorealistic" },
+      { key: "jaguar_shadow", seed: "black jaguar emerging from deep jungle shadow, only the piercing yellow eyes catching light, dappled leaves, photorealistic" },
+      { key: "wolf_alpha", seed: "lone alpha wolf standing on a snowy ridge, looking back over its shoulder, breath visible in cold air, overcast diffuse light, photorealistic" },
+      { key: "eagle_flight", seed: "bald eagle in mid-flight with wings fully spread, talons visible, sharp afternoon light catching the feathers, distant mountain backdrop softly out of focus, photorealistic" },
+      { key: "racehorse_finish", seed: "thoroughbred racehorse mid-stride at full gallop crossing a finish line, mud kicking up, dramatic motion blur in the background grandstand, photorealistic" },
+      { key: "f1_apex", seed: "Formula 1 car frozen at the apex of a corner, sparks flying off the floor, blurred grandstand and trackside marshals, photorealistic" },
+      { key: "olympic_podium", seed: "athlete stepping onto the gold-medal podium spot, single dramatic spotlight on the podium, surrounding stadium fading into deep shadow, photorealistic" },
+      { key: "top_shelf_bottle", seed: "a single rare aged spirit bottle on a dark stone bar, dramatic spotlight from above, dust motes glittering in the beam, photorealistic" },
+      { key: "everest_summit", seed: "lone climber standing at the summit of Everest at sunrise, prayer flags whipping in the wind, infinite peaks below, photorealistic, cinematic" },
+    ],
   },
   {
-    key: "chameleon_pretender",
-    seed: "studio portrait of a chameleon wearing a tiny tailored business suit and tie, head and shoulders framing, soft key light on a neutral backdrop, photorealistic",
+    key: "pretenders",
+    message: "Looks the part, isn't. Calling out posers, decoys, and surface-only credentials.",
     mapsTo: "filters_part_time",
     tone: "wry, contrarian, calling out pretenders",
+    visuals: [
+      { key: "chameleon_suit", seed: "studio portrait of a chameleon wearing a tiny tailored business suit and tie, head-and-shoulders framing, soft key light on a neutral backdrop, photorealistic" },
+      { key: "chihuahua_vs_dane", seed: "studio shot of a majestic great dane standing tall next to a tiny chihuahua wearing an oversized business suit, neutral seamless backdrop, photorealistic" },
+      { key: "cardboard_storefront", seed: "back view of a movie-set Western storefront — looks like a real building from the front, just propped lumber from behind, dusty backlot, photorealistic" },
+      { key: "mannequin_handshake", seed: "two business-suited mannequins posed mid-handshake on a department-store sales floor, photorealistic, slightly uncanny" },
+      { key: "inflatable_lawyer", seed: "inflatable wacky-arm tube man dressed in a tailored business suit, parked in front of a small office building, photorealistic" },
+      { key: "paper_crown", seed: "an obviously paper Burger-King-style crown displayed on a velvet pillow under a museum spotlight, photorealistic" },
+      { key: "cardboard_armor", seed: "knight's armor made of cardboard and tinfoil, propped against a stone castle wall, photorealistic" },
+      { key: "deflated_mascot", seed: "deflated furry sports mascot suit slumped against a locker-room bench, oversized head detached on the floor, photorealistic" },
+      { key: "fake_rolex", seed: "macro shot of a clearly fake gold watch with misspelled brand etched on the face, on a velvet display, photorealistic" },
+    ],
   },
   {
-    key: "underwater_home",
-    seed: "a pristine modern American suburban home fully submerged underwater in a vast deep ocean, sun rays piercing the water from above, bubbles, surreal cinematic composition, photorealistic",
+    key: "slow_loses",
+    message: "Slow gets left behind. Speed wins. Hesitation costs the deal.",
+    mapsTo: "pre_interviewed",
+    tone: "pointed, urgency-driven, slow agents lose deals",
+    visuals: [
+      { key: "sloth_macro", seed: "extreme macro close-up portrait of a three-toed sloth's face, slow-blinking eyes, soft jungle backlight, mossy fur detail, photorealistic" },
+      { key: "snail_highway", seed: "single garden snail crossing the painted lane line of a busy highway, low angle, motion blur of a passing car, photorealistic" },
+      { key: "melting_clock", seed: "wax candle shaped like a clock, melting and warping on a wooden table, late afternoon light, photorealistic" },
+      { key: "traffic_solo", seed: "lone car stuck in a vast sea of red brake lights stretching to the horizon at dusk, aerial view, photorealistic" },
+      { key: "hourglass_empty", seed: "hourglass with nearly all the sand pooled at the bottom, dramatic side light, dust glittering, photorealistic, macro" },
+      { key: "frozen_loading", seed: "phone screen frozen on a loading spinner, hand reaching toward it in frustration, photorealistic, macro" },
+      { key: "molasses_pour", seed: "thick molasses pouring extremely slowly from a tipped jar over a stack of paperwork, photorealistic" },
+      { key: "sleeping_guard", seed: "security guard asleep at a desk while monitors behind show motion alerts flashing red, photorealistic" },
+      { key: "rusted_gear", seed: "macro shot of a single rusted gear seized in place, surrounded by smoothly turning gears, photorealistic" },
+    ],
+  },
+  {
+    key: "stakes_high",
+    message: "What happens when you pick wrong. The disaster scenario. Real stakes.",
     mapsTo: "why_quality_matters",
     tone: "warning, stakes-driven, what's at risk",
+    visuals: [
+      { key: "exploding_home", seed: "a suburban American home mid-explosion captured at the peak frame, debris and shingles frozen in midair, fire and smoke billowing, dramatic golden-hour lighting, photorealistic" },
+      { key: "underwater_home", seed: "a pristine modern American suburban home fully submerged underwater in a vast deep ocean, sun rays piercing the water from above, bubbles, surreal cinematic composition, photorealistic" },
+      { key: "sinkhole_home", seed: "modern American suburban home half-sunk into a giant sinkhole on its own front lawn, neighbors' homes intact in background, photorealistic" },
+      { key: "house_of_cards", seed: "a literal house of playing cards mid-collapse on a kitchen table, the top cards starting to fall, shallow depth of field, photorealistic" },
+      { key: "tornado_approach", seed: "lone American suburban home in foreground with a massive tornado bearing down across an open field behind it, dramatic storm light, photorealistic" },
+      { key: "flooded_living_room", seed: "elegant living room interior submerged waist-deep in clear water, couch and lamps still in place, photorealistic, surreal" },
+      { key: "cracking_foundation", seed: "ground-level view of a giant crack splitting the foundation of a beautiful brick home in two, photorealistic, dramatic" },
+      { key: "falling_piano", seed: "a grand piano captured mid-fall above a residential rooftop, frozen in motion against a clear blue sky, photorealistic, surreal" },
+      { key: "burning_paperwork", seed: "stack of mortgage paperwork on a desk catching fire, flames just starting to spread across the top sheet, photorealistic, dramatic" },
+    ],
   },
   {
-    key: "lone_survivor",
-    seed: "a single pristine modern home standing untouched, surrounded by smoldering burnt-out wreckage of other homes, dawn light, atmospheric haze, photorealistic, dramatic",
+    key: "lone_standout",
+    message: "Standing when others fell. Results that hold up. The one that survived.",
     mapsTo: "proven_reviews",
     tone: "survivor, standout, results that hold up",
+    visuals: [
+      { key: "untouched_home", seed: "a single pristine modern home standing untouched, surrounded by smoldering burnt-out wreckage of other homes, dawn light, atmospheric haze, photorealistic, dramatic" },
+      { key: "lighthouse_storm", seed: "lone lighthouse with its beam cutting through a violent sea storm at night, towering waves crashing around it, photorealistic, cinematic" },
+      { key: "oak_burned_forest", seed: "single living oak tree in full green leaf standing in the middle of a vast burnt-black forest floor, photorealistic" },
+      { key: "one_lit_window", seed: "aerial night shot of a city block during a blackout — every building dark except one warmly glowing window, photorealistic" },
+      { key: "flag_planted", seed: "a single flag planted upright on a windswept ridge after a battle, broken weapons and helmets in foreground, dramatic dusk light, photorealistic" },
+      { key: "rose_in_desert", seed: "single perfect rose blooming through a crack in a vast cracked-mud desert plain, photorealistic, macro, golden hour" },
+      { key: "ship_among_wrecks", seed: "single ship sailing intact through a graveyard of shipwrecks visible at low tide, photorealistic, atmospheric" },
+      { key: "trophy_only_one", seed: "single championship trophy displayed in a vast empty trophy case with dozens of empty shelves, dramatic spotlight, photorealistic" },
+    ],
   },
   {
-    key: "shark_warning",
-    seed: "extreme close-up of a great white shark's open mouth and rows of teeth, viewed from below, dark blue water, light rays, photorealistic, ominous",
+    key: "predator_watch",
+    message: "Watch out. Hidden danger circling. Look closer before you trust.",
     mapsTo: "filters_part_time",
     tone: "warning, watch out for predators",
+    visuals: [
+      { key: "shark_below", seed: "extreme close-up of a great white shark's open mouth and rows of teeth, viewed from below, dark blue water, light rays piercing down, photorealistic, ominous" },
+      { key: "wolf_in_fleece", seed: "wolf wearing a sheep's fleece draped over its back, standing among real sheep in a field, golden hour, photorealistic" },
+      { key: "snake_in_grass", seed: "venomous snake coiled motionless and almost invisible in tall grass, only its eyes and tongue visible, photorealistic, macro" },
+      { key: "vultures_circling", seed: "low-angle silhouette of vultures circling overhead against a blazing sun in a clear sky, photorealistic, ominous" },
+      { key: "spider_web_dawn", seed: "ornate spider web glistening with dew at dawn, the spider hidden waiting at the corner, photorealistic, macro" },
+      { key: "shark_fin_surface", seed: "ominous shark fin breaking the surface of a calm sunset ocean, distant beach silhouettes, photorealistic" },
+      { key: "alligator_eyes_swamp", seed: "only the eyes and ridge of an alligator visible above a still swamp surface at dusk, photorealistic" },
+      { key: "trojan_horse", seed: "ornate wooden horse statue at city gates at dawn, defenders unaware, photorealistic, cinematic" },
+    ],
   },
   {
-    key: "sloth_slow",
-    seed: "extreme macro close-up portrait of a three-toed sloth's face, slow-blinking eyes, soft jungle backlight, mossy fur detail, photorealistic",
-    mapsTo: "pre_interviewed",
-    tone: "pointed, slow agents lose deals",
+    key: "right_tool",
+    message: "The right tool for your specific situation. Generic doesn't fit.",
+    mapsTo: "situation_goals",
+    tone: "precision, specificity, fit-for-purpose",
+    visuals: [
+      { key: "scalpel_vs_butter", seed: "side-by-side studio shot of a precision surgical scalpel next to a dull butter knife on a clean white surface, dramatic side light, photorealistic, macro" },
+      { key: "swiss_army_open", seed: "swiss army knife with every tool unfolded, studio lit on dark slate, photorealistic, macro" },
+      { key: "bespoke_suit_form", seed: "tailor's measuring tape draped over a perfectly cut bespoke suit on a wooden form, soft window light in an atelier, photorealistic" },
+      { key: "right_key", seed: "ring of dozens of mismatched keys with one single golden key being lifted away, photorealistic, macro" },
+      { key: "chef_knife_row", seed: "row of professional chef knives by size on a magnetic strip, single one missing from the lineup, photorealistic" },
+      { key: "puzzle_last_piece", seed: "single puzzle piece hovering above the one empty slot in a nearly-complete jigsaw puzzle, macro, photorealistic" },
+      { key: "lens_kit", seed: "optometrist's lens kit with one perfect lens highlighted by a dramatic beam of light, photorealistic, macro" },
+      { key: "tailored_glove", seed: "perfectly fitted leather glove being slid onto a hand, soft natural light, photorealistic, macro" },
+      { key: "right_size_wrench", seed: "row of wrenches arranged by size with one being lifted from the lineup, dramatic workshop lighting, photorealistic" },
+    ],
   },
   {
-    key: "performer_vs_poser",
-    seed: "studio shot of a majestic great dane standing tall next to a tiny chihuahua wearing an oversized business suit, neutral seamless backdrop, photorealistic",
-    mapsTo: "top_performers",
-    tone: "performer-vs-poser, side-by-side comparison",
-  },
-  {
-    key: "exploding_home",
-    seed: "a suburban American home mid-explosion captured at the peak frame, debris and shingles frozen in midair, fire and smoke billowing, dramatic golden-hour lighting, photorealistic",
-    mapsTo: "why_quality_matters",
-    tone: "high-stakes, what happens with the wrong agent",
+    key: "hidden_value",
+    message: "Most of the value is below the surface. The visible part is the small part.",
+    mapsTo: "proven_reviews",
+    tone: "depth, what's underneath, the unseen 90%",
+    visuals: [
+      { key: "iceberg_underwater", seed: "iceberg from a cross-section perspective showing the small visible peak above the waterline and the massive blue-tinged mass extending down underwater, photorealistic, dramatic" },
+      { key: "tree_roots", seed: "cross-section view of a mature tree showing its root system extending down into the earth as deep and wide as the canopy is tall, photoreal illustration" },
+      { key: "geyser_eruption", seed: "dramatic close-up of a geyser at the moment of eruption, plumes of steam catching morning light, photorealistic" },
+      { key: "oil_rig_cross_section", seed: "cross-section illustration of an offshore oil rig — the platform tiny above water and the structure extending hundreds of feet below to the seabed, photorealistic" },
+      { key: "foundation_layers", seed: "cross-section view of a building foundation cut away, showing the massive concrete and steel reinforcement below ground supporting the modest house above, photorealistic" },
+      { key: "whale_under_surface", seed: "single whale tail breaching above the ocean surface, faint massive silhouette of the whole whale visible underwater below, photorealistic" },
+      { key: "swan_paddling", seed: "split-level shot of a swan gliding serenely above water with its feet paddling furiously below the surface, photorealistic" },
+    ],
   },
 ];
 

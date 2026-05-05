@@ -1,8 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { SYSTEM_PROMPT } from "./prompts/system";
-import { CONTENT_TYPE_SPECS, AI_POSTER_CONCEPTS } from "./prompts/content-types";
+import { CONTENT_TYPE_SPECS, AI_POSTER_THEMES } from "./prompts/content-types";
+import { FUNNY_COMMERCIAL_THEMES } from "./prompts/funny-commercial-themes";
 import { buildCaption, CTA_TEXT, stripDashes } from "./copy";
-import { getRecentScheduledConcepts } from "./scheduledConcepts";
+import {
+  getRecentGeneratedConcepts,
+  getRecentScheduledConcepts,
+  recordGeneratedConcepts,
+} from "./scheduledConcepts";
 import {
   LANGUAGE_LABELS,
   type AiPosterGraphicData,
@@ -696,31 +701,65 @@ const AI_POSTER_TARGET_ANGLES = [
 async function generateAiPosterBatch(language: Language): Promise<GenerateBatchResponse> {
   const captionContentType = captionContentTypeFor("ai_poster");
 
-  // Show the full seed library as a vibe reference. Claude is told
-  // to use 2-3 of these as direct inspiration AND invent 3-4 brand-new
-  // metaphors so each batch stretches the visual range. Per the user
-  // (2026-05-04): "we're not limited to 8 types".
-  const seedLibrary = AI_POSTER_CONCEPTS.map(
-    (c, i) =>
-      `${i + 1}. ${c.key} (mapsTo=${c.mapsTo}, tone=${c.tone})\n   visual: ${c.seed}`,
-  ).join("\n");
+  // Theme library: each theme conveys a message and offers many
+  // visual realizations. Claude picks DIFFERENT themes for the batch
+  // (one card per theme) and picks a visual within each theme — that's
+  // where the rotation comes from. Showing all visuals upfront lets
+  // Claude pick a fresh one each batch instead of always reaching for
+  // the first/easiest seed (which is what was shipping the same
+  // tiger / chameleon / scalpel three batches in a row).
+  const themeLibrary = AI_POSTER_THEMES.map((t, i) => {
+    const visuals = t.visuals
+      .map((v) => `      - ${t.key}:${v.key} → ${v.seed}`)
+      .join("\n");
+    return `${i + 1}. THEME ${t.key}  (mapsTo=${t.mapsTo}, tone=${t.tone})
+   message: ${t.message}
+   visual options:
+${visuals}`;
+  }).join("\n\n");
   const angleList = AI_POSTER_TARGET_ANGLES.map((a) => `  - ${a}`).join("\n");
 
-  // Cooldown: skip concepts the user has scheduled in the last 14
-  // days so each new batch produces fresh visuals. Best-effort —
-  // tracker read failures don't block batch generation.
-  const recentlyScheduled = await getRecentScheduledConcepts(14).catch(() => []);
-  const cooldownLine =
+  // Two cooldowns:
+  //   - SCHEDULED (14 days): the user actually queued these to Buffer.
+  //     Strong signal — avoid the conceptKey AND visually-similar
+  //     metaphors.
+  //   - GENERATED (5 days): we already showed these in a recent batch.
+  //     Softer signal — just don't repeat the same conceptKey, and
+  //     prefer untouched themes when possible.
+  // Both reads are best-effort; tracker failures never block the batch.
+  const [recentlyScheduled, recentlyGenerated] = await Promise.all([
+    getRecentScheduledConcepts(14).catch(() => []),
+    getRecentGeneratedConcepts(5).catch(() => []),
+  ]);
+
+  // Compute which themes have shown up recently (any visual under a
+  // theme counts as the theme being "warm"). Helps Claude prefer
+  // dormant themes for the next batch.
+  const recentlyUsedThemeKeys = new Set<string>();
+  for (const k of recentlyGenerated) {
+    const themeKey = k.includes(":") ? k.split(":")[0] : k;
+    recentlyUsedThemeKeys.add(themeKey);
+  }
+  const dormantThemes = AI_POSTER_THEMES.map((t) => t.key).filter(
+    (k) => !recentlyUsedThemeKeys.has(k),
+  );
+
+  const scheduledBlock =
     recentlyScheduled.length > 0
-      ? `\n\nCOOLDOWN — DO NOT REPEAT (the user already scheduled these in the last 14 days):
+      ? `\n\nSCHEDULED COOLDOWN — DO NOT REPEAT (the user already queued these to Buffer in the last 14 days):
 ${recentlyScheduled.map((k) => `  - ${k}`).join("\n")}
-Skip these conceptKeys exactly AND avoid visually-similar metaphors. Examples of "similar":
-  - apex_predator on the list → avoid ALL big-cat metaphors (lion, jaguar, leopard, etc.)
-  - chameleon_pretender on the list → avoid ALL "animal in a suit" metaphors
-  - matchstick_in_stadium on the list → avoid any "single light in a dark vast space" metaphor
-  - lone_survivor on the list → avoid any "one untouched home in destruction" metaphor
-  - iceberg_* on the list → avoid all iceberg/glacier metaphors
-Pick a different seed OR invent a metaphor in fresh visual territory.`
+Skip these conceptKeys exactly AND avoid visually-similar realizations within the same theme.`
+      : "";
+
+  const generatedBlock =
+    recentlyGenerated.length > 0
+      ? `\n\nRECENTLY SHOWN — pick something else (these appeared in batches over the last 5 days):
+${recentlyGenerated.map((k) => `  - ${k}`).join("\n")}
+For each theme, prefer a visual option you have NOT used recently. ${
+          dormantThemes.length > 0
+            ? `Themes the user hasn't seen lately: ${dormantThemes.join(", ")} — favor these.`
+            : ""
+        }`
       : "";
 
   const prompt = `${buildBaseHeader(language, "ai_poster")}
@@ -733,33 +772,35 @@ Hard rules:
 - Each card in the batch should feel like a different ad in the same campaign — vary subject category (animals / landscape / surreal scene / object), framing, lighting, and tone across the 6 cards.
 - Every metaphor must clearly argue for ONE of the brand value props (an angle from the list below).
 
-COMPOSE WITH INTENT (most important rule):
+HOW TO PICK YOUR ${GRAPHIC_BATCH_POSTS} CARDS (most important):
+- The theme library below is grouped by MESSAGE. Each theme has many visual realizations.
+- Step 1: pick ${GRAPHIC_BATCH_POSTS} DIFFERENT THEMES from the library. Never use the same theme twice in a single batch — the whole point of themes is to give the batch range.
+- Step 2: within each chosen theme, pick ONE visual option. Pick the one that fits the moment — variety across batches is the goal, so don't always pick the first option in the list. If a visual feels worn out, pick a different one within the same theme.
+- Step 3 (optional, only if you want to push the batch further): you may invent ONE fresh visual within an existing theme if none of the listed options feel right — but it must clearly fit that theme's message. Use a conceptKey of \`<themeKey>:<your_new_visual_key>\` so it's tracked correctly. Do NOT invent new themes.
+
+COMPOSE WITH INTENT (also important):
 - For each card, FIRST decide where the headline + subline will land — top of the frame OR bottom of the frame. This is the textZone field.
 - Then write the imagePrompt to honor that decision: place the FOCAL SUBJECT in the OPPOSITE zone (the bottom two-thirds if textZone=top; the upper two-thirds if textZone=bottom), and explicitly leave the textZone as CALM ATMOSPHERIC NEGATIVE SPACE — out-of-focus blur, soft gradient, atmospheric haze, dark void, cloud cover, or solid color. The text must have somewhere clean to land.
 - Examples of explicit composition language to include in imagePrompt: "subject anchored in lower two-thirds, upper third opens to soft hazy sky for typography"; "tight macro of the subject filling the upper portion, lower third fades to deep black void"; "subject left-of-center in bottom half, top half is empty atmospheric backdrop". Be this specific.
 - Vary textZone across the 6 cards — aim for roughly 3 top + 3 bottom so layouts feel different at a glance.
-- Some metaphors naturally suit one zone: extreme close-ups of eyes/faces tend to work top (subject in upper half, calm bottom) — like the tiger seed. Standing/centered subjects work bottom (subject anchored in upper, calm bottom). Pick what suits the metaphor.
+- Some metaphors naturally suit one zone: extreme close-ups of eyes/faces tend to work top (subject in upper half, calm bottom). Standing/centered subjects work bottom (subject anchored in upper, calm bottom). Pick what suits the metaphor.
 
-How to compose the batch:
-- Use 2-3 of the seed metaphors below as direct inspiration. You can rephrase the seed prompt; do NOT copy it verbatim.
-- INVENT 3-4 brand-new metaphors that fit the same vibe but aren't on the list. The bar: striking, unusual, instantly metaphorical, photographable. (Examples of fresh territory: an iceberg with most of its mass underwater for 'most of an agent's value is invisible'; a single matchstick lit in a dark stadium for 'one right agent in a market of thousands'; a chef's knife next to a butter knife for 'the right tool matters'; rotten apple in a perfect bushel for 'one bad apple kills the deal'. These are illustrative — your inventions should be different from these AND from the seeds.)
+THEME LIBRARY (pick ${GRAPHIC_BATCH_POSTS} different themes; one visual per theme):
+${themeLibrary}
 
-Seed library (use 2-3 as inspiration, invent the rest):
-${seedLibrary}
-
-Available value-prop angles (each card MUST tie its metaphor to one of these — pick the best fit for your metaphor):
-${angleList}${cooldownLine}
+Available value-prop angles (each card's angle MUST come from the chosen theme's mapsTo, OR a closely related angle from this list):
+${angleList}${scheduledBlock}${generatedBlock}
 
 For each card, write:
-- conceptKey: a short snake_case label for your metaphor (e.g., 'iceberg_hidden_mass', 'matchstick_in_stadium'). Use the exact seed key when reusing a seed.
-- angle: the angle this metaphor argues for, from the list above.
+- conceptKey: \`<themeKey>:<visualKey>\` exactly as shown in the library (e.g., 'the_best:tiger_macro', 'pretenders:chameleon_suit'). If you invent a fresh visual within a theme, use the form '<themeKey>:<your_new_visual_key>'.
+- angle: the angle this card argues for. Default to the theme's mapsTo, but you may pick a related one from the angles list if your copy genuinely speaks to it.
 - textZone: 'top' or 'bottom' — where the headline + subline will live on this card.
-- imagePrompt: 60-180 words describing the bare visual, WITH explicit composition guidance that honors textZone (subject in opposite zone, calm negative space in textZone). NO TEXT ANYWHERE IN THE IMAGE.
+- imagePrompt: 60-180 words describing the bare visual, WITH explicit composition guidance that honors textZone (subject in opposite zone, calm negative space in textZone). NO TEXT ANYWHERE IN THE IMAGE. You may rephrase / extend the seed; do NOT copy it verbatim.
 - headline: ≤5 words ending in . or ?
 - subline: ≤10 words supporting the headline + linking to the matching mission (top 10%, vetted, pre-interviewed, 4.8 stars, situation/price-fit).
 - body: 3-5 sentence IG caption tying the metaphor back to the angle.
 
-Return your results by calling the ${AI_POSTER_TOOL.name} tool — exactly ${GRAPHIC_BATCH_POSTS} entries.`;
+Return your results by calling the ${AI_POSTER_TOOL.name} tool — exactly ${GRAPHIC_BATCH_POSTS} entries, ${GRAPHIC_BATCH_POSTS} distinct themes.`;
 
   try {
     const raw = await callTool<RawAiPosterPost>(prompt, AI_POSTER_TOOL);
@@ -784,6 +825,10 @@ Return your results by calling the ${AI_POSTER_TOOL.name} tool — exactly ${GRA
         graphic,
       };
     });
+    // Record this batch's conceptKeys to the generation cooldown so
+    // the next batch rotates to fresh themes/visuals. Best-effort —
+    // a write failure here doesn't fail the user's request.
+    void recordGeneratedConcepts(raw.map((r) => r.conceptKey).filter((k): k is string => !!k));
     return { posts };
   } catch (e) {
     throw friendlyError(e);
@@ -799,6 +844,187 @@ export async function generateGraphicBatch(
     case "did_you_know":  return generateDykBatch(language);
     case "promo":         return generatePromoBatch(language);
     case "ai_poster":     return generateAiPosterBatch(language);
+  }
+}
+
+// ── Funny Commercial Scene 1 ────────────────────────────────────────
+//
+// A single absurd-scene pick per call: themeKey + visualKey (which seed
+// it's based on) + a fully-formed Nano Banana prompt. The cooldown
+// system uses keys prefixed with `fc:` so it shares the existing
+// generated-concepts manifest without colliding with AI-poster keys.
+
+const FC_SCENE1_TOOL = {
+  name: "funny_commercial_scene1_results",
+  description:
+    "Pick ONE absurd-scene idea for a Funny Commercial ad. The image will be generated by Nano Banana 2 and animated by Seedance into a 5-second clip. Pick a theme and a visual within that theme; you may reuse the seed verbatim or extend/rephrase it. The scene must be loud and disruptive — Scene 2 of the ad cuts to a person lying awake in bed listening to muffled noises through the wall, so anything that wouldn't shake an apartment is wrong.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      pick: {
+        type: "object",
+        properties: {
+          themeKey: {
+            type: "string",
+            description: "Echo the chosen theme's key exactly (e.g., 'apartment_animal').",
+          },
+          visualKey: {
+            type: "string",
+            description:
+              "Echo the visual's key exactly (e.g., 'elephant_dance'). If you invent a fresh visual within an existing theme, use a new lowercase snake_case key that fits the theme.",
+          },
+          imagePrompt: {
+            type: "string",
+            description:
+              "Fully-formed Nano Banana 2 prompt (60-180 words). Pure visual — NO TEXT, no signs, no logos, no captions, no readable typography of any kind. Vertical 9:16. Photorealistic. Describe subject, action, setting (an apartment at night), lighting, lens vibe, motion. The image will be the FIRST frame of a 5-second Seedance animation, so make sure it's a frame the camera can extend forward in time naturally (mid-action, motion blur where appropriate, the subject in the act of being noisy).",
+          },
+        },
+        required: ["themeKey", "visualKey", "imagePrompt"],
+      },
+    },
+    required: ["pick"],
+  },
+};
+
+export interface FunnyCommercialScene1Pick {
+  themeKey: string;
+  visualKey: string;
+  conceptKey: string;     // "<themeKey>:<visualKey>" with fc: prefix tracking
+  imagePrompt: string;
+}
+
+export async function generateFunnyCommercialScene1(
+  hint?: string,
+): Promise<FunnyCommercialScene1Pick> {
+  // Build the theme catalog. Mirrors the AI-poster theme prompt shape.
+  const themeLibrary = FUNNY_COMMERCIAL_THEMES.map((t, i) => {
+    const visuals = t.visuals
+      .map((v) => `      - ${t.key}:${v.key} → ${v.seed}`)
+      .join("\n");
+    return `${i + 1}. THEME ${t.key}  (tone=${t.tone})
+   premise: ${t.premise}
+   visual options:
+${visuals}`;
+  }).join("\n\n");
+
+  // Generation cooldown — keep the user from seeing the same scene
+  // (or even the same theme) on consecutive batches. Uses the shared
+  // generated-concepts manifest with an `fc:` prefix so AI poster
+  // history doesn't pollute it.
+  const recentlyGenerated = await getRecentGeneratedConcepts(7).catch(() => []);
+  const fcRecent = recentlyGenerated
+    .filter((k) => k.startsWith("fc:"))
+    .map((k) => k.slice(3));
+  const recentlyUsedThemeKeys = new Set<string>();
+  for (const k of fcRecent) {
+    const themeKey = k.includes(":") ? k.split(":")[0] : k;
+    recentlyUsedThemeKeys.add(themeKey);
+  }
+  const dormantThemes = FUNNY_COMMERCIAL_THEMES.map((t) => t.key).filter(
+    (k) => !recentlyUsedThemeKeys.has(k),
+  );
+
+  const cooldownBlock =
+    fcRecent.length > 0
+      ? `\n\nRECENTLY SHOWN — pick something else (these appeared in recent batches):
+${fcRecent.map((k) => `  - ${k}`).join("\n")}
+${dormantThemes.length > 0 ? `Themes the user hasn't seen lately: ${dormantThemes.join(", ")} — favor these.` : ""}`
+      : "";
+
+  const hintBlock = hint && hint.trim()
+    ? `\n\nUSER HINT (may steer the pick, but you still must pick a theme + visual from the library or invent within an existing theme):
+"${hint.trim()}"`
+    : "";
+
+  const prompt = `You are picking ONE Scene 1 idea for a Funny Commercial ad. The format is fixed:
+  Scene 1 (5s) — a loud absurd scene in an apartment. THIS is what you write.
+  Scene 2 (4s) — cut to a person lying awake in bed at night, hearing the muffled noises.
+  Scene 3 (3s) — black card, "Time to buy your own place?" → CTA.
+  Scene 4 (2s) — Agent Match logo.
+
+So Scene 1's job is ABSURD + LOUD. Anything that would shake the building, wake the neighbors, get someone evicted. Every theme below is built around that.
+
+How to pick:
+  1. Pick ONE theme from the library that fits.
+  2. Within that theme, pick ONE visual. Pick fresh — don't always reach for the first option.
+  3. (Optional) You may invent a new visual within an existing theme if none fits perfectly. Use a snake_case visualKey of your own. Do NOT invent new themes.
+  4. Write the imagePrompt — fully-formed, 60-180 words, photorealistic, vertical 9:16, describing a single first-frame moment that the Seedance animator can extend forward into 5 seconds of motion. NO TEXT IN THE IMAGE.
+
+THEME LIBRARY:
+${themeLibrary}${cooldownBlock}${hintBlock}
+
+Return your pick by calling the ${FC_SCENE1_TOOL.name} tool exactly once.`;
+
+  try {
+    const resp = await client().messages.create({
+      model: MODEL,
+      max_tokens: 2048,
+      system: [
+        { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+      ],
+      tools: [FC_SCENE1_TOOL as unknown as Anthropic.Messages.ToolUnion],
+      tool_choice: { type: "tool", name: FC_SCENE1_TOOL.name },
+      messages: [{ role: "user", content: prompt }],
+    });
+    const toolBlock = resp.content.find((b) => b.type === "tool_use");
+    if (!toolBlock || toolBlock.type !== "tool_use") {
+      throw new Error(
+        `${FC_SCENE1_TOOL.name} returned no tool_use block (stop_reason=${resp.stop_reason})`,
+      );
+    }
+    const input = toolBlock.input as { pick?: { themeKey?: string; visualKey?: string; imagePrompt?: string } };
+    const pick = input.pick;
+    if (!pick || !pick.themeKey || !pick.visualKey || !pick.imagePrompt) {
+      throw new Error(
+        `${FC_SCENE1_TOOL.name} tool call missing pick fields (stop_reason=${resp.stop_reason})`,
+      );
+    }
+    const themeKey = pick.themeKey.trim();
+    const visualKey = pick.visualKey.trim();
+    const imagePrompt = stripDashes(pick.imagePrompt).trim();
+    const conceptKey = `${themeKey}:${visualKey}`;
+    // Record under fc: prefix so the cooldown does not pollute the
+    // AI poster keyspace.
+    void recordGeneratedConcepts([`fc:${conceptKey}`]);
+    return { themeKey, visualKey, conceptKey, imagePrompt };
+  } catch (e) {
+    throw friendlyError(e);
+  }
+}
+
+// Lightweight translator. The Funny Commercial Scene 3 CTA is authored
+// in English, then auto-translated into the active language at render
+// time. Translations are short — Haiku is plenty.
+const TRANSLATE_MODEL = "claude-haiku-4-5-20251001";
+const TRANSLATE_LANG_LABEL: Record<"tl" | "es" | "zh", string> = {
+  tl: "Tagalog (as spoken in the Philippines)",
+  es: "Spanish (Latin American, neutral)",
+  zh: "Mandarin Chinese (Simplified, mainland)",
+};
+
+export async function translateText(
+  text: string,
+  targetLanguage: "tl" | "es" | "zh",
+): Promise<string> {
+  const prompt = `Translate the following short English marketing line into ${TRANSLATE_LANG_LABEL[targetLanguage]}. Preserve tone and meaning. Return ONLY the translated text, no quotes, no explanation, no transliteration. Keep brand names like "Agent Match" untranslated.
+
+English:
+${text.trim()}`;
+  try {
+    const resp = await client().messages.create({
+      model: TRANSLATE_MODEL,
+      max_tokens: 512,
+      system:
+        "You are a careful, idiomatic translator. You return ONLY the translated text, never quotation marks, never explanations.",
+      messages: [{ role: "user", content: prompt }],
+    });
+    const textBlock = resp.content.find((b) => b.type === "text");
+    if (!textBlock || textBlock.type !== "text") {
+      throw new Error("Translation returned no text block");
+    }
+    return textBlock.text.trim();
+  } catch (e) {
+    throw friendlyError(e);
   }
 }
 

@@ -124,6 +124,45 @@ export async function startVideoRender(args: {
   return res.json();
 }
 
+// Funny Commercial render. Same /render endpoint, mode-dispatched on
+// the worker. clipUrls = [scene1Url, scene2ActorUrl] in scene order.
+// Scene 3 (black + CTA) and Scene 4 (logo) are baked into the worker.
+export async function startFunnyCommercialRender(args: {
+  language: Language;
+  scene1VideoUrl: string;
+  scene2VideoUrl: string;
+  scene2Text: string;
+  scene3Text: string;        // already translated to the active language
+  scene1DurationS?: number;
+  scene2DurationS?: number;
+  scene3DurationS?: number;
+  scene4DurationS?: number;
+  musicTrackUrl?: string | null;
+}): Promise<{ jobId: string }> {
+  const res = await fetch("/api/video/render", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      script: "",                       // unused for funny_commercial; route accepts empty
+      language: args.language,
+      contentType: "good_agents",       // caption framing fallback
+      clipUrls: [args.scene1VideoUrl, args.scene2VideoUrl],
+      mode: "funny_commercial",
+      fcScene2Text: args.scene2Text,
+      fcScene3Text: args.scene3Text,
+      fcScene1DurationS: args.scene1DurationS,
+      fcScene2DurationS: args.scene2DurationS,
+      fcScene3DurationS: args.scene3DurationS,
+      fcScene4DurationS: args.scene4DurationS,
+      fcMusicTrackUrl: args.musicTrackUrl ?? null,
+    }),
+  });
+  if (!res.ok) {
+    throw new Error((await res.json().catch(() => ({}))).error ?? "render failed");
+  }
+  return res.json();
+}
+
 // Influencer-mode render. Same /render endpoint, mode-dispatched on the
 // worker. clipUrls here is the middle filler list (1..INFLUENCER_MIDDLE_MAX).
 export async function startInfluencerRender(args: {

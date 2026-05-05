@@ -327,6 +327,200 @@ export async function compose(args: ComposeArgs): Promise<void> {
   await runFfmpeg(ffArgs, cwd);
 }
 
+// ── Funny Commercial compose ───────────────────────────────────────
+//
+// Single-pass compose for the 4-scene comedic ad:
+//   Scene 1 (5s default): scene1.mp4 (Seedance-animated absurd scene),
+//     native audio passes through.
+//   Scene 2 (4s default): scene2-actor.mp4 (person lying in bed, often
+//     near-static), audio = scene1's native audio low-pass-filtered to
+//     ~400Hz (the "muffled noises through the wall" gag) at reduced
+//     volume.
+//   Scene 3 (3s default): solid black, centered translated CTA text
+//     burned in via the ASS subtitles file. Silent.
+//   Scene 4 (2s default): solid black with the brand outro logo
+//     centered. Silent.
+//
+// All scenes are scaled/cropped to 1080x1920 and concatenated. ASS
+// subtitles are burned over the concatenated stream. Optional music
+// track plays at low volume across the whole ad.
+
+const FC_DEFAULT_SCENE1_S = 5;
+const FC_DEFAULT_SCENE2_S = 4;
+const FC_DEFAULT_SCENE3_S = 3;
+const FC_DEFAULT_SCENE4_S = 2;
+const FC_MUFFLED_LOWPASS_HZ = 400;
+const FC_MUFFLED_VOLUME = 0.45;
+const FC_MUSIC_VOLUME = 0.18;
+
+export interface ComposeFunnyCommercialArgs {
+  scene1Path: string;
+  scene2Path: string;
+  outroLogoPath?: string | null;     // PNG with transparent or solid bg
+  assPath: string;                   // ASS file with the two text overlays
+  fontsDir: string;
+  outPath: string;
+  scene1DurationS?: number;
+  scene2DurationS?: number;
+  scene3DurationS?: number;
+  scene4DurationS?: number;
+  musicPath?: string | null;
+}
+
+export async function composeFunnyCommercial(args: ComposeFunnyCommercialArgs): Promise<void> {
+  const s1 = args.scene1DurationS ?? FC_DEFAULT_SCENE1_S;
+  const s2 = args.scene2DurationS ?? FC_DEFAULT_SCENE2_S;
+  const s3 = args.scene3DurationS ?? FC_DEFAULT_SCENE3_S;
+  const s4 = args.scene4DurationS ?? FC_DEFAULT_SCENE4_S;
+  const total = s1 + s2 + s3 + s4;
+
+  const cwd = dirname(args.assPath);
+  const assRel = basename(args.assPath);
+  const escapedAss = escapeForFilter(assRel);
+  const escapedFonts = escapeForFilter(args.fontsDir);
+
+  // Outro logo lookup: caller-supplied → bundled assets dir → fall back
+  // to "no logo" (just black for Scene 4).
+  let outroLogoPath: string | null = args.outroLogoPath ?? null;
+  if (!outroLogoPath) {
+    const candidate = join(ASSETS_DIR, "outro.png");
+    if (await fileExists(candidate)) outroLogoPath = candidate;
+  } else if (!(await fileExists(outroLogoPath))) {
+    outroLogoPath = null;
+  }
+
+  let musicPath: string | null = args.musicPath ?? null;
+  if (musicPath && !(await fileExists(musicPath))) {
+    musicPath = null;
+  }
+
+  // Build inputs in this order: scene1, scene2, [outroLogo], silenceSrc, [music].
+  const inputs: string[] = [
+    "-i", args.scene1Path,
+    "-i", args.scene2Path,
+  ];
+  let nextIdx = 2;
+  let outroLogoIdx: number | null = null;
+  if (outroLogoPath) {
+    outroLogoIdx = nextIdx;
+    inputs.push("-loop", "1", "-t", s4.toFixed(3), "-i", outroLogoPath);
+    nextIdx += 1;
+  }
+  // Silence covers Scenes 3 + 4 (text overlay only, no diegetic audio).
+  const silenceLengthS = s3 + s4;
+  const silenceIdx = nextIdx;
+  inputs.push(
+    "-f", "lavfi",
+    "-t", silenceLengthS.toFixed(3),
+    "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+  );
+  nextIdx += 1;
+  let musicIdx: number | null = null;
+  if (musicPath) {
+    musicIdx = nextIdx;
+    inputs.push("-stream_loop", "-1", "-i", musicPath);
+    nextIdx += 1;
+  }
+
+  const chains: string[] = [];
+
+  // ── Video ────────────────────────────────────────────────────────
+  // Scene 1 visual: trim to s1, scale/crop to 1080x1920.
+  chains.push(
+    `[0:v]trim=duration=${s1.toFixed(3)},setpts=PTS-STARTPTS,` +
+      `scale=1080:1920:force_original_aspect_ratio=increase,` +
+      `crop=1080:1920,setsar=1,fps=30,format=yuv420p[v1]`,
+  );
+  // Scene 2 visual: same.
+  chains.push(
+    `[1:v]trim=duration=${s2.toFixed(3)},setpts=PTS-STARTPTS,` +
+      `scale=1080:1920:force_original_aspect_ratio=increase,` +
+      `crop=1080:1920,setsar=1,fps=30,format=yuv420p[v2]`,
+  );
+  // Scene 3: solid black for s3 seconds.
+  chains.push(
+    `color=c=black:s=1080x1920:d=${s3.toFixed(3)}:r=30,format=yuv420p,setsar=1[v3]`,
+  );
+  // Scene 4: solid black for s4 seconds, optionally with the logo overlaid
+  // centered. Logo is constrained to ~70% of the canvas width.
+  if (outroLogoIdx !== null) {
+    chains.push(
+      `color=c=black:s=1080x1920:d=${s4.toFixed(3)}:r=30,format=yuv420p,setsar=1[v4_bg]`,
+    );
+    chains.push(
+      `[${outroLogoIdx}:v]scale=756:-1:force_original_aspect_ratio=decrease,format=rgba[v4_logo]`,
+    );
+    chains.push(
+      `[v4_bg][v4_logo]overlay=(W-w)/2:(H-h)/2:format=auto[v4]`,
+    );
+  } else {
+    chains.push(
+      `color=c=black:s=1080x1920:d=${s4.toFixed(3)}:r=30,format=yuv420p,setsar=1[v4]`,
+    );
+  }
+  chains.push(`[v1][v2][v3][v4]concat=n=4:v=1:a=0[vcat]`);
+  chains.push(
+    `[vcat]subtitles=filename='${escapedAss}':fontsdir='${escapedFonts}',format=yuv420p,setsar=1[v_final]`,
+  );
+
+  // ── Audio ────────────────────────────────────────────────────────
+  // Tap scene1's native audio twice via asplit:
+  //   • Branch A → Scene 1's diegetic audio (full quality, trimmed to s1).
+  //   • Branch B → Scene 2's "muffled through the wall" backing (lowpass
+  //     + volume drop, trimmed to s2). Same source = perceptually
+  //     continuous between scenes 1 and 2.
+  chains.push(
+    `[0:a]aresample=async=1:first_pts=0,asplit=2[a0_clean][a0_dup]`,
+  );
+  chains.push(
+    `[a0_clean]atrim=duration=${s1.toFixed(3)},asetpts=PTS-STARTPTS,` +
+      `aformat=sample_rates=44100:channel_layouts=stereo,apad=whole_dur=${s1.toFixed(3)}[a1]`,
+  );
+  chains.push(
+    `[a0_dup]atrim=duration=${s2.toFixed(3)},asetpts=PTS-STARTPTS,` +
+      `lowpass=f=${FC_MUFFLED_LOWPASS_HZ},volume=${FC_MUFFLED_VOLUME.toFixed(3)},` +
+      `aformat=sample_rates=44100:channel_layouts=stereo,apad=whole_dur=${s2.toFixed(3)}[a2]`,
+  );
+  // Scenes 3 + 4: silence (already a single anullsrc input of length s3+s4).
+  chains.push(
+    `[${silenceIdx}:a]aformat=sample_rates=44100:channel_layouts=stereo[a34]`,
+  );
+  chains.push(`[a1][a2][a34]concat=n=3:v=0:a=1[a_voice]`);
+
+  // Optional music bed (mixed under everything).
+  let audioFinalLabel = "a_voice";
+  if (musicIdx !== null) {
+    const musicFadeStart = Math.max(0, total - 0.6);
+    chains.push(
+      `[${musicIdx}:a]aformat=sample_rates=44100:channel_layouts=stereo,` +
+        `volume=${FC_MUSIC_VOLUME.toFixed(3)},` +
+        `atrim=duration=${total.toFixed(3)},asetpts=PTS-STARTPTS,` +
+        `afade=type=out:start_time=${musicFadeStart.toFixed(3)}:duration=0.6[a_music]`,
+    );
+    chains.push(
+      `[a_voice][a_music]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a_final]`,
+    );
+    audioFinalLabel = "a_final";
+  }
+
+  await runFfmpeg(
+    [
+      "-hide_banner", "-loglevel", "error", "-y",
+      ...inputs,
+      "-filter_complex", chains.join(";"),
+      "-map", "[v_final]",
+      "-map", `[${audioFinalLabel}]`,
+      "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+      "-pix_fmt", "yuv420p",
+      "-c:a", "aac", "-b:a", "128k",
+      "-r", "30",
+      "-movflags", "+faststart",
+      args.outPath,
+    ],
+    cwd,
+  );
+}
+
 // ── Influencer compose (segmented render) ──────────────────────────
 //
 // To keep the outro's lip-sync deterministic regardless of the AI
