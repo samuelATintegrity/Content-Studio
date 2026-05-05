@@ -129,6 +129,8 @@ ${angleList}
 
 Reminder: every headline MUST contain the topic anchor (e.g. "$0 down", "USDA", "DPA", "your language", "agent"). Translate the headline into the requested language while keeping the anchor intact (e.g. "$0 Down" or "agent" stays as the literal anchor even in Tagalog/Spanish/Mandarin posts where the rest of the headline is translated).
 
+ALSO PICK textZone for each post — 'top' or 'bottom'. This is where the headline + cta will be composited on the photo, and it drives how we generate the AI image (subject placed in the OPPOSITE zone so the typography lands on calm pixels). Pick whichever zone fits the angle's tone — hopeful or aspirational angles tend to read well at top; stakes-heavy or contrarian angles at bottom. CRITICAL: vary across the batch — aim for a roughly even mix of top and bottom across the ${STATIC_BATCH_POSTS} posts so the rendered strip feels visually different at a glance. Do not pick all top or all bottom.
+
 Return your results by calling the post_results tool.`;
 }
 
