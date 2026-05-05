@@ -236,18 +236,41 @@ export async function composeGraphicDataUrl(graphic: GraphicData): Promise<strin
 // the client) to R2 and return its public URL. Buffer's GraphQL API
 // needs a public URL for the image asset, so this is the prerequisite
 // step before the Send-to-Buffer flow on graphic posts.
+//
+// Reads the body as text first and parses it as JSON ourselves rather
+// than calling res.json() directly. When something between the client
+// and the route corrupts the response (Vercel edge inserting an HTML
+// error page, mobile carrier middlebox swapping bytes, body truncation
+// on a slow link, etc.) we want a useful error string, not a cryptic
+// "Unexpected token 'e' is not valid JSON".
 export async function uploadStaticImage(dataUrl: string): Promise<{ cachedUrl: string }> {
   const blob = dataUrlToBlob(dataUrl);
-  const res = await fetch("/api/static/upload-image", {
+  const res = await fetchWithRetry("/api/static/upload-image", {
     method: "POST",
     headers: { "content-type": blob.type || "image/png" },
     body: blob,
+    label: "Upload image",
+    // Generous: a slow mobile uplink on a 2-3 MB PNG can take 20s+
+    // before any reply, and we don't want to give up before the
+    // server has even started reading the body.
+    retries: 1,
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: "upload failed" }));
-    throw new Error(err.error ?? "upload failed");
+  const text = await res.text();
+  let parsed: { cachedUrl?: string; error?: string } | null = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // Body is not JSON — surface a slice of what came back so we can
+    // see whether it's an HTML error page, an edge-served notice, etc.
+    const preview = text.slice(0, 120).replace(/\s+/g, " ").trim();
+    throw new Error(
+      `Upload failed: server returned non-JSON (HTTP ${res.status}). First bytes: "${preview}"`,
+    );
   }
-  return res.json();
+  if (!res.ok || !parsed?.cachedUrl) {
+    throw new Error(parsed?.error ?? `Upload failed (HTTP ${res.status})`);
+  }
+  return { cachedUrl: parsed.cachedUrl };
 }
 
 export function dataUrlToBlob(dataUrl: string): Blob {
