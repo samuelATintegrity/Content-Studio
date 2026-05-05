@@ -9,16 +9,81 @@ interface PhotoResp {
   sourceUrl: string;
 }
 
+// iOS Safari aggressively kills long-running fetches and surfaces a
+// generic TypeError("Load failed") whenever the connection is closed
+// before the response arrives — common on cellular, after a tab
+// background, or on Wi-Fi/cellular handoff. This helper retries
+// transient network failures with exponential backoff and translates
+// the iOS error into something a user can act on.
+//
+// Only network-level errors are retried. A 4xx/5xx response means the
+// server actually replied — those are surfaced immediately so the
+// caller can read the JSON error body.
+function isTransientNetworkError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  if (err.name === "AbortError") return true;
+  // iOS Safari: "Load failed" / "The network connection was lost."
+  // Chrome / Firefox: "Failed to fetch" / "NetworkError when attempting to fetch resource."
+  // All TypeError, all the same root cause.
+  const msg = err.message.toLowerCase();
+  return (
+    err.name === "TypeError" &&
+    (msg.includes("load failed") ||
+      msg.includes("failed to fetch") ||
+      msg.includes("networkerror") ||
+      msg.includes("network connection"))
+  );
+}
+
+function friendlyNetworkError(err: unknown, label: string): Error {
+  if (isTransientNetworkError(err)) {
+    return new Error(
+      `${label}: connection dropped. Please retry — if you're on cellular, try Wi-Fi.`,
+    );
+  }
+  return err instanceof Error ? err : new Error(`${label}: ${String(err)}`);
+}
+
+interface FetchWithRetryOptions extends RequestInit {
+  retries?: number;
+  retryDelayMs?: number;
+  label?: string;
+}
+
+export async function fetchWithRetry(
+  url: string,
+  options: FetchWithRetryOptions = {},
+): Promise<Response> {
+  const { retries = 2, retryDelayMs = 1500, label = url, ...init } = options;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fetch(url, init);
+    } catch (err) {
+      lastErr = err;
+      if (!isTransientNetworkError(err)) throw err;
+      if (attempt < retries) {
+        // Exponential-ish backoff: 1.5s, 3s. Long enough for a cellular
+        // hiccup to recover but short enough that the user doesn't give up.
+        await new Promise((r) => setTimeout(r, retryDelayMs * (attempt + 1)));
+        continue;
+      }
+    }
+  }
+  throw friendlyNetworkError(lastErr, label);
+}
+
 export async function fetchBatchCopy(
   language: Language,
   contentType: ContentType,
   staticSubMode?: StaticSubMode,
   graphicTemplate?: GraphicTemplate,
 ): Promise<GenerateBatchResponse> {
-  const res = await fetch("/api/generate-batch", {
+  const res = await fetchWithRetry("/api/generate-batch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ language, contentType, staticSubMode, graphicTemplate }),
+    label: "Generate batch",
   });
   if (!res.ok) throw new Error((await res.json()).error ?? "generate-batch failed");
   return res.json();
@@ -29,10 +94,11 @@ export async function fetchOneCopy(
   contentType: ContentType,
   angleKey: string,
 ): Promise<Post> {
-  const res = await fetch("/api/generate-batch", {
+  const res = await fetchWithRetry("/api/generate-batch", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ language, contentType, angleKey }),
+    label: "Regenerate copy",
   });
   if (!res.ok) throw new Error((await res.json()).error ?? "regenerate-copy failed");
   const data = (await res.json()) as { posts: Post[] };
@@ -40,10 +106,11 @@ export async function fetchOneCopy(
 }
 
 export async function fetchAiImage(prompt: string): Promise<{ url: string }> {
-  const res = await fetch("/api/ai-image", {
+  const res = await fetchWithRetry("/api/ai-image", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ prompt }),
+    label: "AI image",
   });
   if (!res.ok) throw new Error((await res.json()).error ?? "ai-image failed");
   return res.json();
@@ -75,10 +142,11 @@ export async function fetchPhotoFor(
   contentType: ContentType,
   excludeIds: number[],
 ): Promise<PhotoResp> {
-  const res = await fetch("/api/photo", {
+  const res = await fetchWithRetry("/api/photo", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ contentType, excludeIds }),
+    label: "Photo lookup",
   });
   if (!res.ok) throw new Error((await res.json()).error ?? "photo fetch failed");
   return res.json();
@@ -93,10 +161,11 @@ export async function composeImageDataUrl(args: {
   fitMode?: FitMode;
   style?: StyleVariant;
 }): Promise<string> {
-  const res = await fetch("/api/compose", {
+  const res = await fetchWithRetry("/api/compose", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(args),
+    label: "Render image",
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: "compose failed" }));
@@ -112,10 +181,11 @@ export async function composeImageDataUrl(args: {
 }
 
 export async function composeGraphicDataUrl(graphic: GraphicData): Promise<string> {
-  const res = await fetch("/api/compose-graphic", {
+  const res = await fetchWithRetry("/api/compose-graphic", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ graphic }),
+    label: "Render graphic",
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: "compose-graphic failed" }));
