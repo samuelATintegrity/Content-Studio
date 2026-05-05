@@ -598,48 +598,63 @@ Return your results by calling the ${PROMO_TOOL.name} tool.`;
   }
 }
 
-// Pick GRAPHIC_BATCH_POSTS distinct concepts from AI_POSTER_CONCEPTS
-// for one batch. Shuffles per-call so the same UI-driven generate
-// doesn't always lead with the same metaphor. If we ever have fewer
-// concepts than batch posts, the picker wraps with replacement —
-// today we have 8 concepts vs 6 cards so wrap never triggers.
-function pickAiPosterConcepts(): typeof AI_POSTER_CONCEPTS {
-  const pool = AI_POSTER_CONCEPTS.slice();
-  for (let i = pool.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [pool[i], pool[j]] = [pool[j], pool[i]];
-  }
-  return Array.from({ length: GRAPHIC_BATCH_POSTS }, (_, i) => pool[i % pool.length]);
-}
+// Available good_agents angles the AI poster can target — Claude
+// invents the metaphor and picks which value-prop angle the metaphor
+// argues for. Keep this list short and mission-flavored; the stat_*
+// angles are reserved for the stat template.
+const AI_POSTER_TARGET_ANGLES = [
+  "top_performers",
+  "proven_reviews",
+  "pre_interviewed",
+  "filters_part_time",
+  "why_quality_matters",
+  "situation_goals",
+  "price_match",
+  "buy_sell_focus",
+] as const;
 
 async function generateAiPosterBatch(language: Language): Promise<GenerateBatchResponse> {
   const captionContentType = captionContentTypeFor("ai_poster");
-  const concepts = pickAiPosterConcepts();
-  const conceptList = concepts
-    .map(
-      (c, i) =>
-        `${i + 1}. concept="${c.key}" (maps to angle "${c.mapsTo}")\n   seed: ${c.seed}\n   tone: ${c.tone}`,
-    )
-    .join("\n");
+
+  // Show the full seed library as a vibe reference. Claude is told
+  // to use 2-3 of these as direct inspiration AND invent 3-4 brand-new
+  // metaphors so each batch stretches the visual range. Per the user
+  // (2026-05-04): "we're not limited to 8 types".
+  const seedLibrary = AI_POSTER_CONCEPTS.map(
+    (c, i) =>
+      `${i + 1}. ${c.key} (mapsTo=${c.mapsTo}, tone=${c.tone})\n   visual: ${c.seed}`,
+  ).join("\n");
+  const angleList = AI_POSTER_TARGET_ANGLES.map((a) => `  - ${a}`).join("\n");
 
   const prompt = `${buildBaseHeader(language, "ai_poster")}
 
-This batch generates ${GRAPHIC_BATCH_POSTS} AI-poster cards. Each card pairs a striking, scroll-stopping AI-generated image with a sharp branded tagline. The IMAGE and the TEXT are now generated separately — the image model gets ONLY a visual prompt (no words to render), and we composite the headline + subline ourselves with our own typography. Implications:
+This batch generates ${GRAPHIC_BATCH_POSTS} AI-poster cards. Each card pairs a striking, scroll-stopping AI-generated image with a sharp branded tagline. The IMAGE and the TEXT are produced separately — the image model gets ONLY a visual prompt (no words to render), and we composite the headline + subline ourselves with our own typography.
 
-- Your imagePrompt MUST describe pure visuals. NEVER quote text the model should "render", NEVER mention signs/banners/billboards/UI/captions/labels/typography. The composited image will have no readable text whatsoever besides what we add later.
+Hard rules:
+- imagePrompt MUST describe pure visuals. NEVER quote text the model should "render", NEVER mention signs/banners/billboards/UI/captions/labels/typography/storefronts/license-plates. The composited image will have NO readable text besides what we add later.
 - The headline + subline are set in Geist Black at large display weight, so they can be properly typeset — write copy you'd be proud to set in a serious font. Aim for sharp, declarative, scroll-stopping ad copy that pairs with the metaphor.
-- Each card should feel like a different ad in the same campaign.
+- Each card in the batch should feel like a different ad in the same campaign — vary subject category (animals / landscape / surreal scene / object), framing, lighting, and tone across the 6 cards.
+- Every metaphor must clearly argue for ONE of the brand value props (an angle from the list below).
 
-For each concept below, write:
-- imagePrompt: 60-180 words describing the bare visual (riff off the seed, add specifics: framing, lighting, mood, palette, photoreal vs illustrated). NO TEXT ANYWHERE IN THE IMAGE.
+How to compose the batch:
+- Use 2-3 of the seed metaphors below as direct inspiration. You can rephrase the seed prompt; do NOT copy it verbatim.
+- INVENT 3-4 brand-new metaphors that fit the same vibe but aren't on the list. The bar: striking, unusual, instantly metaphorical, photographable. (Examples of fresh territory: an iceberg with most of its mass underwater for 'most of an agent's value is invisible'; a single matchstick lit in a dark stadium for 'one right agent in a market of thousands'; a chef's knife next to a butter knife for 'the right tool matters'; rotten apple in a perfect bushel for 'one bad apple kills the deal'. These are illustrative — your inventions should be different from these AND from the seeds.)
+
+Seed library (use 2-3 as inspiration, invent the rest):
+${seedLibrary}
+
+Available value-prop angles (each card MUST tie its metaphor to one of these — pick the best fit for your metaphor):
+${angleList}
+
+For each card, write:
+- conceptKey: a short snake_case label for your metaphor (e.g., 'iceberg_hidden_mass', 'matchstick_in_stadium'). Use the exact seed key when reusing a seed.
+- angle: the angle this metaphor argues for, from the list above.
+- imagePrompt: 60-180 words describing the bare visual (subject, framing, lighting, mood, palette, photoreal vs illustrated, atmosphere). NO TEXT ANYWHERE IN THE IMAGE.
 - headline: ≤5 words ending in . or ?
 - subline: ≤10 words supporting the headline + linking to the matching mission (top 10%, vetted, pre-interviewed, 4.8 stars, situation/price-fit).
 - body: 3-5 sentence IG caption tying the metaphor back to the angle.
 
-Concepts:
-${conceptList}
-
-Return your results by calling the ${AI_POSTER_TOOL.name} tool — one entry per concept above, echoing the concept key in conceptKey and the mapsTo angle in angle.`;
+Return your results by calling the ${AI_POSTER_TOOL.name} tool — exactly ${GRAPHIC_BATCH_POSTS} entries.`;
 
   try {
     const raw = await callTool<RawAiPosterPost>(prompt, AI_POSTER_TOOL);

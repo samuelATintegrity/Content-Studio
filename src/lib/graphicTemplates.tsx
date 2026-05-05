@@ -620,12 +620,13 @@ export function AiPosterCompositeLight({
   // White wordmark on dark scrims; black wordmark otherwise.
   const wordmarkSrc = isWhiteText ? logoWhiteUrl : logoBlackUrl;
   // A subtle text shadow buys legibility on edges of the scrim where
-  // contrast is borderline. Skipped on black-on-light combos because
-  // dark glyphs against light pixels rarely need it and the shadow
-  // can muddy the type.
-  const textShadow = isWhiteText
-    ? "0 2px 6px rgba(0,0,0,0.55), 0 1px 2px rgba(0,0,0,0.5)"
-    : undefined;
+  // contrast is borderline. Spread conditionally — Satori chokes if a
+  // CSS property arrives as `undefined` (it tries to .toString() it).
+  // For black-on-light combos we skip the shadow entirely; dark glyphs
+  // on light pixels rarely need it and a shadow can muddy the type.
+  const headlineShadowStyle: React.CSSProperties = isWhiteText
+    ? { textShadow: "0 2px 6px rgba(0,0,0,0.55), 0 1px 2px rgba(0,0,0,0.5)" }
+    : {};
 
   // Text block is constrained to 880px so headlines wrap predictably
   // even when the placement is left/right rail.
@@ -679,7 +680,7 @@ export function AiPosterCompositeLight({
               letterSpacing: "-0.045em",
               lineHeight: 0.95,
               color: textColor,
-              textShadow,
+              ...headlineShadowStyle,
             }}
           >
             {fields.headline}
@@ -694,7 +695,7 @@ export function AiPosterCompositeLight({
                 lineHeight: 1.2,
                 color: sublineColor,
                 marginTop: 28,
-                textShadow,
+                ...headlineShadowStyle,
               }}
             >
               {fields.subline}
