@@ -150,27 +150,38 @@ export function ComposeShot() {
   }
 
   async function animate() {
-    if (busy || !shotImageUrl) return;
+    if (busy) return;
     if (!animationPrompt.trim()) {
       setError("Animation prompt cannot be empty.");
       return;
     }
+
+    // Pick the source image for both Veo and the FcShot record:
+    //   - continuity on  → prior shot's last frame (Nano never ran)
+    //   - continuity off → the still Nano just composed
+    let sourceImageUrl: string;
+    if (continuityActive && lastActorShot?.lastFrameImageUrl) {
+      sourceImageUrl = lastActorShot.lastFrameImageUrl;
+    } else if (shotImageUrl) {
+      sourceImageUrl = shotImageUrl;
+    } else {
+      setError("No image to animate. Generate one first or enable continuity.");
+      return;
+    }
+
     setError(null);
     setBusy("animate");
     setPhase("animating");
 
-    // Save the still as a shot record now (without videoUrl) so the
-    // re-animate flow can reference it. Use last-frame seeding when
-    // continuity is on AND a prior actor shot exists.
-    const sourceImageUrl = continuityActive
-      ? lastActorShot!.lastFrameImageUrl!
-      : shotImageUrl;
+    // Save the shot record now (without videoUrl) so re-animate can
+    // reference it. imageUrl on the record is whatever Veo will see —
+    // prior last-frame for continuity, fresh Nano still otherwise.
     const newShot = addFcShot({
       kind,
       actorId: kind === "actor" ? fcSelectedActorId ?? undefined : undefined,
       locationId: selectedLocationId ?? undefined,
       imagePrompt: prompt.trim(),
-      imageUrl: shotImageUrl,
+      imageUrl: sourceImageUrl,
       animationPrompt: animationPrompt.trim(),
       parentShotId: continuityActive ? lastActorShot!.id : undefined,
     });
@@ -189,6 +200,35 @@ export function ComposeShot() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "animate failed");
       setPhase("ready");   // let them retry
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // Continuity-on path: ask Haiku to write an animation prompt from
+  // the user's shot description without ever calling Nano. Same fall-
+  // back generic prompts as the continuity-off path uses internally.
+  async function writeAnimationPromptOnly() {
+    if (busy) return;
+    if (!prompt.trim()) {
+      setError("Describe the shot first.");
+      return;
+    }
+    setError(null);
+    setBusy("anim-prompt");
+    try {
+      const { animationPrompt: ap } = await fcWriteAnimationPrompt({
+        imagePrompt: prompt.trim(),
+        kind,
+      });
+      setAnimationPrompt(ap);
+    } catch (e) {
+      console.warn("[fc] animation prompt write failed:", e);
+      setAnimationPrompt(
+        kind === "actor"
+          ? "the actor reacts visibly — eyes widen, head turns toward the source of the sound, slight body recoil; camera holds steady"
+          : "the subject moves with full kinetic energy throughout the shot, fast-paced and dynamic; camera holds steady to let the chaos play out",
+      );
     } finally {
       setBusy(null);
     }
@@ -339,38 +379,23 @@ export function ComposeShot() {
 
         {error && <p className="text-[11px] text-red-500">{error}</p>}
 
-        {/* Image preview / animation prompt / animate */}
-        {phase === "idle" && (
-          <div className="flex justify-end">
-            <button
-              type="button"
-              onClick={composeImage}
-              disabled={!!busy}
-              className="px-4 py-2 rounded-full text-[12px] font-semibold bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-900 disabled:opacity-60"
-            >
-              Generate image
-            </button>
-          </div>
-        )}
-        {phase === "image" && (
-          <div className="text-[12px] text-neutral-500 py-6 text-center">
-            Composing the still… (Nano Banana 2)
-          </div>
-        )}
-        {(phase === "ready" || phase === "animating" || phase === "done") && shotImageUrl && (
+        {/* Two render paths: continuity-on skips the Nano "Generate
+            image" step entirely — Veo seeds straight from the prior
+            shot's last frame. Continuity-off keeps the original
+            idle → image → ready → animating → done state machine. */}
+        {continuityActive && lastActorShot?.lastFrameImageUrl ? (
+          // ── Continuity-on render ──────────────────────────────────
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="sm:w-1/2">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={continuityActive && lastActorShot?.lastFrameImageUrl ? lastActorShot.lastFrameImageUrl : shotImageUrl}
+                src={lastActorShot.lastFrameImageUrl}
                 alt=""
                 className="w-full aspect-[9/16] object-cover rounded-xl border border-neutral-200 dark:border-neutral-800"
               />
-              {continuityActive && (
-                <p className="text-[10px] text-neutral-500 leading-snug mt-1">
-                  Animating from previous actor shot&apos;s last frame for continuity.
-                </p>
-              )}
+              <p className="text-[10px] text-neutral-500 leading-snug mt-1">
+                Continuing from previous actor shot&apos;s last frame. Veo animates straight from this image — no fresh still needed.
+              </p>
             </div>
             <div className="sm:w-1/2 flex flex-col gap-2">
               <label className="text-[10px] uppercase tracking-[0.14em] text-neutral-500 font-semibold">
@@ -381,34 +406,28 @@ export function ComposeShot() {
                 onChange={(e) => setAnimationPrompt(e.target.value)}
                 disabled={phase === "animating" || busy === "anim-prompt"}
                 rows={5}
+                placeholder="What should move in the next 5 seconds? Plain English — short is better."
                 className="w-full px-3 py-2 rounded-xl text-[11px] leading-snug border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 resize-none disabled:opacity-60"
               />
               <div className="flex flex-wrap gap-2">
-                {phase === "ready" && (
+                {phase !== "animating" && phase !== "done" && (
                   <>
                     <button
                       type="button"
                       onClick={animate}
-                      disabled={!!busy}
+                      disabled={!!busy || !animationPrompt.trim()}
                       className="px-3 py-1.5 rounded-full text-[11px] font-semibold bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-900 disabled:opacity-60"
                     >
                       Animate
                     </button>
                     <button
                       type="button"
-                      onClick={composeImage}
-                      disabled={!!busy}
+                      onClick={writeAnimationPromptOnly}
+                      disabled={!!busy || !prompt.trim()}
                       className="px-3 py-1.5 rounded-full text-[11px] font-medium border border-neutral-200 dark:border-neutral-800 hover:bg-white dark:hover:bg-neutral-900 disabled:opacity-60"
+                      title="Use the shot description above to draft an animation prompt with Claude"
                     >
-                      Re-roll image
-                    </button>
-                    <button
-                      type="button"
-                      onClick={discardImage}
-                      disabled={!!busy}
-                      className="px-3 py-1.5 rounded-full text-[11px] font-medium text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100 disabled:opacity-60"
-                    >
-                      Discard
+                      {animationPrompt.trim() ? "Re-write with AI" : "Write with AI"}
                     </button>
                   </>
                 )}
@@ -432,6 +451,98 @@ export function ComposeShot() {
               </div>
             </div>
           </div>
+        ) : (
+          // ── Continuity-off render (original Nano-then-Veo path) ─
+          <>
+            {phase === "idle" && (
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={composeImage}
+                  disabled={!!busy}
+                  className="px-4 py-2 rounded-full text-[12px] font-semibold bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-900 disabled:opacity-60"
+                >
+                  Generate image
+                </button>
+              </div>
+            )}
+            {phase === "image" && (
+              <div className="text-[12px] text-neutral-500 py-6 text-center">
+                Composing the still… (Nano Banana 2)
+              </div>
+            )}
+            {(phase === "ready" || phase === "animating" || phase === "done") && shotImageUrl && (
+              <div className="flex flex-col sm:flex-row gap-3">
+                <div className="sm:w-1/2">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={shotImageUrl}
+                    alt=""
+                    className="w-full aspect-[9/16] object-cover rounded-xl border border-neutral-200 dark:border-neutral-800"
+                  />
+                </div>
+                <div className="sm:w-1/2 flex flex-col gap-2">
+                  <label className="text-[10px] uppercase tracking-[0.14em] text-neutral-500 font-semibold">
+                    Animation prompt {busy === "anim-prompt" && <span className="normal-case text-neutral-400">— Claude is writing one…</span>}
+                  </label>
+                  <textarea
+                    value={animationPrompt}
+                    onChange={(e) => setAnimationPrompt(e.target.value)}
+                    disabled={phase === "animating" || busy === "anim-prompt"}
+                    rows={5}
+                    className="w-full px-3 py-2 rounded-xl text-[11px] leading-snug border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 resize-none disabled:opacity-60"
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    {phase === "ready" && (
+                      <>
+                        <button
+                          type="button"
+                          onClick={animate}
+                          disabled={!!busy}
+                          className="px-3 py-1.5 rounded-full text-[11px] font-semibold bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-900 disabled:opacity-60"
+                        >
+                          Animate
+                        </button>
+                        <button
+                          type="button"
+                          onClick={composeImage}
+                          disabled={!!busy}
+                          className="px-3 py-1.5 rounded-full text-[11px] font-medium border border-neutral-200 dark:border-neutral-800 hover:bg-white dark:hover:bg-neutral-900 disabled:opacity-60"
+                        >
+                          Re-roll image
+                        </button>
+                        <button
+                          type="button"
+                          onClick={discardImage}
+                          disabled={!!busy}
+                          className="px-3 py-1.5 rounded-full text-[11px] font-medium text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100 disabled:opacity-60"
+                        >
+                          Discard
+                        </button>
+                      </>
+                    )}
+                    {phase === "animating" && (
+                      <span className="text-[11px] text-neutral-500">Animating with Veo 3.1…</span>
+                    )}
+                    {phase === "done" && draftShotId && (
+                      <>
+                        <span className="text-[11px] text-emerald-600 font-medium">
+                          ✓ Shot added to timeline
+                        </span>
+                        <button
+                          type="button"
+                          onClick={startNew}
+                          className="px-3 py-1.5 rounded-full text-[11px] font-medium border border-neutral-200 dark:border-neutral-800 hover:bg-white dark:hover:bg-neutral-900"
+                        >
+                          Start new shot
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
     </Section>
