@@ -6,7 +6,7 @@ import { useVideoPolling } from "@/lib/useVideoPolling";
 import { regenerateOneVideo } from "@/lib/generateVideo";
 import { BufferSendModal } from "./BufferSendModal";
 
-type SocialPlatform = "facebook" | "instagram" | "tiktok";
+type SocialPlatform = "facebook" | "instagram" | "tiktok" | "youtube";
 type ScheduleMode = "queue" | "scheduled";
 
 // Last-action confirmation shown on the card after the send modal closes.

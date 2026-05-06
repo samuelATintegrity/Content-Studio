@@ -17,6 +17,7 @@ const SERVICE_LABEL: Record<string, string> = {
   facebook: "Facebook",
   instagram: "Instagram",
   tiktok: "TikTok",
+  youtube: "YouTube",
 };
 
 function formatScheduled(sec: number | null): string {

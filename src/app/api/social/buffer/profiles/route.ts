@@ -26,7 +26,7 @@ export async function GET() {
       currentMap: map,
       hint:
         "Build BUFFER_PROFILE_MAP_JSON like " +
-        '{"en":{"facebook":"<id>","instagram":"<id>","tiktok":"<id>"},"tl":{...}}.',
+        '{"en":{"facebook":"<id>","instagram":"<id>","tiktok":"<id>","youtube":"<id>"},"tl":{...}}.',
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "unknown error";

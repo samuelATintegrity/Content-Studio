@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Language } from "@/lib/types";
 import { InlineDateTimePicker } from "./InlineDateTimePicker";
 
-type SocialPlatform = "facebook" | "instagram" | "tiktok";
+type SocialPlatform = "facebook" | "instagram" | "tiktok" | "youtube";
 // Buffer's GraphQL API only supports addToQueue and customScheduled.
 // The legacy v1 "Post now" / "Save as draft" modes are gone.
 type ScheduleMode = "queue" | "scheduled";
@@ -13,7 +13,14 @@ const PLATFORM_LABELS: Record<SocialPlatform, string> = {
   facebook: "Facebook",
   instagram: "Instagram",
   tiktok: "TikTok",
+  youtube: "YouTube",
 };
+
+// Channels that can't accept image posts via the Buffer API. Filtered
+// out client-side so the user doesn't see checkboxes that would always
+// fail; mirrored in src/lib/bufferServer.ts which filters again on the
+// server as a safety net.
+const VIDEO_ONLY_PLATFORMS: SocialPlatform[] = ["tiktok", "youtube"];
 
 interface AvailableResponse {
   language: Language;
@@ -94,7 +101,9 @@ export function BufferSendModal({
           setAvailable([]);
           return;
         }
-        const filtered = isImage ? json.platforms.filter((p) => p !== "tiktok") : json.platforms;
+        const filtered = isImage
+          ? json.platforms.filter((p) => !VIDEO_ONLY_PLATFORMS.includes(p))
+          : json.platforms;
         setAvailable(filtered);
         setSelectedPlatforms(new Set(filtered));
       } catch (err) {

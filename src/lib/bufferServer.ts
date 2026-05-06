@@ -12,12 +12,61 @@
 // Token: generate at https://publish.buffer.com/settings/api ("New Key").
 // Map shape (BUFFER_PROFILE_MAP_JSON):
 //   { "en": { "facebook": "<channel_id>", "instagram": "<channel_id>",
-//             "tiktok": "<channel_id>" }, "tl": {...}, ... }
+//             "tiktok": "<channel_id>", "youtube": "<channel_id>" },
+//     "tl": {...}, ... }
 // Missing platform entries are silently skipped at queue time.
+//
+// YouTube notes:
+//   • Channel only accepts video posts via the Buffer API; image posts
+//     are filtered out before dispatch.
+//   • YouTube requires a `title` (≤100 chars) and `categoryId`. We
+//     derive the title from the first line of the post text (truncated
+//     gracefully) and default the category to "22" (People & Blogs)
+//     unless YOUTUBE_CATEGORY_ID overrides it. Shorts are auto-detected
+//     by Buffer / YouTube from 9:16 aspect + short duration; no flag.
 
 import type { Language } from "./types";
 
-export type SocialPlatform = "facebook" | "instagram" | "tiktok";
+export type SocialPlatform = "facebook" | "instagram" | "tiktok" | "youtube";
+
+const ALL_PLATFORMS: SocialPlatform[] = ["facebook", "instagram", "tiktok", "youtube"];
+
+// Default YouTube category — "People & Blogs" (catch-all for personal /
+// brand short-form). Override per-deployment via the YOUTUBE_CATEGORY_ID
+// env var; the mapping is documented at
+// https://developers.google.com/youtube/v3/docs/videoCategories/list.
+const DEFAULT_YOUTUBE_CATEGORY_ID = "22";
+
+function youtubeCategoryId(): string {
+  return process.env.YOUTUBE_CATEGORY_ID?.trim() || DEFAULT_YOUTUBE_CATEGORY_ID;
+}
+
+// Derive a YouTube title from the post text. YT enforces ≤100 chars;
+// we cap at 95 to leave headroom for any auto-appended marker. Strategy:
+// take the first non-empty line, strip leading hashtags / handles, soft-
+// truncate at the last word boundary inside the cap.
+const YOUTUBE_TITLE_MAX = 95;
+
+export function deriveYoutubeTitle(text: string): string {
+  const firstLine = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .find((l) => l.length > 0);
+  if (!firstLine) return "Agent Match";
+  if (firstLine.length <= YOUTUBE_TITLE_MAX) return firstLine;
+  const cut = firstLine.slice(0, YOUTUBE_TITLE_MAX);
+  const lastSpace = cut.lastIndexOf(" ");
+  return lastSpace > 40 ? cut.slice(0, lastSpace) : cut;
+}
+
+// Escape an arbitrary string for inlining into a GraphQL document. The
+// metadata blocks template strings into the query (rather than passing
+// every per-platform value as a separate variable) so we need a tiny
+// JSON-string-style escape for any user text we inline. Buffer's
+// GraphQL parser treats this exactly like a JSON string literal.
+function gqlString(value: string): string {
+  return JSON.stringify(value);
+}
 
 export interface BufferProfileMap {
   [language: string]: Partial<Record<SocialPlatform, string>>;
@@ -50,7 +99,7 @@ export function profileIdsForLanguage(
   const entry = map[language];
   if (!entry) return [];
   const out: Array<{ platform: SocialPlatform; profileId: string }> = [];
-  for (const platform of ["facebook", "instagram", "tiktok"] as SocialPlatform[]) {
+  for (const platform of ALL_PLATFORMS) {
     const profileId = entry[platform];
     if (profileId) out.push({ platform, profileId });
   }
@@ -170,10 +219,23 @@ export type BufferAssetType = "video" | "image";
 // Build the per-platform metadata block. Required fields differ per
 // platform AND per asset type:
 //   Video → Facebook needs type:reel, Instagram needs type:reel +
-//   shouldShareToFeed:true, TikTok needs nothing (always video).
+//   shouldShareToFeed:true, TikTok needs nothing, YouTube needs title
+//   (required) + categoryId (required).
 //   Image → Facebook needs type:post, Instagram needs type:post +
-//   shouldShareToFeed:true. TikTok doesn't accept images via this API.
-function buildMetadataBlock(platform: SocialPlatform, assetType: BufferAssetType): string {
+//   shouldShareToFeed:true. TikTok + YouTube don't accept image posts
+//   via this API path; the createBufferUpdate layer filters those
+//   targets out before this function gets called.
+interface BuildMetadataOptions {
+  // Inlined into `metadata: { youtube: { title: ..., categoryId: ... } }`
+  // when platform === "youtube" and assetType === "video".
+  youtubeTitle?: string;
+}
+
+function buildMetadataBlock(
+  platform: SocialPlatform,
+  assetType: BufferAssetType,
+  opts: BuildMetadataOptions = {},
+): string {
   if (assetType === "image") {
     switch (platform) {
       case "facebook":
@@ -181,10 +243,10 @@ function buildMetadataBlock(platform: SocialPlatform, assetType: BufferAssetType
       case "instagram":
         return `metadata: { instagram: { type: post, shouldShareToFeed: true } }`;
       case "tiktok":
-        // TikTok's image post type is "photo" but Buffer's API errors
-        // when posting still images to TikTok via this path. Skip the
-        // metadata block; the queue-route layer above already filters
-        // tiktok out of image posts before we get here.
+      case "youtube":
+        // Image posting isn't supported on these platforms via the
+        // Buffer GraphQL path. The queue-route layer above filters
+        // these targets out for image posts before we get here.
         return ``;
     }
   }
@@ -195,6 +257,11 @@ function buildMetadataBlock(platform: SocialPlatform, assetType: BufferAssetType
       return `metadata: { instagram: { type: reel, shouldShareToFeed: true } }`;
     case "tiktok":
       return ``;
+    case "youtube": {
+      const title = opts.youtubeTitle?.trim() || "Agent Match";
+      const categoryId = youtubeCategoryId();
+      return `metadata: { youtube: { title: ${gqlString(title)}, categoryId: ${gqlString(categoryId)} } }`;
+    }
   }
 }
 
@@ -247,7 +314,10 @@ async function createSinglePost(args: {
   const thumbField = includeThumb ? `, thumbnailUrl: $thumb` : "";
   const thumbDecl = includeThumb ? `, $thumb: String!` : "";
 
-  const metadataBlock = buildMetadataBlock(args.platform, args.assetType);
+  const metadataBlock = buildMetadataBlock(args.platform, args.assetType, {
+    youtubeTitle:
+      args.platform === "youtube" ? deriveYoutubeTitle(args.text) : undefined,
+  });
   const metadataField = metadataBlock ? `, ${metadataBlock}` : "";
 
   // Buffer's GraphQL accepts assets.videos[] for video posts and
@@ -351,14 +421,18 @@ export async function createBufferUpdate(args: {
   }
   const assetType: BufferAssetType = args.imageUrl ? "image" : "video";
   const mediaUrl = (args.imageUrl ?? args.videoUrl) as string;
-  // TikTok doesn't accept still images via the Buffer GraphQL path —
-  // drop tiktok targets when posting an image, surface as a per-target
-  // error so the UI can flag it without failing the whole batch.
+  // TikTok and YouTube don't accept still images via the Buffer
+  // GraphQL path — drop those targets when posting an image, surface
+  // each as a per-target error so the UI can flag it without failing
+  // the whole batch.
+  const VIDEO_ONLY: SocialPlatform[] = ["tiktok", "youtube"];
   const filteredTargets =
-    assetType === "image" ? args.targets.filter((t) => t.platform !== "tiktok") : args.targets;
-  const skippedTikTok =
     assetType === "image"
-      ? args.targets.filter((t) => t.platform === "tiktok")
+      ? args.targets.filter((t) => !VIDEO_ONLY.includes(t.platform))
+      : args.targets;
+  const skippedVideoOnly =
+    assetType === "image"
+      ? args.targets.filter((t) => VIDEO_ONLY.includes(t.platform))
       : [];
   const tasks = filteredTargets.map((t) =>
     createSinglePost({
@@ -379,11 +453,13 @@ export async function createBufferUpdate(args: {
     if (r.postId) updateIds.push(r.postId);
     else errors.push({ profileId: r.channelId, message: r.error ?? "unknown" });
   }
-  // Surface the TikTok skips as soft errors so the UI can flag them.
-  for (const skipped of skippedTikTok) {
+  // Surface the video-only-channel skips as soft errors so the UI can
+  // flag them without failing the whole batch.
+  for (const skipped of skippedVideoOnly) {
+    const label = skipped.platform === "youtube" ? "YouTube" : "TikTok";
     errors.push({
       profileId: skipped.profileId,
-      message: "TikTok does not accept image posts via the Buffer API.",
+      message: `${label} does not accept image posts via the Buffer API.`,
     });
   }
   if (updateIds.length === 0 && filteredTargets.length > 0) {
