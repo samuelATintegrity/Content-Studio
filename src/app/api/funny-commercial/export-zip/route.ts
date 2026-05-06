@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import JSZip from "jszip";
 import { buildFcpxml, type FcpxmlClipSpec } from "@/lib/fcpxml";
+import { synthesizeNarration } from "@/lib/elevenlabs";
+import type { Language } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -10,33 +12,38 @@ export const maxDuration = 300;
 // Body:
 //   {
 //     sequenceName: string,
+//     language: Language,
 //     timeline: Array<{
 //       slotIndex: number,
 //       clipUrl: string,
 //       durationS: number,
 //       overlayText?: string,
-//       narrationUrl?: string,    // optional pre-rendered TTS mp3
+//       narrate?: boolean,   // when true, ElevenLabs synthesizes
+//                            // overlayText and the mp3 lands in
+//                            // narrations/ + on A2 of the XML.
+//       voiceId?: string,    // optional voice override; falls back to
+//                            // ELEVENLABS_VOICE_ID_<LANG>.
 //     }>
 //   }
 //
-// Response: a `application/zip` blob containing:
+// Response: an `application/zip` blob containing:
 //   - timeline.xml          (Final Cut Pro 7 XML, Premiere-importable)
 //   - clips/<slotIdx>-<basename>.mp4
-//   - narrations/<slotIdx>.mp3
+//   - narrations/<slotIdx>.mp3   (only for narrate=true slots)
 //
-// The XML uses relative paths (`file://./clips/...`) so the user can
-// extract the zip anywhere and Premiere resolves clips as siblings of
-// the .xml file. No Premiere XML feature outside basic FCP7 xmeml is
-// used — a fresh Premiere CC install opens it without plugins.
+// The XML uses relative paths (`file://./clips/...`) so the zip is
+// portable — extract anywhere and Premiere resolves siblings.
 
 interface Body {
   sequenceName: string;
+  language: Language;
   timeline: Array<{
     slotIndex: number;
     clipUrl: string;
     durationS: number;
     overlayText?: string;
-    narrationUrl?: string;
+    narrate?: boolean;
+    voiceId?: string;
   }>;
 }
 
@@ -65,6 +72,9 @@ export async function POST(req: Request) {
     if (!body.sequenceName?.trim()) {
       return NextResponse.json({ error: "sequenceName is required" }, { status: 400 });
     }
+    if (!body.language) {
+      return NextResponse.json({ error: "language is required" }, { status: 400 });
+    }
     if (!Array.isArray(body.timeline) || body.timeline.length === 0) {
       return NextResponse.json({ error: "timeline (non-empty) is required" }, { status: 400 });
     }
@@ -73,19 +83,47 @@ export async function POST(req: Request) {
     const clipsFolder = zip.folder("clips")!;
     const narrationsFolder = zip.folder("narrations")!;
 
-    // Download every clip + optional narration in parallel.
+    // Per slot, in parallel: download the clip bytes and (when
+    // narrate=true) synthesize the narration mp3 inline. Narration
+    // synthesis happens server-side via ElevenLabs and the bytes land
+    // straight in the zip — no R2 round-trip — so the export is
+    // self-contained and reproducible: rerunning produces the same
+    // mp3 from the same text+voice combination.
     const clipSpecs: FcpxmlClipSpec[] = await Promise.all(
       body.timeline.map(async (slot) => {
         const baseName = safeBaseName(slot.clipUrl);
         const clipFileName = `${slot.slotIndex}-${baseName.endsWith(".mp4") ? baseName : `${baseName}.mp4`}`;
-        const clipBytes = await fetchBytes(slot.clipUrl, `clip ${slot.slotIndex}`);
+
+        const wantNarration =
+          !!slot.narrate && !!slot.overlayText && slot.overlayText.trim().length > 0;
+
+        const [clipBytes, narrationResult] = await Promise.all([
+          fetchBytes(slot.clipUrl, `clip ${slot.slotIndex}`),
+          wantNarration
+            ? synthesizeNarration({
+                text: slot.overlayText!.trim(),
+                language: body.language,
+                voiceId: slot.voiceId,
+              })
+                .catch((e) => {
+                  // Best-effort: if a single slot's narration fails,
+                  // log it and let the slot ship without narration
+                  // rather than failing the whole export.
+                  console.warn(
+                    `[fc/export-zip] narration ${slot.slotIndex} failed:`,
+                    e instanceof Error ? e.message : String(e),
+                  );
+                  return null;
+                })
+            : Promise.resolve(null),
+        ]);
+
         clipsFolder.file(clipFileName, clipBytes);
 
         let narrationFileName: string | undefined;
-        if (slot.narrationUrl) {
-          const narrBytes = await fetchBytes(slot.narrationUrl, `narration ${slot.slotIndex}`);
+        if (narrationResult) {
           narrationFileName = `${slot.slotIndex}.mp3`;
-          narrationsFolder.file(narrationFileName, narrBytes);
+          narrationsFolder.file(narrationFileName, narrationResult.bytes);
         }
 
         return {

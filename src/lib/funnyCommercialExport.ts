@@ -6,6 +6,10 @@
 // blob, and triggers a browser download to the user's default download
 // folder (typically ~/Downloads on macOS / C:\Users\<u>\Downloads on
 // Windows).
+//
+// Narration synthesis happens server-side: we just forward each slot's
+// `narrate` flag + optional `voiceId` and the export route TTSes via
+// ElevenLabs inline before bundling the mp3 into the zip.
 
 import { useBatchStore } from "@/store/batchStore";
 import { listFcShots } from "@/lib/funnyCommercialShots";
@@ -32,14 +36,8 @@ export async function exportFunnyCommercialZip(): Promise<void> {
       // so we use the trim-or-default convention from the store.
       durationS: item.durationS ?? 5,
       overlayText: item.overlay?.text,
-      // We don't pre-render narrations on the client — the export
-      // route can only embed pre-existing narration mp3s, so until
-      // we add a separate narration-render endpoint, the XML carries
-      // overlay text but no narration audio. Premiere users can
-      // record narration in-app; the v3 work item is to wire a
-      // /narration endpoint that returns an R2-hosted mp3 the export
-      // route can fetch.
-      narrationUrl: undefined,
+      narrate: item.overlay?.narrate ?? false,
+      voiceId: item.overlay?.voiceId,
     };
   });
 
@@ -48,7 +46,11 @@ export async function exportFunnyCommercialZip(): Promise<void> {
   const res = await fetch("/api/funny-commercial/export-zip", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ sequenceName, timeline: payload }),
+    body: JSON.stringify({
+      sequenceName,
+      language: state.language,
+      timeline: payload,
+    }),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
