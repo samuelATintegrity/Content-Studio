@@ -335,7 +335,7 @@ export type ImageSlotState =
   | "video_ready"
   | "failed";
 
-// Index into VIDEO_IMAGE_PROMPTS (0..4 — kitchen / bedroom / bathroom /
+// Index into VIDEO_IMAGE_PROMPTS (0..4 — kitchen / entryway / bathroom /
 // exterior / agent). Used for choosing prompts and animation models.
 export type VideoSourcePromptIndex = 0 | 1 | 2 | 3 | 4;
 

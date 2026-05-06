@@ -4,7 +4,10 @@
 
 export const VIDEO_IMAGE_PROMPTS: readonly string[] = [
   "a photo of a new white kitchen",
-  "a photo of a new white master bedroom",
+  // Slot 1 was the master bedroom; swapped to a foyer/entryway because
+  // bedrooms read intimate/personal and don't sit right alongside the
+  // "buy your own place" pitch tone (per user direction 2026-05-08).
+  "a photo of a welcoming front entryway in a new home, bright natural light through the open door, warm wood floors, no people",
   "a photo of a new white bathroom",
   "a photo of a new white home exterior",
   // Slot 4 contains people. Seedance 2.0 safety-rejects most face-forward
@@ -15,7 +18,7 @@ export const VIDEO_IMAGE_PROMPTS: readonly string[] = [
 
 export const VIDEO_IMAGE_PROMPT_LABELS: readonly string[] = [
   "Kitchen",
-  "Bedroom",
+  "Entryway",
   "Bathroom",
   "Exterior",
   "Agent",

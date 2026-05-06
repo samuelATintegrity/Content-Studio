@@ -43,13 +43,13 @@ export const IMAGE_PROMPTS: readonly string[] = [
   "parents reading to kids on the floor of a new home",
   "family holding the keys to their first home",
   "family in their new front yard at sunset",
-  "family decorating a child's new bedroom",
+  "family decorating their new home together",
 
   // Young couples
   "young couple in their new home",
   "couple holding keys in front of a house",
   "couple painting a wall in a new home",
-  "couple unpacking in a new bedroom",
+  "couple unpacking moving boxes in their new home",
   "couple at the kitchen counter reviewing plans on a tablet",
   "newlyweds in their first home",
   "couple having coffee on the porch of their new home",
@@ -104,7 +104,7 @@ export const IMAGE_PROMPTS: readonly string[] = [
   "cozy living room with natural light",
   "modern open-concept kitchen",
   "inviting front entryway with a welcome mat",
-  "sun-filled bedroom with neutral decor",
+  "warm foyer with natural wood floors and a console table",
   "dining room set up for a family meal",
   "home office with a window view",
   "empty living room ready to be furnished",
@@ -143,15 +143,19 @@ const ETHNICITY_BY_LANG: Record<Language, string> = {
 
 export type BatchSeedIndex = 0 | 1 | 2 | 3;
 
-// Architectural / interior prompts used at index 3. One is randomly picked
-// per batch so libraries don't fill up with identical bedroom shots over
-// repeated batches.
+// Architectural / interior prompts used at index 3. One is randomly
+// picked per batch so libraries rotate across the public-facing rooms
+// of a home — kitchens, living rooms, foyers, bathrooms, dining rooms.
+// Bedrooms intentionally excluded: they read as personal/intimate
+// space which clashes with the "buy your own place" pitch tone (per
+// user direction 2026-05-08). Foyer/entryway carries the equivalent
+// "stepping into a new home" emotional beat without the bedroom vibe.
 const INTERIOR_VARIANTS = [
   "a bright sunlit kitchen in a new home, neutral cabinetry, warm natural light, professional real estate photography, no people",
   "a cozy living room in a new home, soft natural light through large windows, neutral decor, professional real estate photography, no people",
   "a clean modern bathroom in a new home, natural materials, soft daylight, professional real estate photography, no people",
-  "a sun-filled bedroom in a new home, neutral linens, soft morning light, professional real estate photography, no people",
-  "a welcoming front entryway of a new home, natural wood floors, soft daylight, professional real estate photography, no people",
+  "a welcoming front entryway of a new home, natural wood floors, soft daylight from the open door, professional real estate photography, no people",
+  "an inviting foyer with a console table and a wall mirror, hardwood floors, soft natural light from a side window, professional real estate photography, no people",
   "a bright dining room set up for a family meal, natural wood table, large window, professional real estate photography, no people",
 ] as const;
 
