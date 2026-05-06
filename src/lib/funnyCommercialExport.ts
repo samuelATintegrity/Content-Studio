@@ -31,10 +31,13 @@ export async function exportFunnyCommercialZip(): Promise<void> {
     return {
       slotIndex: idx + 1,
       clipUrl: shot.videoUrl,
-      // Default 5s when not explicitly trimmed; the worker's render
-      // pipeline probes actual durations but the XML needs a number,
-      // so we use the trim-or-default convention from the store.
-      durationS: item.durationS ?? 5,
+      // Default 6s when not explicitly trimmed (matches the new Veo
+      // duration default); the worker's render pipeline probes actual
+      // durations but the XML needs a number, so we use the trim-or-
+      // default convention from the store. Kling-fallback clips are
+      // 5s — Premiere will play the actual file length, the slot
+      // placement is just a hint, so the small mismatch is fine.
+      durationS: item.durationS ?? 6,
       overlayText: item.overlay?.text,
       narrate: item.overlay?.narrate ?? false,
       voiceId: item.overlay?.voiceId,

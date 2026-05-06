@@ -138,29 +138,21 @@ export function ComposeShot() {
       setShotImageUrl(url);
       setPhase("ready");
 
-      // Kick off the animation-prompt write in parallel — user gets a
-      // pre-filled textarea to refine while the image renders.
-      try {
-        setBusy("anim-prompt");
-        const { animationPrompt: ap } = await fcWriteAnimationPrompt({
-          imagePrompt: prompt.trim(),
-          kind,
-        });
-        setAnimationPrompt(ap);
-      } catch (e) {
-        // Fall back to a generic high-energy prompt if Haiku fails.
-        console.warn("[fc] animation prompt write failed:", e);
-        setAnimationPrompt(
-          kind === "actor"
-            ? "the actor reacts visibly — eyes widen, head turns toward the source of the sound, slight body recoil; camera holds steady"
-            : "the subject moves with full kinetic energy throughout the shot, fast-paced and dynamic; camera holds steady to let the chaos play out",
-        );
-      } finally {
-        setBusy(null);
-      }
+      // Default-populate the animation-prompt textarea with the
+      // user's shot description so they have something concrete to
+      // edit, but ONLY when it's still empty. Preserves any manual
+      // edits across re-rolls. Removed the prior auto-Haiku-rewrite
+      // (it was over-correcting, stripping user-specified details
+      // like "free solo, without gear" because they read as risky).
+      // The "Write with AI" button is still available as opt-in if
+      // the user wants Haiku's help.
+      setAnimationPrompt((current) =>
+        current.trim() ? current : prompt.trim(),
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : "image compose failed");
       setPhase("idle");
+    } finally {
       setBusy(null);
     }
   }

@@ -314,11 +314,15 @@ async function callAnimationModel(
     //     "optimization" that injects words like "tight", "exertion",
     //     etc. which trip the safety filter even when the original
     //     prompt is clean.
+    // Veo 3.1 accepts only "4s", "6s", or "8s" — passing "5s" 422s
+    // ("Input should be '4s', '6s' or '8s'"). 6s is the default per
+    // user direction (2026-05-08); plenty of headroom for a reaction
+    // beat without dragging.
     const veoInput = {
       image_url: imageUrl,
       prompt,
       aspect_ratio: "9:16",
-      duration: "5s",
+      duration: "6s",
       generate_audio: true,
       person_generation: "allow_adult",
       enhance_prompt: false,
