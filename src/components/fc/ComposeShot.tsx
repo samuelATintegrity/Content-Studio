@@ -17,6 +17,7 @@ import { getFcActor } from "@/lib/funnyCommercialActors";
 import {
   addFcLocation,
   listFcLocations,
+  removeFcLocation,
   subscribeFcLocations,
 } from "@/lib/funnyCommercialLocations";
 import {
@@ -62,6 +63,12 @@ export function ComposeShot() {
     setDraftShotId(null);
     setPhase("idle");
     setError(null);
+  }
+
+  function deleteLocation(loc: FcLocation) {
+    if (!window.confirm(`Delete location "${loc.prompt}"?`)) return;
+    if (selectedLocationId === loc.id) setSelectedLocationId(null);
+    removeFcLocation(loc.id);
   }
 
   async function generateNewLocation() {
@@ -226,46 +233,67 @@ export function ComposeShot() {
           )}
         </div>
 
-        {/* Location picker (optional) */}
+        {/* Location picker (optional). Cards are 9:16 to match the
+            shot aspect ratio so the user can actually see what each
+            location looks like before picking. */}
         <div className="flex flex-col gap-1.5">
           <label className="text-[10px] uppercase tracking-[0.14em] text-neutral-500 font-semibold">
             Location (optional reference)
           </label>
-          <div className="flex gap-1.5 flex-wrap">
+          <div className="flex gap-2 flex-wrap">
             <button
               type="button"
               onClick={() => setSelectedLocationId(null)}
-              className={`px-3 py-1.5 rounded-full text-[11px] border transition ${
+              className={`w-24 h-[10.66rem] rounded-2xl border-2 transition flex items-center justify-center text-[11px] ${
                 selectedLocationId === null
                   ? "bg-neutral-900 text-white border-neutral-900 dark:bg-white dark:text-neutral-900 dark:border-white"
-                  : "border-neutral-200 dark:border-neutral-800 hover:bg-white dark:hover:bg-neutral-900"
+                  : "border-neutral-200 dark:border-neutral-800 hover:bg-white dark:hover:bg-neutral-900 text-neutral-500"
               }`}
+              title="No location reference"
             >
               None
             </button>
-            {locations.map((l) => (
-              <button
-                key={l.id}
-                type="button"
-                onClick={() => setSelectedLocationId(l.id)}
-                className={`px-2 py-1 rounded-full text-[11px] border flex items-center gap-1.5 transition ${
-                  selectedLocationId === l.id
-                    ? "bg-neutral-900 text-white border-neutral-900 dark:bg-white dark:text-neutral-900 dark:border-white"
-                    : "border-neutral-200 dark:border-neutral-800 hover:bg-white dark:hover:bg-neutral-900"
-                }`}
-                title={l.prompt}
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={l.imageUrl} alt="" className="w-5 h-7 rounded object-cover" />
-                <span className="truncate max-w-[140px]">{l.prompt}</span>
-              </button>
-            ))}
+            {locations.map((l) => {
+              const selected = selectedLocationId === l.id;
+              return (
+                <div key={l.id} className="group relative">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedLocationId(l.id)}
+                    className={`w-24 h-[10.66rem] rounded-2xl overflow-hidden border-2 transition relative block ${
+                      selected
+                        ? "border-neutral-900 dark:border-white ring-2 ring-neutral-900 dark:ring-white"
+                        : "border-neutral-200 dark:border-neutral-800 hover:border-neutral-400 dark:hover:border-neutral-600"
+                    }`}
+                    title={l.prompt}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={l.imageUrl}
+                      alt=""
+                      className="absolute inset-0 w-full h-full object-cover"
+                    />
+                    <span className="absolute inset-x-0 bottom-0 px-1.5 py-1 bg-black/65 text-white text-[10px] leading-tight line-clamp-2 text-left">
+                      {l.prompt}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deleteLocation(l)}
+                    className="absolute top-1 right-1 p-1 rounded-full bg-black/65 text-white opacity-0 group-hover:opacity-100 transition"
+                    title="Delete location"
+                  >
+                    <DeleteIcon />
+                  </button>
+                </div>
+              );
+            })}
             <button
               type="button"
               onClick={() => setCreatingLocation((v) => !v)}
-              className="px-3 py-1.5 rounded-full text-[11px] border border-dashed border-neutral-300 dark:border-neutral-700 text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
+              className="w-24 h-[10.66rem] rounded-2xl border-2 border-dashed border-neutral-300 dark:border-neutral-700 text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100 hover:border-neutral-500 transition flex items-center justify-center text-[11px] text-center px-2 leading-tight"
             >
-              {creatingLocation ? "Cancel" : "+ Generate location"}
+              {creatingLocation ? "Cancel" : "+ Generate\nlocation"}
             </button>
           </div>
           {creatingLocation && (
@@ -448,5 +476,14 @@ function KindPill({
     >
       {children}
     </button>
+  );
+}
+
+function DeleteIcon() {
+  return (
+    <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
   );
 }

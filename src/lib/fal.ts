@@ -361,12 +361,18 @@ function looksLikeSafetyOr422(e: unknown): boolean {
   return false;
 }
 
-// Animate a still image with subtle camera movement. 5s duration fixed.
-// Routes to Seedance by default (sharper, supports 1080p) and to Kling for
-// caller-marked people slots. As a safety net, if Seedance rejects with a
-// 422 / safety error we automatically retry once via Kling — Kling has no
-// documented face restriction, so this catches both forgotten routings and
-// stale client builds that didn't pass the model field.
+// Animate a still image. 5s duration fixed.
+// Routing:
+//   - "seedance"  default for narration / influencer flows. Sharp, 1080p, no audio.
+//   - "kling"     used for caller-marked people slots (no face restriction).
+//   - "veo"       Funny Commercial flow. Generates audio. STRICTER likeness
+//                 filter than Seedance — rejects images with identifiable
+//                 real people more often than expected.
+// Safety net: if the chosen model rejects with a 422 / safety error we
+// automatically retry once via Kling, which has no documented face
+// restriction. Catches both forgotten routings and stale client builds
+// that didn't pass the model field, AND Veo's tighter likeness filter
+// when the user feeds it a photoreal portrait.
 //
 // `animationPrompt` overrides the default "subtle camera movement…" prompt
 // (used by the from-scratch flow + manual AI clip generator). Falls back to
@@ -385,9 +391,9 @@ export async function animateImage(
     const url = await callAnimationModel(model, imageUrl, prompt);
     return { url };
   } catch (e) {
-    if (model === "seedance" && looksLikeSafetyOr422(e)) {
+    if ((model === "seedance" || model === "veo") && looksLikeSafetyOr422(e)) {
       console.warn(
-        "[animateImage] Seedance refused with safety/422 — retrying with Kling.",
+        `[animateImage] ${model} refused with safety/422 — retrying with Kling.`,
         e instanceof Error ? e.message : String(e),
       );
       const url = await callAnimationModel("kling", imageUrl, prompt);

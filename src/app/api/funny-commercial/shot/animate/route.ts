@@ -51,7 +51,24 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ videoUrl, lastFrameImageUrl });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "unknown error";
+    const raw = e instanceof Error ? e.message : "unknown error";
+    // Veo 3.1's likeness filter is stricter than Seedance/Kling — it
+    // rejects most photoreal portraits with a 422 / "Unprocessable
+    // Entity" error and leaks that opaque string up through fal's SDK.
+    // The orchestrator already retries via Kling when Veo refuses
+    // (src/lib/fal.ts), so reaching this catch with an unprocessable-
+    // shaped error means BOTH models refused — usually because the
+    // input image is too photoreal of an identifiable real person.
+    // Surface that explanation rather than the raw 422 message.
+    const lower = raw.toLowerCase();
+    const isUnprocessable =
+      lower.includes("422") ||
+      lower.includes("unprocessable") ||
+      lower.includes("safety") ||
+      lower.includes("likeness");
+    const msg = isUnprocessable
+      ? `Both Veo and Kling refused this image — usually a likeness/safety filter. Try re-rolling the still with a less recognizable / more stylized framing (avoid photoreal portraits of identifiable real people), then animate again.`
+      : raw;
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }
