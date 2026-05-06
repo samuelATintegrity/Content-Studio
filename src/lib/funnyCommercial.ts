@@ -84,9 +84,10 @@ export async function fcAnimateImage(args: {
     "/api/video/animate-image",
     {
       imageUrl: args.imageUrl,
-      // Seedance is the default; faces work fine here for Scene 2
-      // actors (overhead, eyes-open, no lip-sync) so Kling isn't needed.
-      model: "seedance",
+      // Veo 3.1 — stronger physics for the chaotic Scene 1 action AND
+      // generates native audio, which the worker then lowpass-loops
+      // under Scene 2 to sell the muffled-through-the-wall gag.
+      model: "veo",
       animationPrompt: args.animationPrompt?.trim() || undefined,
     },
     { label: "Animate image" },

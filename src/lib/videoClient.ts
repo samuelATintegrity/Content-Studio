@@ -85,7 +85,7 @@ export async function generateCustomImage(prompt: string): Promise<{ url: string
   return res.json();
 }
 
-export type AnimationModel = "seedance" | "kling";
+export type AnimationModel = "seedance" | "kling" | "veo";
 
 export async function animateSourceImage(
   imageUrl: string,

@@ -18,7 +18,12 @@ export async function POST(req: Request) {
     if (!body.imageUrl) {
       return NextResponse.json({ error: "imageUrl is required" }, { status: 400 });
     }
-    const model: AnimationModel = body.model === "kling" ? "kling" : "seedance";
+    const model: AnimationModel =
+      body.model === "veo"
+        ? "veo"
+        : body.model === "kling"
+          ? "kling"
+          : "seedance";
     const animationPrompt = body.animationPrompt?.trim() || undefined;
     if (animationPrompt && animationPrompt.length > 500) {
       return NextResponse.json({ error: "animationPrompt too long (max 500 chars)" }, { status: 400 });

@@ -33,7 +33,13 @@ const SEEDANCE_MODEL = "bytedance/seedance-2.0/image-to-video";
 // Kling animates them cleanly.
 const KLING_MODEL = "fal-ai/kling-video/v3/pro/image-to-video";
 
-export type AnimationModel = "seedance" | "kling";
+// Google Veo 3.1 image-to-video. Stronger physics + native audio
+// generation make it our default for the Funny Commercial flow where
+// kinetic action and diegetic noise sell the gag (the muffled-through-
+// the-wall Scene 2 audio is sampled from this output).
+const VEO_MODEL = "fal-ai/veo3.1/image-to-video";
+
+export type AnimationModel = "seedance" | "kling" | "veo";
 
 const STATIC_STYLE_SUFFIX =
   ". Vertical 4:5 portrait orientation, taller than wide. Center the main subject with comfortable space above and below; the very top and bottom may be covered by text bars in some layouts, so do not place key subject matter in the top 16% or bottom 16% of the frame. Professional real estate photography style, photorealistic, natural daylight, sharp detail. No text, signs, or watermarks.";
@@ -244,6 +250,23 @@ async function callAnimationModel(
   imageUrl: string,
   prompt: string,
 ): Promise<string> {
+  if (model === "veo") {
+    // Veo 3.1 image-to-video: vertical 9:16, audio enabled by default
+    // (the funny-commercial flow relies on the diegetic audio being
+    // present so the worker can lowpass-loop it under Scene 2).
+    const veoInput = {
+      image_url: imageUrl,
+      prompt,
+      aspect_ratio: "9:16",
+      duration: "5s",
+      generate_audio: true,
+    };
+    const result = await fal.subscribe(VEO_MODEL, {
+      input: veoInput as never,
+      logs: false,
+    });
+    return extractVideoUrl(result);
+  }
   if (model === "kling") {
     const klingInput = {
       start_image_url: imageUrl,
