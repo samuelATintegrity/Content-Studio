@@ -301,15 +301,27 @@ async function callAnimationModel(
   prompt: string,
 ): Promise<string> {
   if (model === "veo") {
-    // Veo 3.1 image-to-video: vertical 9:16, audio enabled by default
-    // (the funny-commercial flow relies on the diegetic audio being
-    // present so the worker can lowpass-loop it under Scene 2).
+    // Veo 3.1 image-to-video: vertical 9:16, audio enabled (the FC
+    // flow needs the diegetic audio so narration can sit alongside).
+    //
+    // Two flags that materially reduce the safety-filter false-
+    // positives that show up as 422 / Unprocessable Entity:
+    //   - person_generation: "allow_adult" — explicit consent for the
+    //     person-rendering pathway. Default behavior varies by
+    //     endpoint and missing this flag is the most common cause of
+    //     spurious 422s on photoreal portraits.
+    //   - enhance_prompt: false — disables the silent prompt
+    //     "optimization" that injects words like "tight", "exertion",
+    //     etc. which trip the safety filter even when the original
+    //     prompt is clean.
     const veoInput = {
       image_url: imageUrl,
       prompt,
       aspect_ratio: "9:16",
       duration: "5s",
       generate_audio: true,
+      person_generation: "allow_adult",
+      enhance_prompt: false,
     };
     const result = await fal.subscribe(VEO_MODEL, {
       input: veoInput as never,
@@ -387,13 +399,47 @@ export async function animateImage(
 
   const prompt = animationPrompt?.trim() || VIDEO_ANIMATION_PROMPT;
 
+  // Veo's safety filter is documented as flaky — same input can pass
+  // on one call and 422 on the next. Try Veo up to 3 times with a
+  // short backoff before falling back to Kling. Seedance 422s aren't
+  // flaky in practice, so it goes straight to fallback.
+  const VEO_MAX_ATTEMPTS = 3;
+  if (model === "veo") {
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= VEO_MAX_ATTEMPTS; attempt++) {
+      try {
+        const url = await callAnimationModel("veo", imageUrl, prompt);
+        return { url };
+      } catch (e) {
+        lastErr = e;
+        if (!looksLikeSafetyOr422(e)) break;
+        if (attempt < VEO_MAX_ATTEMPTS) {
+          const delayMs = 1500 + (attempt - 1) * 1500; // 1.5s, 3s
+          console.warn(
+            `[animateImage] Veo 422 attempt ${attempt}/${VEO_MAX_ATTEMPTS}; retrying in ${delayMs}ms…`,
+          );
+          await new Promise((r) => setTimeout(r, delayMs));
+        }
+      }
+    }
+    if (looksLikeSafetyOr422(lastErr)) {
+      console.warn(
+        "[animateImage] Veo refused all 3 attempts — falling back to Kling.",
+        lastErr instanceof Error ? lastErr.message : String(lastErr),
+      );
+      const url = await callAnimationModel("kling", imageUrl, prompt);
+      return { url };
+    }
+    throw lastErr;
+  }
+
   try {
     const url = await callAnimationModel(model, imageUrl, prompt);
     return { url };
   } catch (e) {
-    if ((model === "seedance" || model === "veo") && looksLikeSafetyOr422(e)) {
+    if (model === "seedance" && looksLikeSafetyOr422(e)) {
       console.warn(
-        `[animateImage] ${model} refused with safety/422 — retrying with Kling.`,
+        "[animateImage] Seedance refused with safety/422 — retrying with Kling.",
         e instanceof Error ? e.message : String(e),
       );
       const url = await callAnimationModel("kling", imageUrl, prompt);

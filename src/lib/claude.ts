@@ -871,11 +871,28 @@ export async function writeFcAnimationPrompt(args: {
   imagePrompt: string;
   kind: "actor" | "crazy";
 }): Promise<string> {
+  // Veo 3.1's safety filter aggressively flags prompts containing
+  // intensity words ("tight", "exertion", "struggle", "intense",
+  // "violent", "frantic", "chaotic", "moody", "dramatic") even when
+  // the actual motion described is benign. Empirically simpler
+  // prompts pass the filter at much higher rates than richly-styled
+  // cinematic descriptions, so the system prompt biases Haiku toward
+  // plain-English motion direction.
   const intent =
     args.kind === "actor"
-      ? "an actor reacting to chaos happening nearby — face / shoulders / posture motion lead, camera holds steady or pushes in subtly to amplify the reaction"
-      : "an absurd, chaotic, kinetic scene that should feel loud through-the-wall — subject motion leads with full energy, camera secondary";
-  const prompt = `Write a Veo 3.1 image-to-video animation prompt (15-50 words) for the following scene. Direct what MOVES in the 5-second clip. ${intent}. Be specific and concrete: describe the subject's primary motion, secondary motion, any environmental motion (papers flying, dust, water, etc.), and only THEN any camera motion. Avoid "subtle camera movement" or "slow steady push-in" generic phrasings. Do NOT mention text, captions, or UI. Return ONLY the prompt, no preamble, no quotes.
+      ? "An actor reacting to a sound nearby — face turns, eyes shift, small posture change. Plain language. Camera holds steady."
+      : "Energetic action in the scene — what the subject is doing. Plain language. Camera holds steady.";
+  const prompt = `Write a Veo 3.1 image-to-video animation prompt (10-30 words, shorter is better) for the following scene. Direct what MOVES in the 5-second clip in plain conversational English.
+
+${intent}
+
+CRITICAL — Veo's safety filter is sensitive. Avoid these word categories:
+- intensity adjectives: tight, intense, violent, frantic, chaotic, moody, dramatic, gritty
+- exertion language: struggle, strain, exertion, push hard, force
+- staging language: cinematic, atmospheric, gritty, noir, raw
+Stick to concrete, neutral verbs and short noun phrases. "She turns her head and looks toward the wall" beats "She snaps her gaze in shock at the violent thumping next door."
+
+Do NOT mention text, captions, or UI. Return ONLY the prompt, no preamble, no quotes.
 
 SCENE:
 ${args.imagePrompt.trim()}`;
@@ -884,7 +901,7 @@ ${args.imagePrompt.trim()}`;
       model: FC_ANIMATION_HAIKU,
       max_tokens: 256,
       system:
-        "You write tight, kinetic image-to-video animation prompts. Return only the prompt, no quotes, no preamble.",
+        "You write short, plain-English image-to-video animation prompts that pass conservative content filters. Avoid intensity / exertion / staging adjectives. Return only the prompt, no quotes, no preamble.",
       messages: [{ role: "user", content: prompt }],
     });
     const textBlock = resp.content.find((b) => b.type === "text");
