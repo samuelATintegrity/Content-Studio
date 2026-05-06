@@ -143,8 +143,12 @@ export interface Palette {
 export const PALETTES: Record<PaletteKey, Palette> = {
   classic:     { bg: "#FFFFFF", ink: "#000000", mute: "#9A9A9A", rule: "#000000", wordmark: "black" },
   cream:       { bg: "#F4EDE0", ink: "#1F1B16", mute: "#7B6E58", rule: "#1F1B16", wordmark: "black" },
-  pastel_pink: { bg: "#F6D9D9", ink: "#2A0F0F", mute: "#8C5050", rule: "#2A0F0F", wordmark: "black" },
-  pastel_blue: { bg: "#D7E3F0", ink: "#102338", mute: "#4D6786", rule: "#102338", wordmark: "black" },
+  // Brighter Easter-egg pastels (2026-05-08). The old dusty pink/blue
+  // (#F6D9D9 / #D7E3F0) read mauve and pale denim — pushed both into
+  // candy / robin's-egg territory while keeping the ink contrast > 14:1
+  // and the mute > 4.5:1 against the new bg for body legibility.
+  pastel_pink: { bg: "#FFCAD4", ink: "#2D1620", mute: "#7A3F5C", rule: "#2D1620", wordmark: "black" },
+  pastel_blue: { bg: "#BDE0FE", ink: "#0F2540", mute: "#2F5A88", rule: "#0F2540", wordmark: "black" },
   deep_navy:   { bg: "#102338", ink: "#F4EDE0", mute: "#A9B5C4", rule: "#F4EDE0", wordmark: "white" },
   forest:      { bg: "#1F3B2F", ink: "#F4EDE0", mute: "#A9B5A0", rule: "#F4EDE0", wordmark: "white" },
 };
