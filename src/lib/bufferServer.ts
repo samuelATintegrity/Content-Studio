@@ -68,6 +68,20 @@ function gqlString(value: string): string {
   return JSON.stringify(value);
 }
 
+// YouTube auto-classifies a video as a Short when it's vertical (9:16),
+// short (≤3 min), and has audio — we satisfy all three by construction.
+// The strongest tip-the-scale signal for edge cases is `#Shorts` in the
+// description, so we append it (idempotently) to YouTube post text.
+// The hashtag goes only in the description; the title is derived from
+// the first line and stays unpolluted.
+const SHORTS_TAG = "#Shorts";
+
+function ensureShortsHashtag(text: string): string {
+  if (/#shorts\b/i.test(text)) return text;
+  const trimmed = text.trimEnd();
+  return trimmed.length > 0 ? `${trimmed}\n\n${SHORTS_TAG}` : SHORTS_TAG;
+}
+
 export interface BufferProfileMap {
   [language: string]: Partial<Record<SocialPlatform, string>>;
 }
@@ -314,9 +328,17 @@ async function createSinglePost(args: {
   const thumbField = includeThumb ? `, thumbnailUrl: $thumb` : "";
   const thumbDecl = includeThumb ? `, $thumb: String!` : "";
 
+  // YouTube post text becomes the video description; we append #Shorts
+  // there (idempotently) so the algo classifies the upload as a Short
+  // even when the duration sits near the auto-detection edge. Title is
+  // derived from the original text's first line BEFORE the hashtag is
+  // appended, so it stays clean.
+  const platformText =
+    args.platform === "youtube" ? ensureShortsHashtag(args.text) : args.text;
+  const youtubeTitle =
+    args.platform === "youtube" ? deriveYoutubeTitle(args.text) : undefined;
   const metadataBlock = buildMetadataBlock(args.platform, args.assetType, {
-    youtubeTitle:
-      args.platform === "youtube" ? deriveYoutubeTitle(args.text) : undefined,
+    youtubeTitle,
   });
   const metadataField = metadataBlock ? `, ${metadataBlock}` : "";
 
@@ -344,7 +366,7 @@ async function createSinglePost(args: {
   `;
 
   const variables: Record<string, unknown> = {
-    text: args.text,
+    text: platformText,
     channelId: args.channelId,
     url: args.mediaUrl,
   };
