@@ -43,6 +43,7 @@ export interface FcScene1Pick {
   visualKey: string;
   conceptKey: string;
   imagePrompt: string;
+  animationPrompt: string;
 }
 
 export async function fcPickScene1(hint?: string): Promise<FcScene1Pick> {

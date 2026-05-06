@@ -27,7 +27,6 @@ import {
   subscribeMusicLibrary,
 } from "@/lib/musicLibrary";
 import { BufferQueueModal } from "./BufferQueueModal";
-import { FunnyCommercialSections } from "./FunnyCommercialSections";
 
 const FORMATS: Format[] = ["static", "video"];
 const LANGS: Language[] = ["en", "tl", "es", "zh"];
@@ -218,10 +217,6 @@ export function Sidebar({ drawerOpen = false, onClose }: SidebarProps = {}) {
       )}
 
       {format === "video" && subMode === "narration" && <SavedSetsSection />}
-
-      {format === "video" && subMode === "funny_commercial" && (
-        <FunnyCommercialSections />
-      )}
 
       {format === "video" && subMode !== "funny_commercial" && (
         <MusicLibrarySection />

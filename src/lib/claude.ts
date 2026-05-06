@@ -878,8 +878,13 @@ const FC_SCENE1_TOOL = {
             description:
               "Fully-formed Nano Banana 2 prompt (60-180 words). Pure visual — NO TEXT, no signs, no logos, no captions, no readable typography of any kind. Vertical 9:16. Photorealistic. Describe subject, action, setting (an apartment at night), lighting, lens vibe, motion. The image will be the FIRST frame of a 5-second Seedance animation, so make sure it's a frame the camera can extend forward in time naturally (mid-action, motion blur where appropriate, the subject in the act of being noisy).",
           },
+          animationPrompt: {
+            type: "string",
+            description:
+              "Seedance image-to-video animation prompt (15-50 words) tuned to THIS specific scene's action. Direct what should MOVE in the 5-second clip — subject motion is the priority, camera motion is secondary. Be specific and high-energy: 'the elephant pounds its feet rhythmically, hips swaying side to side, trunk swinging with the beat, dust kicking up; camera holds steady at low angle' beats 'animal moves'. Avoid generic 'subtle camera movement' or 'slow push-in' — the whole point of this scene is that it's loud and chaotic. Do NOT mention text, captions, or UI in the animation.",
+          },
         },
-        required: ["themeKey", "visualKey", "imagePrompt"],
+        required: ["themeKey", "visualKey", "imagePrompt", "animationPrompt"],
       },
     },
     required: ["pick"],
@@ -891,6 +896,7 @@ export interface FunnyCommercialScene1Pick {
   visualKey: string;
   conceptKey: string;     // "<themeKey>:<visualKey>" with fc: prefix tracking
   imagePrompt: string;
+  animationPrompt: string;
 }
 
 export async function generateFunnyCommercialScene1(
@@ -949,6 +955,7 @@ How to pick:
   2. Within that theme, pick ONE visual. Pick fresh — don't always reach for the first option.
   3. (Optional) You may invent a new visual within an existing theme if none fits perfectly. Use a snake_case visualKey of your own. Do NOT invent new themes.
   4. Write the imagePrompt — fully-formed, 60-180 words, photorealistic, vertical 9:16, describing a single first-frame moment that the Seedance animator can extend forward into 5 seconds of motion. NO TEXT IN THE IMAGE.
+  5. Write the animationPrompt — a Seedance-tuned direction for HOW the subject moves over the 5 seconds. Subject motion FIRST, camera motion second. Match the energy of the premise — these scenes are LOUD and chaotic, never "subtle camera push-in". 15-50 words.
 
 THEME LIBRARY:
 ${themeLibrary}${cooldownBlock}${hintBlock}
@@ -972,7 +979,7 @@ Return your pick by calling the ${FC_SCENE1_TOOL.name} tool exactly once.`;
         `${FC_SCENE1_TOOL.name} returned no tool_use block (stop_reason=${resp.stop_reason})`,
       );
     }
-    const input = toolBlock.input as { pick?: { themeKey?: string; visualKey?: string; imagePrompt?: string } };
+    const input = toolBlock.input as { pick?: { themeKey?: string; visualKey?: string; imagePrompt?: string; animationPrompt?: string } };
     const pick = input.pick;
     if (!pick || !pick.themeKey || !pick.visualKey || !pick.imagePrompt) {
       throw new Error(
@@ -982,11 +989,16 @@ Return your pick by calling the ${FC_SCENE1_TOOL.name} tool exactly once.`;
     const themeKey = pick.themeKey.trim();
     const visualKey = pick.visualKey.trim();
     const imagePrompt = stripDashes(pick.imagePrompt).trim();
+    // Fallback animation prompt: high-energy generic that beats the
+    // narration default if Claude somehow returns nothing here.
+    const animationPrompt =
+      stripDashes(pick.animationPrompt ?? "").trim() ||
+      "the subject moves with high-energy motion throughout the shot, fast-paced and dynamic, full kinetic action, camera holds steady to let the chaos play out";
     const conceptKey = `${themeKey}:${visualKey}`;
     // Record under fc: prefix so the cooldown does not pollute the
     // AI poster keyspace.
     void recordGeneratedConcepts([`fc:${conceptKey}`]);
-    return { themeKey, visualKey, conceptKey, imagePrompt };
+    return { themeKey, visualKey, conceptKey, imagePrompt, animationPrompt };
   } catch (e) {
     throw friendlyError(e);
   }

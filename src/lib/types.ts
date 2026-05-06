@@ -449,6 +449,13 @@ export interface FcSceneImage {
   id: string;
   url: string;            // R2-mirrored or fal CDN URL
   imagePrompt: string;    // the prompt that produced this image
+  // Seedance animation prompt tuned for THIS image's action. Authored
+  // by Claude alongside the imagePrompt so the camera/subject motion
+  // matches the absurd premise (e.g. "the elephant explodes into
+  // rhythmic footwork, fast-paced") instead of the bland real-estate
+  // default ("subtle camera movement, slow push-in"). Editable in the
+  // panel before the user clicks Animate.
+  animationPrompt?: string;
   themeKey?: string;      // which theme the prompt came from
   conceptKey?: string;    // <themeKey>:<visualKey> when applicable
   savedAt: number;

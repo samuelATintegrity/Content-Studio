@@ -7,17 +7,22 @@ import { VideoCard } from "@/components/VideoCard";
 import { ImageSetPanel } from "@/components/ImageSetPanel";
 import { GenerateFAB } from "@/components/GenerateFAB";
 import { ClipLibraryGrid } from "@/components/ClipLibraryGrid";
+import { FunnyCommercialPanel } from "@/components/FunnyCommercialPanel";
 import { MobileHeader } from "@/components/MobileHeader";
 import { useBatchStore } from "@/store/batchStore";
 
 export default function Home() {
-  const { format, posts, videoPosts, imageSlots, loading, error } = useBatchStore();
+  const { format, subMode, posts, videoPosts, imageSlots, loading, error } = useBatchStore();
   const isVideo = format === "video";
+  const isFunnyCommercial = isVideo && subMode === "funny_commercial";
   const hasStaticPosts = posts.length > 0;
   const hasImageSet = imageSlots.length > 0;
   const hasVideoPosts = videoPosts.length > 0;
   const showStaticEmpty = !isVideo && !hasStaticPosts && !loading;
-  const showVideoEmpty = isVideo && !hasImageSet && !loading;
+  // The funny-commercial flow always shows its own panel as the main
+  // body — no clip-library "ready to render" empty state. Hide that
+  // path when in FC mode.
+  const showVideoEmpty = isVideo && !isFunnyCommercial && !hasImageSet && !loading;
   // Mobile drawer state — desktop ignores this entirely (Sidebar uses
   // lg:translate-x-0 to stay pinned regardless).
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -36,7 +41,10 @@ export default function Home() {
             )}
             {showStaticEmpty && <EmptyState video={false} />}
             {showVideoEmpty && <EmptyState video={true} />}
-            {loading && !hasStaticPosts && !hasImageSet && <LoadingState video={isVideo} />}
+            {isFunnyCommercial && <FunnyCommercialPanel />}
+            {loading && !hasStaticPosts && !hasImageSet && !isFunnyCommercial && (
+              <LoadingState video={isVideo} />
+            )}
 
             {!isVideo && hasStaticPosts && (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4 gap-6 auto-rows-fr">
