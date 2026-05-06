@@ -262,12 +262,26 @@ export function ComposeShot() {
   return (
     <Section title="Compose new shot">
       <div className="flex flex-col gap-3 p-4 rounded-2xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-neutral-950">
-        {/* Kind toggle */}
+        {/* Kind toggle. Switching kinds resets in-progress state so a
+            stale preview from the prior kind doesn't bleed into the
+            new compose, which previously hid the Generate button. */}
         <div className="flex items-center gap-2">
-          <KindPill selected={kind === "actor"} onClick={() => setKind("actor")}>
+          <KindPill
+            selected={kind === "actor"}
+            onClick={() => {
+              setKind("actor");
+              reset();
+            }}
+          >
             Actor
           </KindPill>
-          <KindPill selected={kind === "crazy"} onClick={() => setKind("crazy")}>
+          <KindPill
+            selected={kind === "crazy"}
+            onClick={() => {
+              setKind("crazy");
+              reset();
+            }}
+          >
             Crazy
           </KindPill>
           {kind === "actor" && actor && (
@@ -491,15 +505,26 @@ export function ComposeShot() {
         ) : (
           // ── Continuity-off render (original Nano-then-Veo path) ─
           <>
-            {phase === "idle" && (
-              <div className="flex justify-end">
+            {/* Idle OR a stale phase with no preview to render →
+                always show the primary "Generate image" CTA. The
+                `!shotImageUrl` guard catches the edge case where
+                phase advanced past idle but the image was cleared
+                (e.g. mid-flight reset, kind swap), preventing the
+                panel from going blank. */}
+            {(phase === "idle" || !shotImageUrl) && phase !== "image" && (
+              <div className="flex items-center justify-between gap-3 pt-1 border-t border-neutral-200 dark:border-neutral-900">
+                <p className="text-[11px] text-neutral-500 leading-snug">
+                  {kind === "actor"
+                    ? "Pick an actor + describe the shot, then generate the first frame."
+                    : "Describe the absurd subject + (optionally) pick a location, then generate the first frame."}
+                </p>
                 <button
                   type="button"
                   onClick={composeImage}
-                  disabled={!!busy}
-                  className="px-4 py-2 rounded-full text-[12px] font-semibold bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-900 disabled:opacity-60"
+                  disabled={!!busy || !prompt.trim()}
+                  className="px-5 py-2.5 rounded-full text-[13px] font-semibold bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-900 disabled:opacity-50 shrink-0"
                 >
-                  Generate image
+                  Generate image →
                 </button>
               </div>
             )}
