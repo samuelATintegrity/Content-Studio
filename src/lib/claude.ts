@@ -174,7 +174,13 @@ export async function generateBatch(
   try {
     const resp = await client().messages.create({
       model: MODEL,
-      max_tokens: 8192,
+      // 16384 — STATIC_BATCH_POSTS=10 with 3-5 sentence captions + textZone
+      // + headline can crowd 8K once the tool-call boilerplate is added,
+      // and a partial truncation surfaces as stop_reason=tool_use with a
+      // missing `posts` field (the model picked the tool, ran out mid-
+      // JSON, the SDK serialized the partial). Bumped to absorb that
+      // edge without changing the per-post field shape.
+      max_tokens: 16384,
       system: [
         {
           type: "text",
@@ -556,10 +562,12 @@ type GraphicTool = { name: string; description: string; input_schema: Record<str
 async function callTool<T>(prompt: string, tool: GraphicTool): Promise<T[]> {
   const resp = await client().messages.create({
     model: MODEL,
-    // 8192 — the DYK prompt now spans 4 angle pools + tighter field
-    // descriptions, and the AI poster tool call carries a 60-180-word
-    // imagePrompt per card. 4096 was clipping mid-call on long batches.
-    max_tokens: 8192,
+    // 16384 — graphic-batch tool calls (DYK + AI poster especially) carry
+    // 60-180-word imagePrompts per card and 3-5 sentence caption bodies.
+    // 8K was tight; partial truncations surfaced as stop_reason=tool_use
+    // with malformed/missing `posts` payloads. Bumped to absorb the
+    // edge without restructuring the per-post field shape.
+    max_tokens: 16384,
     system: [
       { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
     ],
