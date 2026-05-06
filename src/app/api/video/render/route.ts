@@ -21,15 +21,16 @@ interface Body {
   // music[abs(idx) % count]). App sets it across a batch so the 3
   // influencer renders pick 3 distinct music files.
   musicShuffleIndex?: number;
-  // Funny Commercial fields. Only meaningful when mode === "funny_commercial".
-  // clipUrls in that mode is [scene1Url, scene2ActorUrl] in scene order;
-  // the worker bakes Scene 3 (black + CTA) and Scene 4 (logo).
-  fcScene2Text?: string;
-  fcScene3Text?: string;
-  fcScene1DurationS?: number;
-  fcScene2DurationS?: number;
-  fcScene3DurationS?: number;
-  fcScene4DurationS?: number;
+  // Funny Commercial v2 — variable-length timeline of pre-animated
+  // shots. clipUrls is empty for this mode (the worker pulls per-slot
+  // clips from fcTimeline). The worker also handles per-slot narration
+  // TTS inline via ElevenLabs.
+  fcTimeline?: Array<{
+    clipUrl: string;
+    durationS?: number;
+    overlay?: { text: string; narrate: boolean; voiceId?: string };
+  }>;
+  fcLogoOutroDurationS?: number;
   fcMusicTrackUrl?: string | null;
 }
 
@@ -49,7 +50,7 @@ export async function POST(req: Request) {
         { status: 400 },
       );
     }
-    if (!Array.isArray(body.clipUrls) || body.clipUrls.length === 0) {
+    if (!isFc && (!Array.isArray(body.clipUrls) || body.clipUrls.length === 0)) {
       return NextResponse.json({ error: "clipUrls is required" }, { status: 400 });
     }
     if (body.mode === "influencer") {
@@ -67,24 +68,32 @@ export async function POST(req: Request) {
       }
     }
     if (isFc) {
-      if (body.clipUrls.length !== 2) {
+      if (!Array.isArray(body.fcTimeline) || body.fcTimeline.length === 0) {
         return NextResponse.json(
-          { error: "funny_commercial requires exactly 2 clipUrls (scene1, scene2)" },
+          { error: "fcTimeline (non-empty array) is required for funny_commercial mode" },
           { status: 400 },
         );
       }
-      if (!body.fcScene2Text?.trim() || !body.fcScene3Text?.trim()) {
-        return NextResponse.json(
-          { error: "fcScene2Text and fcScene3Text are required for funny_commercial mode" },
-          { status: 400 },
-        );
+      for (const slot of body.fcTimeline) {
+        if (!slot.clipUrl) {
+          return NextResponse.json(
+            { error: "every fcTimeline slot needs a clipUrl" },
+            { status: 400 },
+          );
+        }
       }
     }
     const jobId = await enqueueRender({
-      script: body.script,
+      script: body.script ?? "",
       language: body.language,
       contentType: body.contentType,
-      clipUrls: body.clipUrls,
+      // Worker still wants a clipUrls array on its base shape; for
+      // funny_commercial we pass the timeline urls so the validator
+      // upstream sees a non-empty array, but the worker reads the
+      // canonical list from fcTimeline.
+      clipUrls: isFc
+        ? (body.fcTimeline ?? []).map((s) => s.clipUrl)
+        : body.clipUrls,
       mode: body.mode,
       voiceId: body.voiceId,
       introClipUrl: body.introClipUrl,
@@ -92,12 +101,8 @@ export async function POST(req: Request) {
       outroClipUrl: body.outroClipUrl,
       outroCaptionCutoffPhrase: body.outroCaptionCutoffPhrase,
       musicShuffleIndex: body.musicShuffleIndex,
-      fcScene2Text: body.fcScene2Text,
-      fcScene3Text: body.fcScene3Text,
-      fcScene1DurationS: body.fcScene1DurationS,
-      fcScene2DurationS: body.fcScene2DurationS,
-      fcScene3DurationS: body.fcScene3DurationS,
-      fcScene4DurationS: body.fcScene4DurationS,
+      fcTimeline: body.fcTimeline,
+      fcLogoOutroDurationS: body.fcLogoOutroDurationS,
       fcMusicTrackUrl: body.fcMusicTrackUrl,
     });
     return NextResponse.json({ jobId });

@@ -1,113 +1,57 @@
 "use client";
 
-// Funny Commercial — batch orchestration.
+// Funny Commercial v2 — batch dispatch.
 //
-// Validates the user's per-batch selections, resolves the Scene 3 CTA
-// to the active language (auto-translating + caching when needed), and
-// dispatches a single render job to the worker. The result is a
-// VideoPost with mode === "funny_commercial" so the existing
-// VideoCard + polling machinery picks it up unchanged.
+// Walks the per-batch timeline in batchStore, hydrates each slot with
+// its referenced shot's videoUrl, and POSTs the timeline payload to
+// /api/video/render. Worker handles TTS narration inline. Result is a
+// VideoPost rendered by the existing VideoCard machinery.
 
 import { useBatchStore } from "@/store/batchStore";
-import {
-  listFcScene1Videos,
-  listFcScene2Actors,
-  listFcScene3Phrases,
-  setFcScene3Translation,
-} from "@/lib/funnyCommercialLibrary";
-import { fcTranslate } from "@/lib/funnyCommercial";
+import { listFcShots } from "@/lib/funnyCommercialShots";
 import { startFunnyCommercialRender } from "@/lib/videoClient";
-import type { Language, VideoPost } from "@/lib/types";
+import type { VideoPost } from "@/lib/types";
 
 function newId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
-}
-
-// Resolve a Scene 3 phrase to text in the active language. If the user
-// typed free-text (no phraseId), translate live. If they picked a
-// saved phrase, use the cached translation when present, otherwise
-// translate and cache it back into the library so subsequent renders
-// in the same language are free + reviewable.
-async function resolveScene3Text(args: {
-  language: Language;
-  phraseId: string | null;
-  freeText: string;
-}): Promise<string> {
-  const { language, phraseId, freeText } = args;
-  if (language === "en") {
-    if (phraseId) {
-      const phrase = listFcScene3Phrases().find((p) => p.id === phraseId);
-      if (phrase) return phrase.en;
-    }
-    return freeText.trim();
-  }
-  // Non-English target.
-  if (phraseId) {
-    const phrase = listFcScene3Phrases().find((p) => p.id === phraseId);
-    if (!phrase) {
-      // Phrase was deleted between selection and render; fall back to free text.
-      if (!freeText.trim()) throw new Error("Scene 3 text is empty");
-      return await fcTranslate(freeText, language);
-    }
-    const cached = phrase[language];
-    if (typeof cached === "string" && cached.length > 0) return cached;
-    const translated = await fcTranslate(phrase.en, language);
-    setFcScene3Translation(phrase.id, language, translated);
-    return translated;
-  }
-  if (!freeText.trim()) throw new Error("Scene 3 text is empty");
-  return await fcTranslate(freeText, language);
 }
 
 export async function generateFunnyCommercialBatch(): Promise<void> {
   const state = useBatchStore.getState();
   const {
     language,
-    fcSelectedScene1VideoId,
-    fcSelectedScene2ActorId,
-    fcScene2Text,
-    fcScene3PhraseId,
-    fcScene3Text,
+    fcTimelineItems,
     setLoading,
     setError,
     setVideoPosts,
     updateVideoPost,
   } = state;
 
-  // ── Validation ────────────────────────────────────────────────────
-  if (!fcSelectedScene1VideoId) {
-    setError("Pick a Scene 1 video first.");
+  if (fcTimelineItems.length === 0) {
+    setError("Add at least one shot to the timeline first.");
     return;
   }
-  if (!fcSelectedScene2ActorId) {
-    setError("Pick a Scene 2 actor video first.");
-    return;
-  }
-  if (!fcScene2Text.trim()) {
-    setError("Scene 2 text overlay is empty.");
-    return;
-  }
-  if (!fcScene3Text.trim() && !fcScene3PhraseId) {
-    setError("Scene 3 CTA is empty.");
-    return;
-  }
-  const scene1 = listFcScene1Videos().find((v) => v.id === fcSelectedScene1VideoId);
-  if (!scene1) {
-    setError("Selected Scene 1 video is no longer in the library.");
-    return;
-  }
-  const scene2 = listFcScene2Actors().find((v) => v.id === fcSelectedScene2ActorId);
-  if (!scene2) {
-    setError("Selected Scene 2 actor is no longer in the library.");
+
+  // Resolve every slot's shot — fail fast if any reference is dead.
+  const allShots = listFcShots();
+  const resolved = fcTimelineItems.map((item) => {
+    const shot = allShots.find((s) => s.id === item.shotId);
+    return { item, shot };
+  });
+  const missing = resolved.filter((r) => !r.shot || !r.shot.videoUrl);
+  if (missing.length > 0) {
+    setError(
+      `${missing.length} timeline slot${missing.length === 1 ? "" : "s"} reference a shot that hasn't been animated yet.`,
+    );
     return;
   }
 
   setError(null);
   setLoading(true);
 
-  // Single-card batch — funny_commercial produces one ad per click.
-  // VideoPost shape mirrors the narration / influencer flow so the
-  // existing VideoCard + polling code work without changes.
+  // Single-clip "batch" — one ad per click. Mirrors the
+  // narration/influencer flows so the existing VideoCard + polling
+  // pick it up unchanged.
   const id = newId("fc");
   const initial: VideoPost = {
     id,
@@ -117,26 +61,27 @@ export async function generateFunnyCommercialBatch(): Promise<void> {
     jobId: null,
     state: "queued",
     progress: 0.05,
-    mode: "narration", // legacy union — see note below
+    mode: "narration",                 // legacy union — VideoCard uses this only for label rendering
     language,
   };
   setVideoPosts([initial]);
 
   try {
-    // Resolve Scene 3 text (translate + cache if needed).
-    const scene3Text = await resolveScene3Text({
-      language,
-      phraseId: fcScene3PhraseId,
-      freeText: fcScene3Text,
-    });
+    const timeline = resolved.map(({ item, shot }) => ({
+      clipUrl: shot!.videoUrl!,
+      durationS: item.durationS,
+      overlay: item.overlay
+        ? {
+            text: item.overlay.text,
+            narrate: item.overlay.narrate,
+            voiceId: item.overlay.voiceId,
+          }
+        : undefined,
+    }));
 
-    // Dispatch the render job.
     const { jobId } = await startFunnyCommercialRender({
       language,
-      scene1VideoUrl: scene1.url,
-      scene2VideoUrl: scene2.url,
-      scene2Text: fcScene2Text.trim(),
-      scene3Text,
+      timeline,
     });
     updateVideoPost(id, { jobId, state: "queued", progress: 0.1 });
   } catch (e) {

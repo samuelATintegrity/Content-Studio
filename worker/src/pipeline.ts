@@ -307,90 +307,139 @@ async function runInfluencerPipeline(
   });
 }
 
-// Funny Commercial pipeline. Scene 1 + Scene 2 are pre-animated mp4s
-// the user picked from their libraries; Scene 3 (black + CTA) and
-// Scene 4 (logo) are synthesized at compose time. ASS subtitles carry
-// both text overlays. No TTS, no STT — text comes pre-formed (and
-// pre-translated) from the app.
+// Funny Commercial v2 pipeline. The app sends an ordered timeline of
+// pre-animated clips (variable count). Each slot may carry a text
+// overlay; if the slot's `narrate` flag is set, the worker TTSes the
+// overlay text inline via ElevenLabs and mixes it on top of the clip
+// audio. After the last timeline clip, the worker appends the bundled
+// logo bumper. No fixed scene count, no app-side translation — text
+// is rendered as-typed.
 async function runFunnyCommercialPipeline(
   jobId: string,
   req: RenderRequest,
   workDir: string,
 ): Promise<void> {
-  if (req.clipUrls.length !== 2) {
-    throw new Error("funny_commercial requires exactly 2 clipUrls (scene1, scene2)");
-  }
-  if (!req.fcScene2Text?.trim() || !req.fcScene3Text?.trim()) {
-    throw new Error("funny_commercial requires fcScene2Text and fcScene3Text");
+  if (!Array.isArray(req.fcTimeline) || req.fcTimeline.length === 0) {
+    throw new Error("funny_commercial requires a non-empty fcTimeline array");
   }
 
-  const scene1S = req.fcScene1DurationS ?? 5;
-  const scene2S = req.fcScene2DurationS ?? 4;
-  const scene3S = req.fcScene3DurationS ?? 3;
-  const scene4S = req.fcScene4DurationS ?? 2;
+  const logoOutroS = req.fcLogoOutroDurationS ?? 2;
 
-  // ── Stage: Footage download ────────────────────────────────────────
-  setState(jobId, "footage", 0.3);
-  const downloaded = await downloadClips(req.clipUrls, workDir);
-  if (downloaded.length !== 2) {
-    throw new Error(`expected 2 clips, downloaded ${downloaded.length}`);
+  // ── Stage: Footage download ──────────────────────────────────────
+  setState(jobId, "footage", 0.25);
+  const clipUrls = req.fcTimeline.map((t) => t.clipUrl);
+  const downloaded = await downloadClips(clipUrls, workDir);
+  if (downloaded.length !== clipUrls.length) {
+    throw new Error(
+      `expected ${clipUrls.length} clips, downloaded ${downloaded.length}`,
+    );
   }
-  const scene1Path = downloaded[0]!.filePath;
-  const scene2Path = downloaded[1]!.filePath;
 
-  // ── Stage: Build subtitles ────────────────────────────────────────
-  // Scene 2 text appears 0.6s into Scene 2 (lets the actor settle in
-  // visually) and runs through the end of Scene 2. Scene 3 text shows
-  // for the full duration of Scene 3 (subtle 240ms fade in/out via the
-  // builder). Times are absolute against the final concatenated video.
-  const scene2Start = scene1S + 0.6;
-  const scene2End = scene1S + scene2S;
-  const scene3Start = scene1S + scene2S;
-  const scene3End = scene1S + scene2S + scene3S;
-  const ass = buildFunnyCommercialSubtitles(
-    [
-      { text: req.fcScene2Text, startS: scene2Start, endS: scene2End, placement: "scene2" },
-      { text: req.fcScene3Text, startS: scene3Start, endS: scene3End, placement: "scene3" },
-    ],
-    {
-      fontFamily: "Geist",
-      scene2FontSize: 88,
-      scene3FontSize: 96,
-      scene2MarginV: 240,
-      outlineWidth: 5,
-      shadowDepth: 4,
-      fadeMs: 240,
-    },
-  );
+  // ── Stage: Probe per-clip durations + compute slot start times ───
+  // Each slot's render duration is the smaller of (caller's override,
+  // probed clip length, 5s default). Slot start times accumulate so
+  // overlays + narrations can be anchored absolutely.
+  const slotDurations: number[] = [];
+  for (let i = 0; i < req.fcTimeline.length; i++) {
+    const slot = req.fcTimeline[i]!;
+    const probed = await probeDurationS(downloaded[i]!.filePath).catch(() => 5);
+    const max = probed > 0 ? probed : 5;
+    const target = slot.durationS ? Math.min(slot.durationS, max) : max;
+    slotDurations.push(target);
+  }
+  const slotStarts: number[] = [];
+  let acc = 0;
+  for (const d of slotDurations) {
+    slotStarts.push(acc);
+    acc += d;
+  }
+  const totalClipsS = acc;
+
+  // ── Stage: TTS narrations (per-slot, inline) ─────────────────────
+  setState(jobId, "tts", 0.4);
+  type Narration = {
+    slotIndex: number;
+    mp3Path: string;
+    durationS: number;
+    startS: number;
+  };
+  const narrations: Narration[] = [];
+  for (let i = 0; i < req.fcTimeline.length; i++) {
+    const slot = req.fcTimeline[i]!;
+    if (!slot.overlay?.narrate || !slot.overlay.text.trim()) continue;
+    const voiceId = slot.overlay.voiceId ?? voiceIdFor(req.language);
+    const ttsDir = await mkdtemp(join(workDir, `narr-${i}-`));
+    try {
+      const tts = await synthesize(slot.overlay.text, voiceId, ttsDir);
+      narrations.push({
+        slotIndex: i,
+        mp3Path: tts.mp3Path,
+        durationS: tts.durationS,
+        startS: slotStarts[i]!,
+      });
+    } catch (e) {
+      // Don't fail the whole render if one TTS call fails — the slot
+      // just renders with no narration.
+      console.warn(
+        `[fc] narration TTS failed for slot ${i}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  }
+
+  // ── Stage: Build ASS subtitles for overlays ──────────────────────
+  // Each overlay starts 0.4s into its slot (lets the cut breathe) and
+  // runs to the end of the slot. Centered styling.
+  const overlaySegments = req.fcTimeline
+    .map((slot, i) => {
+      if (!slot.overlay?.text.trim()) return null;
+      const start = slotStarts[i]! + 0.4;
+      const end = slotStarts[i]! + slotDurations[i]!;
+      return {
+        text: slot.overlay.text.trim(),
+        startS: start,
+        endS: end,
+        placement: "scene3" as const,
+      };
+    })
+    .filter((s): s is NonNullable<typeof s> => s !== null);
+  const ass = buildFunnyCommercialSubtitles(overlaySegments, {
+    fontFamily: "Geist",
+    scene2FontSize: 88,
+    scene3FontSize: 96,
+    scene2MarginV: 240,
+    outlineWidth: 5,
+    shadowDepth: 4,
+    fadeMs: 240,
+  });
   const assPath = join(workDir, "fc-subs.ass");
   await writeFile(assPath, ass, "utf8");
 
-  // ── Stage: Render ──────────────────────────────────────────────────
-  setState(jobId, "rendering", 0.6);
+  // ── Stage: Render ────────────────────────────────────────────────
+  setState(jobId, "rendering", 0.65);
   const finalPath = join(workDir, "final.mp4");
-  // Music is opt-in. The muffled-noise gag IS the audio for Scenes 1+2;
-  // an underlying music bed often steps on the joke. Default off.
   const musicPath = req.fcMusicTrackUrl
     ? await downloadMusicByUrl(req.fcMusicTrackUrl, workDir).catch(() => null)
     : null;
 
   await composeFunnyCommercial({
-    scene1Path,
-    scene2Path,
+    clipPaths: downloaded.map((d) => d.filePath),
+    slotDurations,
+    narrations: narrations.map((n) => ({
+      mp3Path: n.mp3Path,
+      startS: n.startS,
+      durationS: n.durationS,
+    })),
     assPath,
     fontsDir: FONTS_DIR,
     outPath: finalPath,
-    scene1DurationS: scene1S,
-    scene2DurationS: scene2S,
-    scene3DurationS: scene3S,
-    scene4DurationS: scene4S,
+    logoOutroDurationS: logoOutroS,
     musicPath,
   });
 
-  // ── Stage: Upload ─────────────────────────────────────────────────
+  // ── Stage: Upload ────────────────────────────────────────────────
   setState(jobId, "uploading", 0.9);
   const url = await uploadVideo(finalPath, `videos/${jobId}.mp4`);
-  const totalDurationS = scene1S + scene2S + scene3S + scene4S;
+  const totalDurationS = totalClipsS + logoOutroS;
   updateJob(jobId, { state: "ready", progress: 1, videoUrl: url, durationS: totalDurationS });
 }
 

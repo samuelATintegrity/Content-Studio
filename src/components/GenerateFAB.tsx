@@ -26,11 +26,7 @@ export function GenerateFAB() {
   const selectedIntroClipUrl = useBatchStore((s) => s.selectedIntroClipUrl);
   const selectedOutroClipUrl = useBatchStore((s) => s.selectedOutroClipUrl);
   const selectedMessageTheme = useBatchStore((s) => s.selectedMessageTheme);
-  const fcSelectedScene1VideoId = useBatchStore((s) => s.fcSelectedScene1VideoId);
-  const fcSelectedScene2ActorId = useBatchStore((s) => s.fcSelectedScene2ActorId);
-  const fcScene2Text = useBatchStore((s) => s.fcScene2Text);
-  const fcScene3PhraseId = useBatchStore((s) => s.fcScene3PhraseId);
-  const fcScene3Text = useBatchStore((s) => s.fcScene3Text);
+  const fcTimelineItems = useBatchStore((s) => s.fcTimelineItems);
   const isVideo = format === "video";
   const isInfluencer = isVideo && subMode === "influencer";
   const isFunnyCommercial = isVideo && subMode === "funny_commercial";
@@ -69,21 +65,16 @@ export function GenerateFAB() {
     }
   }
 
-  // Funny Commercial flow gating. Cheaper than influencer — just needs
-  // a Scene 1 clip, a Scene 2 actor, and both text fields.
+  // Funny Commercial v2 flow gating. The panel owns the full
+  // composition + render UI, so the FAB really only fires when the
+  // timeline has at least one shot.
   let fcLabel: string | null = null;
   let fcReady = false;
   if (isFunnyCommercial) {
-    if (!fcSelectedScene1VideoId) {
-      fcLabel = "Pick a Scene 1 clip";
-    } else if (!fcSelectedScene2ActorId) {
-      fcLabel = "Pick a Scene 2 actor";
-    } else if (!fcScene2Text.trim()) {
-      fcLabel = "Add Scene 2 text";
-    } else if (!fcScene3Text.trim() && !fcScene3PhraseId) {
-      fcLabel = "Add Scene 3 CTA";
+    if (fcTimelineItems.length === 0) {
+      fcLabel = "Add a shot to the timeline";
     } else {
-      fcLabel = "Render commercial";
+      fcLabel = `Render commercial (${fcTimelineItems.length})`;
       fcReady = true;
     }
   }

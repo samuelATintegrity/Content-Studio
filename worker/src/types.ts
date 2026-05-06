@@ -58,17 +58,23 @@ export interface RenderRequest {
   // and a fresh batchSeed per batch varies which 3 files are picked.
   // Falls back to random when undefined.
   musicShuffleIndex?: number;
-  // Funny Commercial mode. clipUrls = [scene1Url, scene2ActorUrl] in
-  // scene order; the worker bakes Scene 3 (black + CTA) and Scene 4
-  // (logo) on the fly. Both text overlays come pre-formed from the
-  // app — Scene 3 is already translated to the target language.
-  fcScene2Text?: string;
-  fcScene3Text?: string;
-  fcScene1DurationS?: number;
-  fcScene2DurationS?: number;
-  fcScene3DurationS?: number;
-  fcScene4DurationS?: number;
+  // Funny Commercial v2 (storyboard) — variable-length timeline of
+  // pre-animated shots. Each slot may carry a text overlay (and an
+  // optional narration that the worker TTSes inline). The worker
+  // appends a logo bumper after the last clip.
+  fcTimeline?: FcTimelineRenderItem[];
+  fcLogoOutroDurationS?: number;
   fcMusicTrackUrl?: string | null;
+}
+
+export interface FcTimelineRenderItem {
+  clipUrl: string;
+  durationS?: number;        // optional trim; defaults to clip duration
+  overlay?: {
+    text: string;
+    narrate: boolean;        // worker TTSes this text via ElevenLabs
+    voiceId?: string;        // optional voice override
+  };
 }
 
 export interface RenderResponse {

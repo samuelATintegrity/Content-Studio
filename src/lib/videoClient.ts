@@ -124,36 +124,30 @@ export async function startVideoRender(args: {
   return res.json();
 }
 
-// Funny Commercial render. Same /render endpoint, mode-dispatched on
-// the worker. clipUrls = [scene1Url, scene2ActorUrl] in scene order.
-// Scene 3 (black + CTA) and Scene 4 (logo) are baked into the worker.
+// Funny Commercial v2 render. Variable-length timeline of pre-animated
+// shots; each slot may carry an overlay (text + optional narration
+// that the worker TTSes inline). The worker appends a logo bumper.
 export async function startFunnyCommercialRender(args: {
   language: Language;
-  scene1VideoUrl: string;
-  scene2VideoUrl: string;
-  scene2Text: string;
-  scene3Text: string;        // already translated to the active language
-  scene1DurationS?: number;
-  scene2DurationS?: number;
-  scene3DurationS?: number;
-  scene4DurationS?: number;
+  timeline: Array<{
+    clipUrl: string;
+    durationS?: number;
+    overlay?: { text: string; narrate: boolean; voiceId?: string };
+  }>;
+  logoOutroDurationS?: number;
   musicTrackUrl?: string | null;
 }): Promise<{ jobId: string }> {
   const res = await fetch("/api/video/render", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      script: "",                       // unused for funny_commercial; route accepts empty
+      script: "",                       // unused for funny_commercial
       language: args.language,
       contentType: "good_agents",       // caption framing fallback
-      clipUrls: [args.scene1VideoUrl, args.scene2VideoUrl],
+      clipUrls: args.timeline.map((t) => t.clipUrl),
       mode: "funny_commercial",
-      fcScene2Text: args.scene2Text,
-      fcScene3Text: args.scene3Text,
-      fcScene1DurationS: args.scene1DurationS,
-      fcScene2DurationS: args.scene2DurationS,
-      fcScene3DurationS: args.scene3DurationS,
-      fcScene4DurationS: args.scene4DurationS,
+      fcTimeline: args.timeline,
+      fcLogoOutroDurationS: args.logoOutroDurationS,
       fcMusicTrackUrl: args.musicTrackUrl ?? null,
     }),
   });

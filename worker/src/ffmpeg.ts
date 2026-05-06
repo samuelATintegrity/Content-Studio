@@ -327,60 +327,57 @@ export async function compose(args: ComposeArgs): Promise<void> {
   await runFfmpeg(ffArgs, cwd);
 }
 
-// ── Funny Commercial compose ───────────────────────────────────────
+// ── Funny Commercial v2 compose ────────────────────────────────────
 //
-// Single-pass compose for the 4-scene comedic ad:
-//   Scene 1 (5s default): scene1.mp4 (Seedance-animated absurd scene),
-//     native audio passes through.
-//   Scene 2 (4s default): scene2-actor.mp4 (person lying in bed, often
-//     near-static), audio = scene1's native audio low-pass-filtered to
-//     ~400Hz (the "muffled noises through the wall" gag) at reduced
-//     volume.
-//   Scene 3 (3s default): solid black, centered translated CTA text
-//     burned in via the ASS subtitles file. Silent.
-//   Scene 4 (2s default): solid black with the brand outro logo
-//     centered. Silent.
+// Variable-length timeline of pre-animated 9:16 clips, each trimmed
+// to its slot duration, concatenated, with ASS-burned text overlays
+// per slot, optional ElevenLabs narrations mixed at slot start times,
+// and a logo bumper appended at the end. All clips' native audio
+// (Veo generates audio for every clip) plays through; narrations sit
+// on top via amix.
 //
-// All scenes are scaled/cropped to 1080x1920 and concatenated. ASS
-// subtitles are burned over the concatenated stream. Optional music
-// track plays at low volume across the whole ad.
+// This replaces the v1 4-scene fixed compose. The muffled-through-the-
+// wall gag from v1 is gone — that was specific to the bedroom shot
+// pattern and the new flow gives the user explicit per-slot control.
 
-const FC_DEFAULT_SCENE1_S = 5;
-const FC_DEFAULT_SCENE2_S = 4;
-const FC_DEFAULT_SCENE3_S = 3;
-const FC_DEFAULT_SCENE4_S = 2;
-const FC_MUFFLED_LOWPASS_HZ = 400;
-const FC_MUFFLED_VOLUME = 0.45;
+const FC_NARRATION_VOLUME = 0.95;
+const FC_CLIP_AUDIO_VOLUME = 0.55;  // duck under narration when present
 const FC_MUSIC_VOLUME = 0.18;
 
+export interface FcNarrationItem {
+  mp3Path: string;
+  startS: number;
+  durationS: number;
+}
+
 export interface ComposeFunnyCommercialArgs {
-  scene1Path: string;
-  scene2Path: string;
-  outroLogoPath?: string | null;     // PNG with transparent or solid bg
-  assPath: string;                   // ASS file with the two text overlays
+  clipPaths: string[];
+  slotDurations: number[];           // parallel to clipPaths
+  narrations: FcNarrationItem[];     // may be empty
+  outroLogoPath?: string | null;
+  logoOutroDurationS: number;
+  assPath: string;
   fontsDir: string;
   outPath: string;
-  scene1DurationS?: number;
-  scene2DurationS?: number;
-  scene3DurationS?: number;
-  scene4DurationS?: number;
   musicPath?: string | null;
 }
 
 export async function composeFunnyCommercial(args: ComposeFunnyCommercialArgs): Promise<void> {
-  const s1 = args.scene1DurationS ?? FC_DEFAULT_SCENE1_S;
-  const s2 = args.scene2DurationS ?? FC_DEFAULT_SCENE2_S;
-  const s3 = args.scene3DurationS ?? FC_DEFAULT_SCENE3_S;
-  const s4 = args.scene4DurationS ?? FC_DEFAULT_SCENE4_S;
-  const total = s1 + s2 + s3 + s4;
+  if (args.clipPaths.length === 0) {
+    throw new Error("composeFunnyCommercial: no clips provided");
+  }
+  if (args.clipPaths.length !== args.slotDurations.length) {
+    throw new Error("composeFunnyCommercial: clipPaths.length must equal slotDurations.length");
+  }
 
   const cwd = dirname(args.assPath);
   const assRel = basename(args.assPath);
   const escapedAss = escapeForFilter(assRel);
   const escapedFonts = escapeForFilter(args.fontsDir);
 
-  // Outro logo lookup: caller-supplied → bundled assets dir → fall back
-  // to "no logo" (just black for Scene 4).
+  const totalClipsS = args.slotDurations.reduce((a, b) => a + b, 0);
+  const totalDurationS = totalClipsS + args.logoOutroDurationS;
+
   let outroLogoPath: string | null = args.outroLogoPath ?? null;
   if (!outroLogoPath) {
     const candidate = join(ASSETS_DIR, "outro.png");
@@ -390,31 +387,25 @@ export async function composeFunnyCommercial(args: ComposeFunnyCommercialArgs): 
   }
 
   let musicPath: string | null = args.musicPath ?? null;
-  if (musicPath && !(await fileExists(musicPath))) {
-    musicPath = null;
-  }
+  if (musicPath && !(await fileExists(musicPath))) musicPath = null;
 
-  // Build inputs in this order: scene1, scene2, [outroLogo], silenceSrc, [music].
-  const inputs: string[] = [
-    "-i", args.scene1Path,
-    "-i", args.scene2Path,
-  ];
-  let nextIdx = 2;
+  // ── Inputs ───────────────────────────────────────────────────────
+  // Order: clips, [outro logo], narrations, [music].
+  const inputs: string[] = [];
+  for (const clip of args.clipPaths) inputs.push("-i", clip);
+  let nextIdx = args.clipPaths.length;
   let outroLogoIdx: number | null = null;
   if (outroLogoPath) {
     outroLogoIdx = nextIdx;
-    inputs.push("-loop", "1", "-t", s4.toFixed(3), "-i", outroLogoPath);
+    inputs.push("-loop", "1", "-t", args.logoOutroDurationS.toFixed(3), "-i", outroLogoPath);
     nextIdx += 1;
   }
-  // Silence covers Scenes 3 + 4 (text overlay only, no diegetic audio).
-  const silenceLengthS = s3 + s4;
-  const silenceIdx = nextIdx;
-  inputs.push(
-    "-f", "lavfi",
-    "-t", silenceLengthS.toFixed(3),
-    "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
-  );
-  nextIdx += 1;
+  const narrationIndices: number[] = [];
+  for (const n of args.narrations) {
+    narrationIndices.push(nextIdx);
+    inputs.push("-i", n.mp3Path);
+    nextIdx += 1;
+  }
   let musicIdx: number | null = null;
   if (musicPath) {
     musicIdx = nextIdx;
@@ -424,83 +415,97 @@ export async function composeFunnyCommercial(args: ComposeFunnyCommercialArgs): 
 
   const chains: string[] = [];
 
-  // ── Video ────────────────────────────────────────────────────────
-  // Scene 1 visual: trim to s1, scale/crop to 1080x1920.
-  chains.push(
-    `[0:v]trim=duration=${s1.toFixed(3)},setpts=PTS-STARTPTS,` +
-      `scale=1080:1920:force_original_aspect_ratio=increase,` +
-      `crop=1080:1920,setsar=1,fps=30,format=yuv420p[v1]`,
-  );
-  // Scene 2 visual: same.
-  chains.push(
-    `[1:v]trim=duration=${s2.toFixed(3)},setpts=PTS-STARTPTS,` +
-      `scale=1080:1920:force_original_aspect_ratio=increase,` +
-      `crop=1080:1920,setsar=1,fps=30,format=yuv420p[v2]`,
-  );
-  // Scene 3: solid black for s3 seconds.
-  chains.push(
-    `color=c=black:s=1080x1920:d=${s3.toFixed(3)}:r=30,format=yuv420p,setsar=1[v3]`,
-  );
-  // Scene 4: solid black for s4 seconds, optionally with the logo overlaid
-  // centered. Logo is constrained to ~70% of the canvas width.
+  // ── Video chain ──────────────────────────────────────────────────
+  for (let i = 0; i < args.clipPaths.length; i++) {
+    const dur = args.slotDurations[i]!.toFixed(3);
+    chains.push(
+      `[${i}:v]trim=duration=${dur},setpts=PTS-STARTPTS,` +
+        `scale=1080:1920:force_original_aspect_ratio=increase,` +
+        `crop=1080:1920,setsar=1,fps=30,format=yuv420p[v${i}]`,
+    );
+  }
+  // Logo bumper on V1.
   if (outroLogoIdx !== null) {
     chains.push(
-      `color=c=black:s=1080x1920:d=${s4.toFixed(3)}:r=30,format=yuv420p,setsar=1[v4_bg]`,
+      `color=c=black:s=1080x1920:d=${args.logoOutroDurationS.toFixed(3)}:r=30,format=yuv420p,setsar=1[v_outro_bg]`,
     );
     chains.push(
-      `[${outroLogoIdx}:v]scale=756:-1:force_original_aspect_ratio=decrease,format=rgba[v4_logo]`,
+      `[${outroLogoIdx}:v]scale=756:-1:force_original_aspect_ratio=decrease,format=rgba[v_outro_logo]`,
     );
     chains.push(
-      `[v4_bg][v4_logo]overlay=(W-w)/2:(H-h)/2:format=auto[v4]`,
+      `[v_outro_bg][v_outro_logo]overlay=(W-w)/2:(H-h)/2:format=auto[v_outro]`,
     );
   } else {
     chains.push(
-      `color=c=black:s=1080x1920:d=${s4.toFixed(3)}:r=30,format=yuv420p,setsar=1[v4]`,
+      `color=c=black:s=1080x1920:d=${args.logoOutroDurationS.toFixed(3)}:r=30,format=yuv420p,setsar=1[v_outro]`,
     );
   }
-  chains.push(`[v1][v2][v3][v4]concat=n=4:v=1:a=0[vcat]`);
+  // Concat clips + outro.
+  const concatVInputs =
+    Array.from({ length: args.clipPaths.length }, (_, i) => `[v${i}]`).join("") + "[v_outro]";
   chains.push(
-    `[vcat]subtitles=filename='${escapedAss}':fontsdir='${escapedFonts}',format=yuv420p,setsar=1[v_final]`,
+    `${concatVInputs}concat=n=${args.clipPaths.length + 1}:v=1:a=0[v_cat]`,
+  );
+  // Burn ASS overlays.
+  chains.push(
+    `[v_cat]subtitles=filename='${escapedAss}':fontsdir='${escapedFonts}',format=yuv420p,setsar=1[v_final]`,
   );
 
-  // ── Audio ────────────────────────────────────────────────────────
-  // Tap scene1's native audio twice via asplit:
-  //   • Branch A → Scene 1's diegetic audio (full quality, trimmed to s1).
-  //   • Branch B → Scene 2's "muffled through the wall" backing (lowpass
-  //     + volume drop, trimmed to s2). Same source = perceptually
-  //     continuous between scenes 1 and 2.
+  // ── Audio chain ──────────────────────────────────────────────────
+  // Per-clip native audio, trimmed + padded to slot duration. apad
+  // covers clips that were animated without audio (Seedance fallback,
+  // edge cases) so the final concat lengths still line up.
+  for (let i = 0; i < args.clipPaths.length; i++) {
+    const dur = args.slotDurations[i]!.toFixed(3);
+    chains.push(
+      `[${i}:a]aresample=async=1:first_pts=0,atrim=duration=${dur},asetpts=PTS-STARTPTS,` +
+        `volume=${FC_CLIP_AUDIO_VOLUME.toFixed(3)},` +
+        `aformat=sample_rates=44100:channel_layouts=stereo,apad=whole_dur=${dur}[a${i}]`,
+    );
+  }
+  // Outro segment: silence.
   chains.push(
-    `[0:a]aresample=async=1:first_pts=0,asplit=2[a0_clean][a0_dup]`,
+    `anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration=${args.logoOutroDurationS.toFixed(3)},asetpts=PTS-STARTPTS[a_outro]`,
   );
+  const concatAInputs =
+    Array.from({ length: args.clipPaths.length }, (_, i) => `[a${i}]`).join("") + "[a_outro]";
   chains.push(
-    `[a0_clean]atrim=duration=${s1.toFixed(3)},asetpts=PTS-STARTPTS,` +
-      `aformat=sample_rates=44100:channel_layouts=stereo,apad=whole_dur=${s1.toFixed(3)}[a1]`,
+    `${concatAInputs}concat=n=${args.clipPaths.length + 1}:v=0:a=1[a_clips]`,
   );
-  chains.push(
-    `[a0_dup]atrim=duration=${s2.toFixed(3)},asetpts=PTS-STARTPTS,` +
-      `lowpass=f=${FC_MUFFLED_LOWPASS_HZ},volume=${FC_MUFFLED_VOLUME.toFixed(3)},` +
-      `aformat=sample_rates=44100:channel_layouts=stereo,apad=whole_dur=${s2.toFixed(3)}[a2]`,
-  );
-  // Scenes 3 + 4: silence (already a single anullsrc input of length s3+s4).
-  chains.push(
-    `[${silenceIdx}:a]aformat=sample_rates=44100:channel_layouts=stereo[a34]`,
-  );
-  chains.push(`[a1][a2][a34]concat=n=3:v=0:a=1[a_voice]`);
 
-  // Optional music bed (mixed under everything).
-  let audioFinalLabel = "a_voice";
+  // Narration tracks: each delayed to its slot start, mixed over.
+  const mixInputs: string[] = ["[a_clips]"];
+  for (let n = 0; n < args.narrations.length; n++) {
+    const narr = args.narrations[n]!;
+    const idx = narrationIndices[n]!;
+    const delayMs = Math.max(0, Math.round(narr.startS * 1000));
+    chains.push(
+      `[${idx}:a]aresample=async=1:first_pts=0,asetpts=PTS-STARTPTS,` +
+        `volume=${FC_NARRATION_VOLUME.toFixed(3)},` +
+        `aformat=sample_rates=44100:channel_layouts=stereo,` +
+        `adelay=${delayMs}|${delayMs}[a_narr_${n}]`,
+    );
+    mixInputs.push(`[a_narr_${n}]`);
+  }
+
+  // Optional music bed across the whole render.
   if (musicIdx !== null) {
-    const musicFadeStart = Math.max(0, total - 0.6);
+    const fadeStart = Math.max(0, totalDurationS - 0.6);
     chains.push(
       `[${musicIdx}:a]aformat=sample_rates=44100:channel_layouts=stereo,` +
         `volume=${FC_MUSIC_VOLUME.toFixed(3)},` +
-        `atrim=duration=${total.toFixed(3)},asetpts=PTS-STARTPTS,` +
-        `afade=type=out:start_time=${musicFadeStart.toFixed(3)}:duration=0.6[a_music]`,
+        `atrim=duration=${totalDurationS.toFixed(3)},asetpts=PTS-STARTPTS,` +
+        `afade=type=out:start_time=${fadeStart.toFixed(3)}:duration=0.6[a_music]`,
     );
+    mixInputs.push("[a_music]");
+  }
+
+  if (mixInputs.length === 1) {
+    chains.push(`[a_clips]anull[a_final]`);
+  } else {
     chains.push(
-      `[a_voice][a_music]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a_final]`,
+      `${mixInputs.join("")}amix=inputs=${mixInputs.length}:duration=first:dropout_transition=0:normalize=0[a_final]`,
     );
-    audioFinalLabel = "a_final";
   }
 
   await runFfmpeg(
@@ -509,7 +514,7 @@ export async function composeFunnyCommercial(args: ComposeFunnyCommercialArgs): 
       ...inputs,
       "-filter_complex", chains.join(";"),
       "-map", "[v_final]",
-      "-map", `[${audioFinalLabel}]`,
+      "-map", "[a_final]",
       "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
       "-pix_fmt", "yuv420p",
       "-c:a", "aac", "-b:a", "128k",

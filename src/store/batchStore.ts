@@ -6,6 +6,9 @@ import {
   DEFAULT_MESSAGE_THEME,
   DEFAULT_STATIC_CONTENT_TYPE,
   type ContentType,
+  type FcRenderTarget,
+  type FcTimelineItem,
+  type FcTimelineOverlay,
   type Format,
   type ImageSlot,
   type Language,
@@ -51,15 +54,14 @@ interface BatchState {
   selectedOutroClipUrl: string | null;
   selectedMessageTheme: MessageTheme;
 
-  // Funny Commercial per-batch selection. The user picks one Scene 1
-  // video, one Scene 2 actor video, a Scene 2 text overlay, and a
-  // Scene 3 CTA before generating. Set independently as the user
-  // browses each library; cleared on sub-mode swap.
-  fcSelectedScene1VideoId: string | null;
-  fcSelectedScene2ActorId: string | null;
-  fcScene2Text: string;        // free-text input, may be loaded from a saved phrase
-  fcScene3PhraseId: string | null; // selected saved phrase, if any
-  fcScene3Text: string;        // English source text (free or pulled from selected phrase)
+  // Funny Commercial v2 per-batch state. The user picks one actor
+  // (whose face is locked across every shot they appear in), composes
+  // shots into the shared `fcShots` library, then orders shot
+  // references on a timeline before rendering. Cleared on sub-mode
+  // swap.
+  fcSelectedActorId: string | null;
+  fcTimelineItems: FcTimelineItem[];
+  fcRenderTarget: FcRenderTarget;
 
   setFormat: (f: Format) => void;
   setLanguage: (l: Language) => void;
@@ -83,11 +85,13 @@ interface BatchState {
   setSelectedIntroClipUrl: (url: string | null) => void;
   setSelectedOutroClipUrl: (url: string | null) => void;
   setSelectedMessageTheme: (t: MessageTheme) => void;
-  setFcSelectedScene1VideoId: (id: string | null) => void;
-  setFcSelectedScene2ActorId: (id: string | null) => void;
-  setFcScene2Text: (text: string) => void;
-  setFcScene3PhraseId: (id: string | null) => void;
-  setFcScene3Text: (text: string) => void;
+  setFcSelectedActorId: (id: string | null) => void;
+  setFcTimelineItems: (items: FcTimelineItem[]) => void;
+  fcAddToTimeline: (shotId: string) => void;
+  fcRemoveFromTimeline: (slotId: string) => void;
+  fcReorderTimeline: (slotId: string, toIndex: number) => void;
+  fcSetTimelineOverlay: (slotId: string, overlay: FcTimelineOverlay | null) => void;
+  setFcRenderTarget: (target: FcRenderTarget) => void;
 }
 
 export const useBatchStore = create<BatchState>((set) => ({
@@ -108,11 +112,9 @@ export const useBatchStore = create<BatchState>((set) => ({
   selectedIntroClipUrl: null,
   selectedOutroClipUrl: null,
   selectedMessageTheme: DEFAULT_MESSAGE_THEME,
-  fcSelectedScene1VideoId: null,
-  fcSelectedScene2ActorId: null,
-  fcScene2Text: "",
-  fcScene3PhraseId: null,
-  fcScene3Text: "",
+  fcSelectedActorId: null,
+  fcTimelineItems: [],
+  fcRenderTarget: "mp4",
 
   setFormat: (format) =>
     set((s) => ({
@@ -181,7 +183,7 @@ export const useBatchStore = create<BatchState>((set) => ({
   // Switching sub-mode resets the picked clips and avatar/intro/outro
   // selections, since the three flows pick into overlapping store
   // slots with different shape requirements. Funny-commercial picks
-  // are also cleared so a stale Scene 1 video doesn't carry over.
+  // are also cleared so a stale actor / timeline doesn't carry over.
   setSubMode: (subMode) =>
     set({
       subMode,
@@ -190,11 +192,8 @@ export const useBatchStore = create<BatchState>((set) => ({
       selectedAvatarName: null,
       selectedIntroClipUrl: null,
       selectedOutroClipUrl: null,
-      fcSelectedScene1VideoId: null,
-      fcSelectedScene2ActorId: null,
-      fcScene2Text: "",
-      fcScene3PhraseId: null,
-      fcScene3Text: "",
+      fcSelectedActorId: null,
+      fcTimelineItems: [],
     }),
   // Switching static content type clears any in-progress batch.
   // Photo posts and the four graphic templates all have very
@@ -221,13 +220,47 @@ export const useBatchStore = create<BatchState>((set) => ({
       selectedIntroClipUrl: null,
       selectedOutroClipUrl: null,
     }),
-  setFcSelectedScene1VideoId: (fcSelectedScene1VideoId) =>
-    set({ fcSelectedScene1VideoId }),
-  setFcSelectedScene2ActorId: (fcSelectedScene2ActorId) =>
-    set({ fcSelectedScene2ActorId }),
-  setFcScene2Text: (fcScene2Text) => set({ fcScene2Text }),
-  // Picking a saved Scene 3 phrase syncs the free-text input to its
-  // English source so the "what will render" preview stays accurate.
-  setFcScene3PhraseId: (fcScene3PhraseId) => set({ fcScene3PhraseId }),
-  setFcScene3Text: (fcScene3Text) => set({ fcScene3Text }),
+  setFcSelectedActorId: (fcSelectedActorId) => set({ fcSelectedActorId }),
+  setFcTimelineItems: (fcTimelineItems) => set({ fcTimelineItems }),
+  // Append a fresh slot to the timeline pointing at the given shot.
+  // Slot id is generated locally so the React keys stay stable across
+  // re-renders. Multiple slots can reference the same shot — useful
+  // when a single shot bookends an ad.
+  fcAddToTimeline: (shotId) =>
+    set((s) => ({
+      fcTimelineItems: [
+        ...s.fcTimelineItems,
+        {
+          id: `fc-slot-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
+          shotId,
+        },
+      ],
+    })),
+  fcRemoveFromTimeline: (slotId) =>
+    set((s) => ({
+      fcTimelineItems: s.fcTimelineItems.filter((i) => i.id !== slotId),
+    })),
+  // Reorder a single slot to a new index. Indices are clamped to the
+  // current timeline length; out-of-range moves are no-ops.
+  fcReorderTimeline: (slotId, toIndex) =>
+    set((s) => {
+      const fromIndex = s.fcTimelineItems.findIndex((i) => i.id === slotId);
+      if (fromIndex < 0) return {};
+      const target = Math.max(0, Math.min(toIndex, s.fcTimelineItems.length - 1));
+      if (fromIndex === target) return {};
+      const next = s.fcTimelineItems.slice();
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(target, 0, moved);
+      return { fcTimelineItems: next };
+    }),
+  // Set or clear the overlay on a slot.
+  fcSetTimelineOverlay: (slotId, overlay) =>
+    set((s) => ({
+      fcTimelineItems: s.fcTimelineItems.map((i) =>
+        i.id === slotId
+          ? { ...i, overlay: overlay ?? undefined }
+          : i,
+      ),
+    })),
+  setFcRenderTarget: (fcRenderTarget) => set({ fcRenderTarget }),
 }));

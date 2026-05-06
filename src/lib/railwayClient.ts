@@ -38,16 +38,15 @@ export async function enqueueRender(args: {
   outroClipUrl?: string;
   outroCaptionCutoffPhrase?: string;
   musicShuffleIndex?: number;
-  // Funny Commercial fields. Only used when mode === "funny_commercial".
-  // clipUrls in that mode is exactly [scene1Url, scene2ActorUrl] in
-  // scene order. The worker bakes Scene 3 (black + CTA) and Scene 4
-  // (logo) on the fly.
-  fcScene2Text?: string;
-  fcScene3Text?: string;        // already translated to the active language
-  fcScene1DurationS?: number;
-  fcScene2DurationS?: number;
-  fcScene3DurationS?: number;
-  fcScene4DurationS?: number;
+  // Funny Commercial v2 — variable-length timeline of pre-animated
+  // shots. Each slot may carry an overlay (text + optional narration
+  // that the worker TTSes inline).
+  fcTimeline?: Array<{
+    clipUrl: string;
+    durationS?: number;
+    overlay?: { text: string; narrate: boolean; voiceId?: string };
+  }>;
+  fcLogoOutroDurationS?: number;
   fcMusicTrackUrl?: string | null;
 }): Promise<string> {
   if (!Array.isArray(args.clipUrls) || args.clipUrls.length === 0) {
@@ -81,6 +80,23 @@ export async function mirrorClipToR2(args: {
   const json = (await res.json()) as { cachedUrl?: string };
   if (!json.cachedUrl) throw new Error("Worker /cache-clip did not return a cachedUrl");
   return json.cachedUrl;
+}
+
+// Funny Commercial v2 — proxy to the worker's /extract-last-frame
+// endpoint. Used after a Veo 3.1 image-to-video render so the next
+// shot can seed continuity from the prior shot's final pose.
+export async function extractLastFrameViaWorker(args: { url: string }): Promise<string> {
+  const res = await workerFetch("/extract-last-frame", {
+    method: "POST",
+    body: JSON.stringify(args),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Worker /extract-last-frame failed (${res.status}): ${detail.slice(0, 300)}`);
+  }
+  const json = (await res.json()) as { frameUrl?: string };
+  if (!json.frameUrl) throw new Error("Worker /extract-last-frame did not return a frameUrl");
+  return json.frameUrl;
 }
 
 export async function tagClipViaWorker(args: { url: string }): Promise<string[]> {

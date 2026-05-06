@@ -4,6 +4,7 @@ import { requireSharedSecret } from "./auth.js";
 import { runPipeline } from "./pipeline.js";
 import { cacheClip } from "./cache.js";
 import { tagClip } from "./tag.js";
+import { extractAndUploadLastFrame } from "./extractFrame.js";
 import type { RenderRequest, RenderResponse, StatusResponse } from "./types.js";
 
 const app = Fastify({
@@ -78,6 +79,28 @@ app.post<{
   } catch (e) {
     reply.code(500);
     return { error: e instanceof Error ? e.message : "tag failed" };
+  }
+});
+
+// POST /extract-last-frame — pull the very last frame of an mp4 to a
+// JPEG on R2 and return its public URL. Used by the Funny Commercial v2
+// shot/animate flow so the panel can seed the next actor shot from the
+// prior shot's last pose.
+app.post<{
+  Body: { url?: string };
+  Reply: { frameUrl: string } | { error: string };
+}>("/extract-last-frame", async (req, reply) => {
+  const url = req.body?.url;
+  if (!url) {
+    reply.code(400);
+    return { error: "url is required" };
+  }
+  try {
+    const frameUrl = await extractAndUploadLastFrame(url);
+    return { frameUrl };
+  } catch (e) {
+    reply.code(500);
+    return { error: e instanceof Error ? e.message : "extract failed" };
   }
 });
 

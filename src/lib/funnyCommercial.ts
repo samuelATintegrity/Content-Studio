@@ -1,14 +1,11 @@
 "use client";
 
-// Funny Commercial — client-side orchestration helpers.
+// Funny Commercial v2 — client-side helpers.
 //
-// Thin wrappers around /api/funny-commercial/* and /api/translate that
-// hide retry / error-shape concerns from the modal components. None of
-// these helpers write to the libraryStore directly — that's the
-// caller's job, so the UI can choose to discard a generation that
-// didn't pan out.
-
-import type { Language } from "./types";
+// Thin wrappers around /api/funny-commercial/* that hide retry / error-
+// shape concerns from the panel components. None of these helpers
+// write to the libraryStore directly — that's the caller's job, so the
+// UI can choose to discard a generation that didn't pan out.
 
 interface FetchOpts extends RequestInit {
   label: string;
@@ -36,97 +33,72 @@ async function postJson<T>(url: string, body: unknown, opts: FetchOpts): Promise
   return parsed as T;
 }
 
-// ── Scene 1 generation ─────────────────────────────────────────────
+// ── Actor portrait ─────────────────────────────────────────────────
 
-export interface FcScene1Pick {
-  themeKey: string;
-  visualKey: string;
-  conceptKey: string;
-  imagePrompt: string;
-  animationPrompt: string;
-}
-
-export async function fcPickScene1(hint?: string): Promise<FcScene1Pick> {
-  return postJson<FcScene1Pick>(
-    "/api/funny-commercial/scene1",
-    { hint: hint?.trim() || undefined },
-    { label: "Pick Scene 1 idea" },
-  );
-}
-
-export async function fcGenerateScene1Image(prompt: string): Promise<{ url: string }> {
+export async function fcGenerateActor(prompt: string): Promise<{ url: string }> {
   return postJson<{ url: string }>(
-    "/api/funny-commercial/scene1-image",
+    "/api/funny-commercial/actor",
     { prompt },
-    { label: "Generate Scene 1 image" },
+    { label: "Generate actor" },
   );
 }
 
-// ── Scene 2 actor generation ───────────────────────────────────────
+// ── Location backdrop ──────────────────────────────────────────────
 
-export async function fcGenerateScene2ActorImage(
-  hint?: string,
-): Promise<{ url: string; prompt: string }> {
-  return postJson<{ url: string; prompt: string }>(
-    "/api/funny-commercial/scene2-actor",
-    { hint: hint?.trim() || undefined },
-    { label: "Generate Scene 2 actor image" },
+export async function fcGenerateLocation(prompt: string): Promise<{ url: string }> {
+  return postJson<{ url: string }>(
+    "/api/funny-commercial/location",
+    { prompt },
+    { label: "Generate location" },
   );
 }
 
-// ── Animate any image (Scene 1 or Scene 2 actor) ───────────────────
+// ── Shot still (Nano with optional reference images) ───────────────
 
-export async function fcAnimateImage(args: {
-  imageUrl: string;
-  animationPrompt?: string;
+export async function fcComposeShotImage(args: {
+  prompt: string;
+  actorReferenceUrl?: string;
+  locationImageUrl?: string;
 }): Promise<{ url: string }> {
   return postJson<{ url: string }>(
-    "/api/video/animate-image",
-    {
-      imageUrl: args.imageUrl,
-      // Veo 3.1 — stronger physics for the chaotic Scene 1 action AND
-      // generates native audio, which the worker then lowpass-loops
-      // under Scene 2 to sell the muffled-through-the-wall gag.
-      model: "veo",
-      animationPrompt: args.animationPrompt?.trim() || undefined,
-    },
-    { label: "Animate image" },
+    "/api/funny-commercial/shot/image",
+    args,
+    { label: "Compose shot image" },
   );
 }
 
-// ── Translation ────────────────────────────────────────────────────
+// ── Animation prompt (Claude haiku writes a Veo direction) ─────────
 
-export async function fcTranslate(
-  text: string,
-  targetLanguage: Exclude<Language, "en">,
-): Promise<string> {
-  const { translated } = await postJson<{ translated: string }>(
-    "/api/translate",
-    { text, targetLanguage },
-    { label: `Translate to ${targetLanguage}` },
+export async function fcWriteAnimationPrompt(args: {
+  imagePrompt: string;
+  kind: "actor" | "crazy";
+}): Promise<{ animationPrompt: string }> {
+  return postJson<{ animationPrompt: string }>(
+    "/api/funny-commercial/animation-prompt",
+    args,
+    { label: "Write animation prompt" },
   );
-  return translated;
 }
 
-// ── Upload (Scene 2 actor uploads reuse the existing upload-clip route)
+// ── Animate still → clip via Veo 3.1 + last-frame extraction ───────
 
-export async function fcUploadScene2Actor(file: File): Promise<{ cachedUrl: string; filename: string }> {
-  const res = await fetch("/api/video/upload-clip", {
-    method: "POST",
-    headers: {
-      "content-type": file.type || "video/mp4",
-      "x-filename": file.name,
-    },
-    body: file,
-  });
-  const text = await res.text();
-  let body: { cachedUrl?: string; filename?: string; error?: string } = {};
-  try {
-    body = text ? JSON.parse(text) : {};
-  } catch {
-    throw new Error(`upload returned non-JSON (${res.status})`);
-  }
-  if (!res.ok) throw new Error(body.error ?? `upload failed (${res.status})`);
-  if (!body.cachedUrl || !body.filename) throw new Error("upload returned malformed body");
-  return { cachedUrl: body.cachedUrl, filename: body.filename };
+export async function fcAnimateShot(args: {
+  imageUrl: string;
+  animationPrompt: string;
+}): Promise<{ videoUrl: string; lastFrameImageUrl?: string }> {
+  return postJson<{ videoUrl: string; lastFrameImageUrl?: string }>(
+    "/api/funny-commercial/shot/animate",
+    args,
+    { label: "Animate shot" },
+  );
+}
+
+// ── Standalone last-frame extraction (re-run if first attempt failed)
+
+export async function fcExtractLastFrame(videoUrl: string): Promise<{ frameUrl: string }> {
+  return postJson<{ frameUrl: string }>(
+    "/api/funny-commercial/last-frame",
+    { videoUrl },
+    { label: "Extract last frame" },
+  );
 }

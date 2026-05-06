@@ -44,6 +44,56 @@ export type AnimationModel = "seedance" | "kling" | "veo";
 const STATIC_STYLE_SUFFIX =
   ". Vertical 4:5 portrait orientation, taller than wide. Center the main subject with comfortable space above and below; the very top and bottom may be covered by text bars in some layouts, so do not place key subject matter in the top 16% or bottom 16% of the frame. Professional real estate photography style, photorealistic, natural daylight, sharp detail. No text, signs, or watermarks.";
 
+// ── Funny Commercial v2 — Nano Banana with reference images ───────
+//
+// Used by every shot composition step in the storyboard rebuild:
+//   - Generate a 9:16 actor portrait from a text prompt (no refs).
+//   - Generate a 9:16 location backdrop from a text prompt (no refs).
+//   - Compose a shot still with `actor reference + optional location`
+//     in `referenceImageUrls` — Nano edits the actor INTO the
+//     described scene with face consistency.
+//   - Compose a "crazy" shot still with the location as the only
+//     reference and the absurd subject described in the prompt.
+//
+// Nano Banana 2 (`fal-ai/nano-banana-2`) accepts an `image_urls` array
+// for reference images. We always pass 9:16 + a no-text guardrail so
+// the result is shot-ready.
+
+const FC_NO_TEXT_SUFFIX =
+  "ABSOLUTELY NO TEXT in the image. No letters, no words, no signs, no banners, no captions, no UI, no logos, no readable typography of any kind.";
+
+interface FcImageInput {
+  prompt: string;
+  referenceImageUrls?: string[];
+  aspectRatio?: "9:16" | "4:5" | "1:1" | "16:9";
+}
+
+export async function generateFcImage(args: FcImageInput): Promise<{ url: string }> {
+  configure();
+  const trimmed = args.prompt.trim().replace(/\.$/, "");
+  const aspectRatio = args.aspectRatio ?? "9:16";
+  const prompt = `${trimmed}. Vertical ${aspectRatio} orientation. Photorealistic. Cinematic lighting and composition. ${FC_NO_TEXT_SUFFIX}`;
+  const input: Record<string, unknown> = {
+    prompt,
+    num_images: 1,
+    output_format: "jpeg",
+    aspect_ratio: aspectRatio,
+  };
+  if (args.referenceImageUrls && args.referenceImageUrls.length > 0) {
+    input.image_urls = args.referenceImageUrls;
+  }
+  const result = await fal.subscribe(IMAGE_MODEL, {
+    input: input as never,
+    logs: false,
+  });
+  type FalImage = { url?: string };
+  type FalData = { images?: FalImage[] };
+  const data = (result as { data?: FalData }).data;
+  const url = data?.images?.[0]?.url;
+  if (!url) throw new Error("fal.ai returned no image URL");
+  return { url };
+}
+
 // 4:5 image used by the static post pipeline.
 export async function generateImage(userPrompt: string): Promise<{ url: string }> {
   configure();

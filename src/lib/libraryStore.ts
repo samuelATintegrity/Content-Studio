@@ -12,10 +12,9 @@ import type { SavedSet } from "./savedSets";
 import type { LibraryImage } from "./imageLibrary";
 import type { MusicTrack } from "./musicLibrary";
 import type {
-  FcSceneImage,
-  FcSceneVideo,
-  FcPhrase,
-  FcTranslatedPhrase,
+  FcActor,
+  FcLocation,
+  FcShot,
 } from "./types";
 
 const MANIFEST_VERSION = 1;
@@ -38,12 +37,14 @@ export interface Manifest {
   sets: SavedSet[];
   images: LibraryImage[];
   tracks: MusicTrack[];
-  // Funny Commercial scene libraries. Each library is independent.
-  fcScene1Images: FcSceneImage[];
-  fcScene1Videos: FcSceneVideo[];
-  fcScene2Actors: FcSceneVideo[];
-  fcScene2Phrases: FcPhrase[];
-  fcScene3Phrases: FcTranslatedPhrase[];
+  // Funny Commercial v2 storyboard libraries. The old per-scene
+  // slices (fcScene1Images / fcScene1Videos / fcScene2Actors /
+  // fcScene2Phrases / fcScene3Phrases) were removed when the flow
+  // pivoted from a fixed 4-scene template to a shot-based timeline.
+  // Old persisted entries silently drop in normalizeManifest.
+  fcActors: FcActor[];
+  fcLocations: FcLocation[];
+  fcShots: FcShot[];
 }
 
 const EMPTY: Manifest = {
@@ -52,11 +53,9 @@ const EMPTY: Manifest = {
   sets: [],
   images: [],
   tracks: [],
-  fcScene1Images: [],
-  fcScene1Videos: [],
-  fcScene2Actors: [],
-  fcScene2Phrases: [],
-  fcScene3Phrases: [],
+  fcActors: [],
+  fcLocations: [],
+  fcShots: [],
 };
 
 type Slice =
@@ -64,22 +63,18 @@ type Slice =
   | "sets"
   | "images"
   | "tracks"
-  | "fcScene1Images"
-  | "fcScene1Videos"
-  | "fcScene2Actors"
-  | "fcScene2Phrases"
-  | "fcScene3Phrases";
+  | "fcActors"
+  | "fcLocations"
+  | "fcShots";
 
 const SLICE_EVENT: Record<Slice, string> = {
   clips: "video-clip-library-changed",
   sets: "video-saved-sets-changed",
   images: "static-image-library-changed",
   tracks: "music-library-changed",
-  fcScene1Images: "fc-scene1-images-changed",
-  fcScene1Videos: "fc-scene1-videos-changed",
-  fcScene2Actors: "fc-scene2-actors-changed",
-  fcScene2Phrases: "fc-scene2-phrases-changed",
-  fcScene3Phrases: "fc-scene3-phrases-changed",
+  fcActors: "fc-actors-changed",
+  fcLocations: "fc-locations-changed",
+  fcShots: "fc-shots-changed",
 };
 
 let _state: Manifest = { ...EMPTY };
@@ -170,11 +165,9 @@ function normalizeManifest(input: unknown): Manifest {
     sets: Array.isArray(obj.sets) ? obj.sets : [],
     images: Array.isArray(obj.images) ? obj.images : [],
     tracks: Array.isArray(obj.tracks) ? obj.tracks : [],
-    fcScene1Images: Array.isArray(obj.fcScene1Images) ? obj.fcScene1Images : [],
-    fcScene1Videos: Array.isArray(obj.fcScene1Videos) ? obj.fcScene1Videos : [],
-    fcScene2Actors: Array.isArray(obj.fcScene2Actors) ? obj.fcScene2Actors : [],
-    fcScene2Phrases: Array.isArray(obj.fcScene2Phrases) ? obj.fcScene2Phrases : [],
-    fcScene3Phrases: Array.isArray(obj.fcScene3Phrases) ? obj.fcScene3Phrases : [],
+    fcActors: Array.isArray(obj.fcActors) ? obj.fcActors : [],
+    fcLocations: Array.isArray(obj.fcLocations) ? obj.fcLocations : [],
+    fcShots: Array.isArray(obj.fcShots) ? obj.fcShots : [],
   };
 }
 
