@@ -21,11 +21,21 @@ import type { FcShot } from "@/lib/types";
 export function ShotsLibrary() {
   const fcTimelineItems = useBatchStore((s) => s.fcTimelineItems);
   const fcAddToTimeline = useBatchStore((s) => s.fcAddToTimeline);
+  const fcContinuitySourceShotId = useBatchStore((s) => s.fcContinuitySourceShotId);
+  const setFcContinuitySourceShotId = useBatchStore((s) => s.setFcContinuitySourceShotId);
   const [shots, setShots] = useState<FcShot[]>(() => listFcShots());
   const [animatingId, setAnimatingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => subscribeFcShots(() => setShots(listFcShots())), []);
+
+  function toggleSeed(shot: FcShot) {
+    if (fcContinuitySourceShotId === shot.id) {
+      setFcContinuitySourceShotId(null);
+    } else {
+      setFcContinuitySourceShotId(shot.id);
+    }
+  }
 
   if (shots.length === 0) {
     return (
@@ -70,6 +80,7 @@ export function ShotsLibrary() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
         {shots.map((shot) => {
           const inTimeline = fcTimelineItems.some((i) => i.shotId === shot.id);
+          const isContinuitySeed = fcContinuitySourceShotId === shot.id;
           return (
             <ShotCard
               key={shot.id}
@@ -78,7 +89,9 @@ export function ShotsLibrary() {
               onReanimate={(p) => reanimate(shot, p)}
               onAdd={() => fcAddToTimeline(shot.id)}
               onDelete={() => deleteShot(shot)}
+              onToggleSeed={() => toggleSeed(shot)}
               inTimeline={inTimeline}
+              isContinuitySeed={isContinuitySeed}
             />
           );
         })}
@@ -93,20 +106,31 @@ function ShotCard({
   onReanimate,
   onAdd,
   onDelete,
+  onToggleSeed,
   inTimeline,
+  isContinuitySeed,
 }: {
   shot: FcShot;
   animating: boolean;
   onReanimate: (newPrompt?: string) => void;
   onAdd: () => void;
   onDelete: () => void;
+  onToggleSeed: () => void;
   inTimeline: boolean;
+  isContinuitySeed: boolean;
 }) {
   const [animDraft, setAnimDraft] = useState(shot.animationPrompt);
   const [editing, setEditing] = useState(false);
+  const seedable = !!shot.videoUrl && !!shot.lastFrameImageUrl;
 
   return (
-    <div className="group flex flex-col rounded-2xl border border-neutral-200 dark:border-neutral-800 hover:border-neutral-400 dark:hover:border-neutral-600 transition overflow-hidden">
+    <div
+      className={`group flex flex-col rounded-2xl border transition overflow-hidden ${
+        isContinuitySeed
+          ? "border-emerald-500 ring-2 ring-emerald-500/60"
+          : "border-neutral-200 dark:border-neutral-800 hover:border-neutral-400 dark:hover:border-neutral-600"
+      }`}
+    >
       <div className="aspect-[9/16] bg-neutral-100 dark:bg-neutral-900 relative">
         {shot.videoUrl ? (
           <video
@@ -129,9 +153,14 @@ function ShotCard({
         <span className="absolute top-1.5 left-1.5 text-[9px] uppercase tracking-[0.12em] text-white bg-black/65 px-2 py-0.5 rounded-full">
           {shot.kind}
         </span>
-        {!shot.videoUrl && (
+        {!shot.videoUrl && !isContinuitySeed && (
           <span className="absolute top-1.5 right-1.5 text-[9px] uppercase tracking-[0.12em] text-white bg-amber-700/85 px-2 py-0.5 rounded-full">
             still only
+          </span>
+        )}
+        {isContinuitySeed && (
+          <span className="absolute top-1.5 right-1.5 text-[9px] uppercase tracking-[0.12em] text-white bg-emerald-600 px-2 py-0.5 rounded-full font-semibold">
+            seed →
           </span>
         )}
         <button
@@ -193,6 +222,24 @@ function ShotCard({
               className="text-[10px] font-medium px-2.5 py-1 rounded-full border border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-900 disabled:opacity-50"
             >
               {animating ? "…" : editing ? "Apply re-animate" : "Re-animate"}
+            </button>
+          )}
+          {seedable && (
+            <button
+              type="button"
+              onClick={onToggleSeed}
+              className={`text-[10px] font-medium px-2.5 py-1 rounded-full border transition ${
+                isContinuitySeed
+                  ? "bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700"
+                  : "border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-900"
+              }`}
+              title={
+                isContinuitySeed
+                  ? "Pinned as continuity seed for the next shot. Click to unpin."
+                  : "Pin this shot's last frame as the seed for the next continuity shot."
+              }
+            >
+              {isContinuitySeed ? "✓ Seed pinned" : "Pin as seed"}
             </button>
           )}
         </div>

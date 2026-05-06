@@ -22,7 +22,9 @@ import {
 } from "@/lib/funnyCommercialLocations";
 import {
   addFcShot,
+  getFcShot,
   latestAnimatedActorShot,
+  subscribeFcShots,
   updateFcShot,
 } from "@/lib/funnyCommercialShots";
 import {
@@ -36,6 +38,8 @@ import type { FcLocation, FcShotKind } from "@/lib/types";
 export function ComposeShot() {
   const fcSelectedActorId = useBatchStore((s) => s.fcSelectedActorId);
   const fcAddToTimeline = useBatchStore((s) => s.fcAddToTimeline);
+  const fcContinuitySourceShotId = useBatchStore((s) => s.fcContinuitySourceShotId);
+  const setFcContinuitySourceShotId = useBatchStore((s) => s.setFcContinuitySourceShotId);
   const [kind, setKind] = useState<FcShotKind>("actor");
   const [locations, setLocations] = useState<FcLocation[]>(() => listFcLocations());
   const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
@@ -49,13 +53,29 @@ export function ComposeShot() {
   const [draftShotId, setDraftShotId] = useState<string | null>(null);
   const [busy, setBusy] = useState<null | "location" | "image" | "anim-prompt" | "animate">(null);
   const [error, setError] = useState<string | null>(null);
+  // Tick when fcShots changes so the continuity-source preview always
+  // reflects the latest library state (e.g., a fresh animation just
+  // landed a lastFrameImageUrl on a shot we want to use as seed).
+  const [shotsTick, setShotsTick] = useState(0);
 
   useEffect(() => subscribeFcLocations(() => setLocations(listFcLocations())), []);
+  useEffect(() => subscribeFcShots(() => setShotsTick((t) => t + 1)), []);
 
   const actor = fcSelectedActorId ? getFcActor(fcSelectedActorId) : undefined;
-  const lastActorShot = latestAnimatedActorShot(fcSelectedActorId ?? undefined);
-  const continuityAvailable = kind === "actor" && !!lastActorShot?.lastFrameImageUrl;
+  // Continuity source: explicit pin if set + still has a last frame,
+  // else fall back to the most recent animated actor shot for the
+  // active actor. Re-evaluated on every fcShots change via shotsTick.
+  void shotsTick;
+  const pinnedShot = fcContinuitySourceShotId
+    ? getFcShot(fcContinuitySourceShotId)
+    : undefined;
+  const seedShot =
+    pinnedShot && pinnedShot.lastFrameImageUrl
+      ? pinnedShot
+      : latestAnimatedActorShot(fcSelectedActorId ?? undefined);
+  const continuityAvailable = kind === "actor" && !!seedShot?.lastFrameImageUrl;
   const continuityActive = continuity && continuityAvailable;
+  const isPinnedSeed = !!pinnedShot && pinnedShot.id === seedShot?.id;
 
   function reset() {
     setShotImageUrl(null);
@@ -160,8 +180,8 @@ export function ComposeShot() {
     //   - continuity on  → prior shot's last frame (Nano never ran)
     //   - continuity off → the still Nano just composed
     let sourceImageUrl: string;
-    if (continuityActive && lastActorShot?.lastFrameImageUrl) {
-      sourceImageUrl = lastActorShot.lastFrameImageUrl;
+    if (continuityActive && seedShot?.lastFrameImageUrl) {
+      sourceImageUrl = seedShot.lastFrameImageUrl;
     } else if (shotImageUrl) {
       sourceImageUrl = shotImageUrl;
     } else {
@@ -183,7 +203,7 @@ export function ComposeShot() {
       imagePrompt: prompt.trim(),
       imageUrl: sourceImageUrl,
       animationPrompt: animationPrompt.trim(),
-      parentShotId: continuityActive ? lastActorShot!.id : undefined,
+      parentShotId: continuityActive ? seedShot!.id : undefined,
     });
     setDraftShotId(newShot.id);
 
@@ -383,19 +403,36 @@ export function ComposeShot() {
             image" step entirely — Veo seeds straight from the prior
             shot's last frame. Continuity-off keeps the original
             idle → image → ready → animating → done state machine. */}
-        {continuityActive && lastActorShot?.lastFrameImageUrl ? (
+        {continuityActive && seedShot?.lastFrameImageUrl ? (
           // ── Continuity-on render ──────────────────────────────────
           <div className="flex flex-col sm:flex-row gap-3">
             <div className="sm:w-1/2">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
-                src={lastActorShot.lastFrameImageUrl}
+                src={seedShot.lastFrameImageUrl}
                 alt=""
                 className="w-full aspect-[9/16] object-cover rounded-xl border border-neutral-200 dark:border-neutral-800"
               />
               <p className="text-[10px] text-neutral-500 leading-snug mt-1">
-                Continuing from previous actor shot&apos;s last frame. Veo animates straight from this image — no fresh still needed.
+                {isPinnedSeed ? (
+                  <>
+                    <span className="text-emerald-600 font-semibold">Pinned seed</span> · last frame from &ldquo;{seedShot.imagePrompt.slice(0, 80)}&rdquo;
+                  </>
+                ) : (
+                  <>
+                    <span className="text-neutral-400">Auto-latest</span> · last frame from &ldquo;{seedShot.imagePrompt.slice(0, 80)}&rdquo;. Pin a different shot in the library if you want to chain from elsewhere.
+                  </>
+                )}
               </p>
+              {isPinnedSeed && (
+                <button
+                  type="button"
+                  onClick={() => setFcContinuitySourceShotId(null)}
+                  className="text-[10px] text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100 underline-offset-2 hover:underline self-start mt-0.5"
+                >
+                  Unpin seed (fall back to latest)
+                </button>
+              )}
             </div>
             <div className="sm:w-1/2 flex flex-col gap-2">
               <label className="text-[10px] uppercase tracking-[0.14em] text-neutral-500 font-semibold">

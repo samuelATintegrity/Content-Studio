@@ -60,6 +60,12 @@ interface BatchState {
   // references on a timeline before rendering. Cleared on sub-mode
   // swap.
   fcSelectedActorId: string | null;
+  // When set, the continuity-on flow seeds Veo from this exact shot's
+  // last frame instead of falling back to "latest animated actor
+  // shot." Lets the user explicitly pick which clip to chain from
+  // (or branch from — the pin persists across animations until
+  // manually cleared). null = auto-fall-back-to-latest.
+  fcContinuitySourceShotId: string | null;
   fcTimelineItems: FcTimelineItem[];
   fcRenderTarget: FcRenderTarget;
 
@@ -86,6 +92,7 @@ interface BatchState {
   setSelectedOutroClipUrl: (url: string | null) => void;
   setSelectedMessageTheme: (t: MessageTheme) => void;
   setFcSelectedActorId: (id: string | null) => void;
+  setFcContinuitySourceShotId: (id: string | null) => void;
   setFcTimelineItems: (items: FcTimelineItem[]) => void;
   fcAddToTimeline: (shotId: string) => void;
   fcRemoveFromTimeline: (slotId: string) => void;
@@ -113,6 +120,7 @@ export const useBatchStore = create<BatchState>((set) => ({
   selectedOutroClipUrl: null,
   selectedMessageTheme: DEFAULT_MESSAGE_THEME,
   fcSelectedActorId: null,
+  fcContinuitySourceShotId: null,
   fcTimelineItems: [],
   fcRenderTarget: "mp4",
 
@@ -193,6 +201,7 @@ export const useBatchStore = create<BatchState>((set) => ({
       selectedIntroClipUrl: null,
       selectedOutroClipUrl: null,
       fcSelectedActorId: null,
+      fcContinuitySourceShotId: null,
       fcTimelineItems: [],
     }),
   // Switching static content type clears any in-progress batch.
@@ -221,6 +230,8 @@ export const useBatchStore = create<BatchState>((set) => ({
       selectedOutroClipUrl: null,
     }),
   setFcSelectedActorId: (fcSelectedActorId) => set({ fcSelectedActorId }),
+  setFcContinuitySourceShotId: (fcContinuitySourceShotId) =>
+    set({ fcContinuitySourceShotId }),
   setFcTimelineItems: (fcTimelineItems) => set({ fcTimelineItems }),
   // Append a fresh slot to the timeline pointing at the given shot.
   // Slot id is generated locally so the React keys stay stable across
