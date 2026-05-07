@@ -1,17 +1,19 @@
 import { NextResponse } from "next/server";
-import { writeFcAnimationPrompt } from "@/lib/claude";
+import { writeStoryAnimationPrompt } from "@/lib/claude";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
-// POST /api/funny-commercial/animation-prompt
-// Ask Claude (Haiku) to write a Veo-tuned image-to-video direction for
-// the given still. Called by the panel right after the user accepts a
-// composed shot still — pre-fills the animation-prompt textarea.
+// POST /api/story/animation-prompt
+//
+// Optional "Write with AI" helper for the new-shot wizard. Takes a
+// plain-English shot description and returns a short, filter-safe
+// animation direction. The wizard pre-fills the user's shot description
+// verbatim into the animation textarea — this endpoint only fires when
+// the user explicitly clicks "Write with AI".
 
 interface Body {
   imagePrompt: string;
-  kind: "actor" | "crazy";
 }
 
 export async function POST(req: Request) {
@@ -20,12 +22,8 @@ export async function POST(req: Request) {
     if (!body.imagePrompt?.trim()) {
       return NextResponse.json({ error: "imagePrompt is required" }, { status: 400 });
     }
-    if (body.kind !== "actor" && body.kind !== "crazy") {
-      return NextResponse.json({ error: "kind must be 'actor' or 'crazy'" }, { status: 400 });
-    }
-    const animationPrompt = await writeFcAnimationPrompt({
+    const animationPrompt = await writeStoryAnimationPrompt({
       imagePrompt: body.imagePrompt,
-      kind: body.kind,
     });
     return NextResponse.json({ animationPrompt });
   } catch (e) {

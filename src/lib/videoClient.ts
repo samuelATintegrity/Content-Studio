@@ -124,39 +124,6 @@ export async function startVideoRender(args: {
   return res.json();
 }
 
-// Funny Commercial v2 render. Variable-length timeline of pre-animated
-// shots; each slot may carry an overlay (text + optional narration
-// that the worker TTSes inline). The worker appends a logo bumper.
-export async function startFunnyCommercialRender(args: {
-  language: Language;
-  timeline: Array<{
-    clipUrl: string;
-    durationS?: number;
-    overlay?: { text: string; narrate: boolean; voiceId?: string };
-  }>;
-  logoOutroDurationS?: number;
-  musicTrackUrl?: string | null;
-}): Promise<{ jobId: string }> {
-  const res = await fetch("/api/video/render", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      script: "",                       // unused for funny_commercial
-      language: args.language,
-      contentType: "good_agents",       // caption framing fallback
-      clipUrls: args.timeline.map((t) => t.clipUrl),
-      mode: "funny_commercial",
-      fcTimeline: args.timeline,
-      fcLogoOutroDurationS: args.logoOutroDurationS,
-      fcMusicTrackUrl: args.musicTrackUrl ?? null,
-    }),
-  });
-  if (!res.ok) {
-    throw new Error((await res.json().catch(() => ({}))).error ?? "render failed");
-  }
-  return res.json();
-}
-
 // Influencer-mode render. Same /render endpoint, mode-dispatched on the
 // worker. clipUrls here is the middle filler list (1..INFLUENCER_MIDDLE_MAX).
 export async function startInfluencerRender(args: {

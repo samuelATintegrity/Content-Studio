@@ -13,14 +13,12 @@ import { voiceIdFor } from "./voices.js";
 import { downloadClips } from "./clipDownload.js";
 import {
   compose,
-  composeFunnyCommercial,
   composeInfluencerFinal,
   composeIntroSegment,
   composeMiddleSegment,
   composeOutroSegment,
 } from "./ffmpeg.js";
 import { pickMusicTrack, pickSoundEffect } from "./music.js";
-import { buildFunnyCommercialSubtitles } from "./subtitles.js";
 import { probeBookendDurationS, probeDurationS } from "./probe.js";
 import { applyCaptionCutoff, transcribeMediaFile } from "./transcribe.js";
 import type { RenderRequest } from "./types.js";
@@ -69,11 +67,6 @@ export async function runPipeline(jobId: string, req: RenderRequest): Promise<vo
   try {
     if (req.mode === "influencer") {
       await runInfluencerPipeline(jobId, req, workDir);
-      return;
-    }
-
-    if (req.mode === "funny_commercial") {
-      await runFunnyCommercialPipeline(jobId, req, workDir);
       return;
     }
 
@@ -307,154 +300,10 @@ async function runInfluencerPipeline(
   });
 }
 
-// Funny Commercial v2 pipeline. The app sends an ordered timeline of
-// pre-animated clips (variable count). Each slot may carry a text
-// overlay; if the slot's `narrate` flag is set, the worker TTSes the
-// overlay text inline via ElevenLabs and mixes it on top of the clip
-// audio. After the last timeline clip, the worker appends the bundled
-// logo bumper. No fixed scene count, no app-side translation — text
-// is rendered as-typed.
-async function runFunnyCommercialPipeline(
-  jobId: string,
-  req: RenderRequest,
-  workDir: string,
-): Promise<void> {
-  if (!Array.isArray(req.fcTimeline) || req.fcTimeline.length === 0) {
-    throw new Error("funny_commercial requires a non-empty fcTimeline array");
-  }
-
-  const logoOutroS = req.fcLogoOutroDurationS ?? 2;
-
-  // ── Stage: Footage download ──────────────────────────────────────
-  setState(jobId, "footage", 0.25);
-  const clipUrls = req.fcTimeline.map((t) => t.clipUrl);
-  const downloaded = await downloadClips(clipUrls, workDir);
-  if (downloaded.length !== clipUrls.length) {
-    throw new Error(
-      `expected ${clipUrls.length} clips, downloaded ${downloaded.length}`,
-    );
-  }
-
-  // ── Stage: Probe per-clip durations + compute slot start times ───
-  // Each slot's render duration is the smaller of (caller's override,
-  // probed clip length, 5s default). Slot start times accumulate so
-  // overlays + narrations can be anchored absolutely.
-  const slotDurations: number[] = [];
-  for (let i = 0; i < req.fcTimeline.length; i++) {
-    const slot = req.fcTimeline[i]!;
-    const probed = await probeDurationS(downloaded[i]!.filePath).catch(() => 5);
-    const max = probed > 0 ? probed : 5;
-    const target = slot.durationS ? Math.min(slot.durationS, max) : max;
-    slotDurations.push(target);
-  }
-  const slotStarts: number[] = [];
-  let acc = 0;
-  for (const d of slotDurations) {
-    slotStarts.push(acc);
-    acc += d;
-  }
-  const totalClipsS = acc;
-
-  // ── Stage: TTS narrations (per-slot, inline) ─────────────────────
-  setState(jobId, "tts", 0.4);
-  type Narration = {
-    slotIndex: number;
-    mp3Path: string;
-    durationS: number;
-    startS: number;
-  };
-  const narrations: Narration[] = [];
-  for (let i = 0; i < req.fcTimeline.length; i++) {
-    const slot = req.fcTimeline[i]!;
-    if (!slot.overlay?.narrate || !slot.overlay.text.trim()) continue;
-    const voiceId = slot.overlay.voiceId ?? voiceIdFor(req.language);
-    const ttsDir = await mkdtemp(join(workDir, `narr-${i}-`));
-    try {
-      const tts = await synthesize(slot.overlay.text, voiceId, ttsDir);
-      narrations.push({
-        slotIndex: i,
-        mp3Path: tts.mp3Path,
-        durationS: tts.durationS,
-        startS: slotStarts[i]!,
-      });
-    } catch (e) {
-      // Don't fail the whole render if one TTS call fails — the slot
-      // just renders with no narration.
-      console.warn(
-        `[fc] narration TTS failed for slot ${i}: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-  }
-
-  // ── Stage: Build ASS subtitles for overlays ──────────────────────
-  // Each overlay starts 0.4s into its slot (lets the cut breathe) and
-  // runs to the end of the slot. Centered styling.
-  const overlaySegments = req.fcTimeline
-    .map((slot, i) => {
-      if (!slot.overlay?.text.trim()) return null;
-      const start = slotStarts[i]! + 0.4;
-      const end = slotStarts[i]! + slotDurations[i]!;
-      return {
-        text: slot.overlay.text.trim(),
-        startS: start,
-        endS: end,
-        placement: "scene3" as const,
-      };
-    })
-    .filter((s): s is NonNullable<typeof s> => s !== null);
-  const ass = buildFunnyCommercialSubtitles(overlaySegments, {
-    fontFamily: "Geist",
-    scene2FontSize: 88,
-    scene3FontSize: 96,
-    scene2MarginV: 240,
-    outlineWidth: 5,
-    shadowDepth: 4,
-    fadeMs: 240,
-  });
-  const assPath = join(workDir, "fc-subs.ass");
-  await writeFile(assPath, ass, "utf8");
-
-  // ── Stage: Render ────────────────────────────────────────────────
-  setState(jobId, "rendering", 0.65);
-  const finalPath = join(workDir, "final.mp4");
-  const musicPath = req.fcMusicTrackUrl
-    ? await downloadMusicByUrl(req.fcMusicTrackUrl, workDir).catch(() => null)
-    : null;
-
-  await composeFunnyCommercial({
-    clipPaths: downloaded.map((d) => d.filePath),
-    slotDurations,
-    narrations: narrations.map((n) => ({
-      mp3Path: n.mp3Path,
-      startS: n.startS,
-      durationS: n.durationS,
-    })),
-    assPath,
-    fontsDir: FONTS_DIR,
-    outPath: finalPath,
-    logoOutroDurationS: logoOutroS,
-    musicPath,
-  });
-
-  // ── Stage: Upload ────────────────────────────────────────────────
-  setState(jobId, "uploading", 0.9);
-  const url = await uploadVideo(finalPath, `videos/${jobId}.mp4`);
-  const totalDurationS = totalClipsS + logoOutroS;
-  updateJob(jobId, { state: "ready", progress: 1, videoUrl: url, durationS: totalDurationS });
-}
-
-// Best-effort fetch + write a music URL into the work dir so ffmpeg
-// can feed it as a local file. The shared downloadClips helper is
-// designed for video; we use a plain fetch here because mp3 doesn't
-// need probing.
-async function downloadMusicByUrl(url: string, workDir: string): Promise<string> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`music fetch failed: ${res.status}`);
-  const buf = Buffer.from(await res.arrayBuffer());
-  const path = join(workDir, "fc-music.mp3");
-  await writeFile(path, buf);
-  return path;
-}
+// (Funny Commercial pipeline removed when the flow pivoted to Story
+// Builder, which exports Premiere XML zips instead of rendering mp4.
+// Nothing in the worker needs to render variable-length shot timelines
+// any more — the Premiere import does that on the user's machine.)
 
 // Transcribe a bookend file and apply the optional cutoff phrase. Returns
 // [] on STT failure so the caller can render uncaptioned over that segment

@@ -12,10 +12,9 @@ import type { SavedSet } from "./savedSets";
 import type { LibraryImage } from "./imageLibrary";
 import type { MusicTrack } from "./musicLibrary";
 import type {
-  FcActor,
-  FcLocation,
-  FcProject,
-  FcShot,
+  StoryProject,
+  StoryShot,
+  StoryStartingFrame,
 } from "./types";
 
 const MANIFEST_VERSION = 1;
@@ -38,15 +37,13 @@ export interface Manifest {
   sets: SavedSet[];
   images: LibraryImage[];
   tracks: MusicTrack[];
-  // Funny Commercial v2 storyboard libraries. The old per-scene
-  // slices (fcScene1Images / fcScene1Videos / fcScene2Actors /
-  // fcScene2Phrases / fcScene3Phrases) were removed when the flow
-  // pivoted from a fixed 4-scene template to a shot-based timeline.
-  // Old persisted entries silently drop in normalizeManifest.
-  fcActors: FcActor[];
-  fcLocations: FcLocation[];
-  fcShots: FcShot[];
-  fcProjects: FcProject[];
+  // Story Builder libraries. Replaces the prior Funny Commercial v2
+  // slices (fcActors / fcLocations / fcShots / fcProjects) — those are
+  // silently dropped on load by `normalizeManifest`. Shots and starting
+  // frames are project-scoped via a `projectId` foreign key.
+  storyProjects: StoryProject[];
+  storyShots: StoryShot[];
+  storyStartingFrames: StoryStartingFrame[];
 }
 
 const EMPTY: Manifest = {
@@ -55,10 +52,9 @@ const EMPTY: Manifest = {
   sets: [],
   images: [],
   tracks: [],
-  fcActors: [],
-  fcLocations: [],
-  fcShots: [],
-  fcProjects: [],
+  storyProjects: [],
+  storyShots: [],
+  storyStartingFrames: [],
 };
 
 type Slice =
@@ -66,20 +62,18 @@ type Slice =
   | "sets"
   | "images"
   | "tracks"
-  | "fcActors"
-  | "fcLocations"
-  | "fcShots"
-  | "fcProjects";
+  | "storyProjects"
+  | "storyShots"
+  | "storyStartingFrames";
 
 const SLICE_EVENT: Record<Slice, string> = {
   clips: "video-clip-library-changed",
   sets: "video-saved-sets-changed",
   images: "static-image-library-changed",
   tracks: "music-library-changed",
-  fcActors: "fc-actors-changed",
-  fcLocations: "fc-locations-changed",
-  fcShots: "fc-shots-changed",
-  fcProjects: "fc-projects-changed",
+  storyProjects: "story-projects-changed",
+  storyShots: "story-shots-changed",
+  storyStartingFrames: "story-starting-frames-changed",
 };
 
 let _state: Manifest = { ...EMPTY };
@@ -164,16 +158,20 @@ async function pushManifest(state: Manifest): Promise<void> {
 function normalizeManifest(input: unknown): Manifest {
   if (!input || typeof input !== "object") return { ...EMPTY };
   const obj = input as Partial<Manifest>;
+  // Old fcActors / fcLocations / fcShots / fcProjects slices from the
+  // Funny Commercial era are intentionally NOT read here — any persisted
+  // entries silently drop on first load post-deploy. The shape changed
+  // enough (no more actors/locations, project-scoped shots) that
+  // migrating wouldn't preserve anything useful.
   return {
     version: typeof obj.version === "number" ? obj.version : MANIFEST_VERSION,
     clips: Array.isArray(obj.clips) ? obj.clips : [],
     sets: Array.isArray(obj.sets) ? obj.sets : [],
     images: Array.isArray(obj.images) ? obj.images : [],
     tracks: Array.isArray(obj.tracks) ? obj.tracks : [],
-    fcActors: Array.isArray(obj.fcActors) ? obj.fcActors : [],
-    fcLocations: Array.isArray(obj.fcLocations) ? obj.fcLocations : [],
-    fcShots: Array.isArray(obj.fcShots) ? obj.fcShots : [],
-    fcProjects: Array.isArray(obj.fcProjects) ? obj.fcProjects : [],
+    storyProjects: Array.isArray(obj.storyProjects) ? obj.storyProjects : [],
+    storyShots: Array.isArray(obj.storyShots) ? obj.storyShots : [],
+    storyStartingFrames: Array.isArray(obj.storyStartingFrames) ? obj.storyStartingFrames : [],
   };
 }
 

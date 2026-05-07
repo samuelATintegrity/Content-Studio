@@ -854,39 +854,29 @@ export async function generateGraphicBatch(
   }
 }
 
-// ── Funny Commercial v2 helpers ────────────────────────────────────
+// ── Story Builder helpers ──────────────────────────────────────────
 //
-// The v2 storyboard flow doesn't ask Claude to invent shots — the
-// user composes them directly. Claude is only consulted for:
-//   - shot animation prompts (`writeFcAnimationPrompt`): given a
-//     subject + scene description, return a high-energy Veo direction
-//     suitable for the chaotic shots in this format.
-// Translations have moved out of Claude entirely; overlay narrations
-// are authored by the user in whatever language they want and fed
-// straight to ElevenLabs in that language's voice.
+// The Story Builder flow doesn't ask Claude to invent shots — the
+// user composes them directly. Claude is only consulted for the
+// optional "Write with AI" affordance on the animation-prompt step,
+// where it converts a plain shot description into a short, filter-
+// safe direction the animation models prefer.
 
-const FC_ANIMATION_HAIKU = "claude-haiku-4-5-20251001";
+const STORY_ANIMATION_HAIKU = "claude-haiku-4-5-20251001";
 
-export async function writeFcAnimationPrompt(args: {
+export async function writeStoryAnimationPrompt(args: {
   imagePrompt: string;
-  kind: "actor" | "crazy";
 }): Promise<string> {
-  // Veo 3.1's safety filter aggressively flags prompts containing
+  // Animation-model safety filters aggressively flag prompts containing
   // intensity words ("tight", "exertion", "struggle", "intense",
   // "violent", "frantic", "chaotic", "moody", "dramatic") even when
   // the actual motion described is benign. Empirically simpler
   // prompts pass the filter at much higher rates than richly-styled
   // cinematic descriptions, so the system prompt biases Haiku toward
   // plain-English motion direction.
-  const intent =
-    args.kind === "actor"
-      ? "An actor reacting to a sound nearby — face turns, eyes shift, small posture change. Plain language. Camera holds steady."
-      : "Energetic action in the scene — what the subject is doing. Plain language. Camera holds steady.";
-  const prompt = `Write a Veo 3.1 image-to-video animation prompt (10-30 words, shorter is better) for the following scene. Direct what MOVES in the 5-second clip in plain conversational English.
+  const prompt = `Write a short image-to-video animation prompt (10-30 words, shorter is better) for the following scene. Direct what MOVES in the next clip in plain conversational English. Keep the camera steady unless the user explicitly asked for camera motion.
 
-${intent}
-
-CRITICAL — Veo's safety filter is sensitive. Avoid these word categories:
+CRITICAL — model safety filters are sensitive. Avoid these word categories:
 - intensity adjectives: tight, intense, violent, frantic, chaotic, moody, dramatic, gritty
 - exertion language: struggle, strain, exertion, push hard, force
 - staging language: cinematic, atmospheric, gritty, noir, raw
@@ -898,7 +888,7 @@ SCENE:
 ${args.imagePrompt.trim()}`;
   try {
     const resp = await client().messages.create({
-      model: FC_ANIMATION_HAIKU,
+      model: STORY_ANIMATION_HAIKU,
       max_tokens: 256,
       system:
         "You write short, plain-English image-to-video animation prompts that pass conservative content filters. Avoid intensity / exertion / staging adjectives. Return only the prompt, no quotes, no preamble.",

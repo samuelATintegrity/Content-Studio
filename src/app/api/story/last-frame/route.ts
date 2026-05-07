@@ -4,10 +4,11 @@ import { extractLastFrameViaWorker } from "@/lib/railwayClient";
 export const runtime = "nodejs";
 export const maxDuration = 90;
 
-// POST /api/funny-commercial/last-frame
-// Stand-alone last-frame extraction. Internally used by /shot/animate
-// but also exposed so the panel can re-extract a frame if the original
-// extraction failed silently.
+// POST /api/story/last-frame
+//
+// Stand-alone last-frame extraction. The shot/animate route already
+// runs this internally; the dedicated endpoint is exposed so the panel
+// can re-extract a frame if the original extraction failed silently.
 
 interface Body {
   videoUrl: string;

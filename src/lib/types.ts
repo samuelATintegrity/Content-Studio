@@ -428,107 +428,72 @@ export interface VideoStatusResponse {
   error?: string;
 }
 
-// ── Funny Commercial workflow (v2 — storyboard) ──────────────────────
+// ── Story Builder workflow ───────────────────────────────────────────
 //
-// Shot-based comedic ad builder. Pick (or generate) an actor whose
-// canonical reference photo locks face identity across shots; build
-// individual SHOTS by image-editing the actor or an absurd subject
-// into a location, animate via Veo 3.1, then sequence shots on a
-// timeline with optional text overlays + narration.
+// Project-scoped shot builder. Users create/load a Story Project, then
+// build SHOTS one at a time. Each shot starts from a "starting frame"
+// (uploaded, generated via Nano Banana, OR auto-extracted from a prior
+// shot's last frame) and is animated to a clip via Kling v3 Pro. Saved
+// shots can be sequenced and exported as a Premiere XML zip.
 //
-// Replaces the v1 fixed 4-scene template. The old `FcSceneImage`,
-// `FcSceneVideo`, `FcPhrase`, `FcTranslatedPhrase`, `FcTheme`, `FcVisual`
-// types are gone — manifest data persisted under the old slice names
-// is silently dropped on load by `normalizeManifest`.
+// Replaces the v2 Funny Commercial flow (actors, locations, kind toggle,
+// timeline overlays, narration). The old `FcActor`, `FcLocation`,
+// `FcShotKind`, `FcShot`, `FcTimelineItem`, `FcTimelineOverlay`,
+// `FcRenderTarget`, `FcProject`, `FcRenderTimelineItem` types are gone —
+// manifest data persisted under the old `fcActors` / `fcLocations` /
+// `fcShots` / `fcProjects` slice names is silently dropped on load by
+// `normalizeManifest`.
 
-// An AI-generated actor with a canonical reference image used by Nano
-// Banana for face consistency across every shot they appear in.
-export interface FcActor {
+// Where a starting-frame image originated. Lets the Mini Library
+// distinguish user-supplied frames from generated ones from
+// auto-deposited last-frames-from-saved-shots.
+export type StoryStartingFrameSource = "upload" | "generated" | "extracted-from-shot";
+
+// A reusable image that can seed a new shot's first frame. The starting-
+// frame library is project-scoped — frames don't bleed across projects.
+// On shot save we auto-register the saved shot's lastFrameImageUrl into
+// this library (source: "extracted-from-shot") so the user can chain
+// future shots from any prior beat without juggling separate panels.
+export interface StoryStartingFrame {
   id: string;
-  name: string;                 // user-editable label
-  referenceImageUrl: string;    // canonical 9:16 portrait
-  prompt: string;               // the text that produced them
+  projectId: string;            // foreign key into StoryProject
+  imageUrl: string;
+  source: StoryStartingFrameSource;
+  sourceShotId?: string;        // only for source === "extracted-from-shot"
+  prompt?: string;              // only for source === "generated"
   savedAt: number;
 }
 
-// A reusable backdrop / setting image. Locations are optional starter
-// references for shot composition (Nano edits the actor or absurd
-// subject INTO the location). Saved separately so they can be reused
-// across multiple shots and multiple commercials.
-export interface FcLocation {
+// One animated beat in a story. Starts from a `startingFrameImageUrl`
+// (whatever Kling sees as the seed), gets animated, and lands a videoUrl
+// + lastFrameImageUrl on the record. Project-scoped — shots from one
+// project don't surface in another.
+export interface StoryShot {
   id: string;
-  prompt: string;
-  imageUrl: string;             // 9:16 background image
-  savedAt: number;
-}
-
-// One scene-level beat in the storyboard. Each shot starts as a still
-// (composed by Nano with optional reference images) and is animated to
-// a 5-second clip by Veo 3.1. The last frame is extracted post-
-// animation so the next actor shot can seed continuity from it.
-export type FcShotKind = "actor" | "crazy";
-
-export interface FcShot {
-  id: string;
-  kind: FcShotKind;
-  actorId?: string;             // only when kind="actor"
-  locationId?: string;          // optional starter location reference
-  imagePrompt: string;          // composing prompt for the still
-  imageUrl: string;             // first-frame still
-  animationPrompt: string;      // Veo direction
-  videoUrl?: string;            // populated after animation
-  lastFrameImageUrl?: string;   // extracted post-animation for continuity
-  parentShotId?: string;        // when seeded from another shot's last frame
+  projectId: string;            // foreign key into StoryProject
+  startingFrameImageUrl: string;
+  animationPrompt: string;
+  videoUrl: string;             // populated on save (a shot is only
+                                // saved after a successful animation)
+  lastFrameImageUrl?: string;   // extracted post-animation
   title?: string;               // user-editable label
   savedAt: number;
 }
 
-// One slot in the per-batch ordered timeline. Slots reference shots by
-// id and may carry a text overlay + narration to render burned-in over
-// the corresponding clip.
-export interface FcTimelineItem {
+// One ordered slot in a story's final sequence. Slots just reference
+// shots by id — no overlays, no narration, no trim (deferred follow-ups).
+export interface StorySequenceItem {
   id: string;
   shotId: string;
-  durationS?: number;           // optional trim override; default = clip duration
-  overlay?: FcTimelineOverlay;
 }
 
-export interface FcTimelineOverlay {
-  text: string;
-  narrate: boolean;             // generate TTS for the overlay text?
-  voiceId?: string;             // ElevenLabs voice; defaults to active-language voice
-}
-
-// What the FAB's render button produces.
-export type FcRenderTarget = "mp4" | "premiere_zip";
-
-// A saved Funny Commercial project — a snapshot of the per-batch
-// state (actor pick, timeline arrangement, continuity pin, output
-// preference). The shared library data (actors, locations, shots) is
-// NOT part of a project; projects reference shots by id and gracefully
-// surface "Missing shot" if a referenced asset has been deleted in
-// the interim.
-export interface FcProject {
+// A saved Story Builder project. Owns the sequence; library assets
+// (shots, starting frames) reference the project by id but live in
+// separate manifest slices so list/subscribe scales independently.
+export interface StoryProject {
   id: string;
   name: string;
   savedAt: number;
-  selectedActorId: string | null;
-  timelineItems: FcTimelineItem[];
-  continuitySourceShotId: string | null;
-  renderTarget: FcRenderTarget;
+  sequenceItems: StorySequenceItem[];
   language: Language;
-}
-
-// Render payload sent from app → worker (via /api/video/render). The
-// worker concatenates clipUrls in order, burns overlays via ASS at the
-// computed slot times, mixes narration audio at the slot start times,
-// and appends the logo bumper.
-export interface FcRenderTimelineItem {
-  clipUrl: string;
-  durationS?: number;
-  overlay?: {
-    text: string;
-    narrationUrl?: string;      // pre-generated TTS, if narrate=true
-    narrationDurationS?: number;
-  };
 }

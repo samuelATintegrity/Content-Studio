@@ -199,10 +199,10 @@ export function Sidebar({ drawerOpen = false, onClose }: SidebarProps = {}) {
               Influencer
             </Pill>
             <Pill
-              selected={subMode === "funny_commercial"}
-              onClick={() => setSubMode("funny_commercial")}
+              selected={subMode === "story_builder"}
+              onClick={() => setSubMode("story_builder")}
             >
-              Funny commercial
+              Story builder
             </Pill>
           </div>
         </Section>
@@ -218,7 +218,7 @@ export function Sidebar({ drawerOpen = false, onClose }: SidebarProps = {}) {
 
       {format === "video" && subMode === "narration" && <SavedSetsSection />}
 
-      {format === "video" && subMode !== "funny_commercial" && (
+      {format === "video" && subMode !== "story_builder" && (
         <MusicLibrarySection />
       )}
 
@@ -233,10 +233,10 @@ export function Sidebar({ drawerOpen = false, onClose }: SidebarProps = {}) {
       </Section>
 
       {/* Video mode (narration + influencer) uses the Message theme
-          picker. Funny commercial doesn't — its messaging is encoded
-          in the chosen Scene 3 CTA. Static mode uses a single 5-pill
-          content-type picker (Photo + the four graphic templates). */}
-      {format === "video" && subMode !== "funny_commercial" ? (
+          picker. Story builder doesn't — its messaging is whatever the
+          shots say. Static mode uses a single 5-pill content-type
+          picker (Photo + the four graphic templates). */}
+      {format === "video" && subMode !== "story_builder" ? (
         <Section title="Message">
           <div className="flex flex-col gap-2">
             {MESSAGE_THEMES.map((t) => (

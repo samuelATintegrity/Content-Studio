@@ -1,14 +1,14 @@
-// Final Cut Pro 7 XML serializer for the Funny Commercial v2 export.
+// Final Cut Pro 7 XML serializer for the Story Builder Premiere export.
 //
 // Premiere Pro CC reliably imports FCP7 XML (the legacy "xmeml" dialect)
 // as a multi-track sequence. Newer .fcpxml is FCP X-only and trips up
 // Premiere. We generate one <sequence> per export with:
 //   - V1: per-slot video clips referenced by RELATIVE path (so the zip
-//     is portable — the user can extract anywhere)
-//   - V2: title generators for each overlay (Premiere reads these as
-//     "Basic Title" placeholders the user can restyle)
+//     is portable — extract anywhere, Premiere resolves siblings)
 //   - A1: per-slot audio (concat of clip audio)
-//   - A2: per-slot narration mp3s (when present)
+//
+// V2 title overlays + A2 narration tracks were dropped along with the
+// FC flow — story exports are now raw clip sequences.
 //
 // Time math is in frames. Internal sequencing assumes 30fps to match
 // the worker's render output.
@@ -25,16 +25,10 @@ const SAMPLE_RATE = 44100;
 export interface FcpxmlClipSpec {
   // 1-based index used in clip names. Stable across re-exports.
   slotIndex: number;
-  // Filename inside the zip's clips/ directory, e.g. "1-fc-shot-abc.mp4".
+  // Filename inside the zip's clips/ directory, e.g. "1-story-shot-abc.mp4".
   clipFileName: string;
   // Slot duration in seconds.
   durationS: number;
-  // Optional overlay text to render as a basic title on V2.
-  overlayText?: string;
-  // Optional narration mp3 filename inside the zip's narrations/ dir,
-  // e.g. "3.mp3". When present, the overlay's audio plays on A2 starting
-  // at the same time as the slot.
-  narrationFileName?: string;
 }
 
 export interface FcpxmlExportSpec {
@@ -128,45 +122,11 @@ function audioClipItem(args: {
   ].join("");
 }
 
-function titleClipItem(args: {
-  id: string;
-  text: string;
-  start: number;
-  end: number;
-  durationFrames: number;
-}): string {
-  // FCP7 XML "title" generator. Premiere imports this as a basic title
-  // placeholder; the user can restyle inside Premiere. We pre-fill the
-  // text as the title's name so it's identifiable in the timeline.
-  const safe = escapeXml(args.text);
-  return [
-    `<clipitem id="${args.id}">`,
-    `<name>${safe}</name>`,
-    `<duration>${args.durationFrames}</duration>`,
-    `<rate><timebase>${TIMEBASE}</timebase><ntsc>${NTSC}</ntsc></rate>`,
-    `<start>${args.start}</start>`,
-    `<end>${args.end}</end>`,
-    `<in>0</in>`,
-    `<out>${args.durationFrames}</out>`,
-    `<filter><effect>`,
-    `<name>Basic Title</name>`,
-    `<effectid>basictext</effectid>`,
-    `<effectcategory>Text</effectcategory>`,
-    `<effecttype>generator</effecttype>`,
-    `<mediatype>video</mediatype>`,
-    `<parameter><parameterid>str</parameterid><name>Text</name><value>${safe}</value></parameter>`,
-    `</effect></filter>`,
-    `</clipitem>`,
-  ].join("");
-}
-
 export function buildFcpxml(spec: FcpxmlExportSpec): string {
   // Walk the clips, accumulating frame offsets. Build per-track lists
-  // (V1, V2, A1, A2) as we go.
+  // (V1, A1) as we go.
   const v1: string[] = [];
-  const v2: string[] = [];
   const a1: string[] = [];
-  const a2: string[] = [];
 
   let cursor = 0;
   let nextId = 1;
@@ -206,47 +166,6 @@ export function buildFcpxml(spec: FcpxmlExportSpec): string {
         trackIndex: 1,
       }),
     );
-
-    if (clip.overlayText && clip.overlayText.trim().length > 0) {
-      v2.push(
-        titleClipItem({
-          id: id(),
-          text: clip.overlayText.trim(),
-          start: start + Math.round(0.4 * FPS),  // matches worker's 0.4s overlay delay
-          end,
-          durationFrames: end - (start + Math.round(0.4 * FPS)),
-        }),
-      );
-    }
-
-    if (clip.narrationFileName) {
-      const narrFileId = `file-narr-${clip.slotIndex}`;
-      const narrName = `narration-${clip.slotIndex}`;
-      const narrPath = `narrations/${clip.narrationFileName}`;
-      // Best-effort: assume narration ≤ slot duration. Premiere truncates
-      // if shorter; if longer it spills past the slot which is fine.
-      const narrLen = dur;
-      a2.push(
-        audioClipItem({
-          id: id(),
-          name: narrName,
-          start,
-          end: start + narrLen,
-          inFrames: 0,
-          outFrames: narrLen,
-          fileRef: [
-            `<file id="${narrFileId}">`,
-            `<name>${escapeXml(narrName)}</name>`,
-            `<pathurl>${escapeXml(pathurl(narrPath))}</pathurl>`,
-            `<rate><timebase>${TIMEBASE}</timebase><ntsc>${NTSC}</ntsc></rate>`,
-            `<duration>${narrLen}</duration>`,
-            `<media><audio><samplecharacteristics><depth>16</depth><samplerate>${SAMPLE_RATE}</samplerate></samplecharacteristics><channelcount>2</channelcount></audio></media>`,
-            `</file>`,
-          ].join(""),
-          trackIndex: 1,
-        }),
-      );
-    }
 
     cursor = end;
   }
@@ -288,12 +207,10 @@ export function buildFcpxml(spec: FcpxmlExportSpec): string {
     `<video>`,
     `<format><samplecharacteristics><width>${SEQUENCE_W}</width><height>${SEQUENCE_H}</height><pixelaspectratio>square</pixelaspectratio><rate><timebase>${TIMEBASE}</timebase><ntsc>${NTSC}</ntsc></rate><codec><name>Apple ProRes 422</name></codec></samplecharacteristics></format>`,
     `<track>${v1.join("")}</track>`,
-    `<track>${v2.join("")}</track>`,
     `</video>`,
     `<audio>`,
     `<format><samplecharacteristics><depth>16</depth><samplerate>${SAMPLE_RATE}</samplerate></samplecharacteristics></format>`,
     `<track>${a1.join("")}</track>`,
-    `<track>${a2.join("")}</track>`,
     `</audio>`,
     `</media>`,
     `<timecode><rate><timebase>${TIMEBASE}</timebase><ntsc>${NTSC}</ntsc></rate><frame>0</frame><displayformat>NDF</displayformat></timecode>`,
@@ -302,6 +219,5 @@ export function buildFcpxml(spec: FcpxmlExportSpec): string {
   ].join("\n");
 }
 
-// Frame-duration helper for callers that need it (e.g., precise narration
-// alignment when generating overlay tracks). Exported for test use.
+// Frame-duration helper for callers that need it. Exported for test use.
 export const FCPXML_FRAME_DURATION = FRAME_DURATION;

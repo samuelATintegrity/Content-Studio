@@ -30,7 +30,7 @@ export interface JobState {
   updatedAt: number;
 }
 
-export type RenderMode = "narration" | "influencer" | "funny_commercial";
+export type RenderMode = "narration" | "influencer";
 
 // Body of POST /render from Vercel.
 export interface RenderRequest {
@@ -58,23 +58,6 @@ export interface RenderRequest {
   // and a fresh batchSeed per batch varies which 3 files are picked.
   // Falls back to random when undefined.
   musicShuffleIndex?: number;
-  // Funny Commercial v2 (storyboard) — variable-length timeline of
-  // pre-animated shots. Each slot may carry a text overlay (and an
-  // optional narration that the worker TTSes inline). The worker
-  // appends a logo bumper after the last clip.
-  fcTimeline?: FcTimelineRenderItem[];
-  fcLogoOutroDurationS?: number;
-  fcMusicTrackUrl?: string | null;
-}
-
-export interface FcTimelineRenderItem {
-  clipUrl: string;
-  durationS?: number;        // optional trim; defaults to clip duration
-  overlay?: {
-    text: string;
-    narrate: boolean;        // worker TTSes this text via ElevenLabs
-    voiceId?: string;        // optional voice override
-  };
 }
 
 export interface RenderResponse {

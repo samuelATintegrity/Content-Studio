@@ -8,7 +8,6 @@ import {
   generateVideoBatch,
   renderWithPickedClips,
 } from "@/lib/generateVideo";
-import { generateFunnyCommercialBatch } from "@/lib/generateFunnyCommercial";
 import {
   INFLUENCER_MIDDLE_COUNT,
   PICKED_CLIP_COUNT,
@@ -26,11 +25,15 @@ export function GenerateFAB() {
   const selectedIntroClipUrl = useBatchStore((s) => s.selectedIntroClipUrl);
   const selectedOutroClipUrl = useBatchStore((s) => s.selectedOutroClipUrl);
   const selectedMessageTheme = useBatchStore((s) => s.selectedMessageTheme);
-  const fcTimelineItems = useBatchStore((s) => s.fcTimelineItems);
   const isVideo = format === "video";
   const isInfluencer = isVideo && subMode === "influencer";
-  const isFunnyCommercial = isVideo && subMode === "funny_commercial";
+  const isStoryBuilder = isVideo && subMode === "story_builder";
   const selectedCount = selectedClipUrls.length;
+
+  // Story Builder owns its own export bar inside the panel — hide the
+  // FAB entirely so we don't surface a second, unrelated CTA. This
+  // also stops a stray click from triggering an unrelated batch.
+  if (isStoryBuilder) return null;
 
   // Block re-trigger while an image set is mid-flight (any slot not finished
   // and not in failed state) so we don't lose work to a stray double-click.
@@ -65,33 +68,13 @@ export function GenerateFAB() {
     }
   }
 
-  // Funny Commercial v2 flow gating. The panel owns the full
-  // composition + render UI, so the FAB really only fires when the
-  // timeline has at least one shot.
-  let fcLabel: string | null = null;
-  let fcReady = false;
-  if (isFunnyCommercial) {
-    if (fcTimelineItems.length === 0) {
-      fcLabel = "Add a shot to the timeline";
-    } else {
-      fcLabel = `Render commercial (${fcTimelineItems.length})`;
-      fcReady = true;
-    }
-  }
-
   const disabled =
     loading ||
     (isVideo && imageSetBusy) ||
-    (isInfluencer && !influencerReady) ||
-    (isFunnyCommercial && !fcReady);
+    (isInfluencer && !influencerReady);
 
   function onClick() {
     if (disabled) return;
-    if (isFunnyCommercial) {
-      if (!fcReady) return;
-      void generateFunnyCommercialBatch();
-      return;
-    }
     if (isInfluencer) {
       if (!influencerReady) return;
       if (
@@ -128,7 +111,6 @@ export function GenerateFAB() {
   let label: string;
   if (loading) label = isVideo ? "Starting batch" : "Generating";
   else if (isVideo && imageSetBusy) label = "Image set in progress";
-  else if (isFunnyCommercial) label = fcLabel ?? "Render commercial";
   else if (isInfluencer) label = influencerLabel ?? "Render influencer";
   else if (canRenderPicked) label = "Render with selected";
   else if (canRenderMixed) label = `Generate (${selectedCount} pick${selectedCount === 1 ? "" : "s"} + ${aiFillCount} AI)`;

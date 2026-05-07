@@ -31,23 +31,13 @@ export async function enqueueRender(args: {
   language: Language;
   contentType: ContentType;
   clipUrls: string[];
-  mode?: "narration" | "influencer" | "funny_commercial";
+  mode?: "narration" | "influencer";
   voiceId?: string;
   introClipUrl?: string;
   introCaptionCutoffPhrase?: string;
   outroClipUrl?: string;
   outroCaptionCutoffPhrase?: string;
   musicShuffleIndex?: number;
-  // Funny Commercial v2 — variable-length timeline of pre-animated
-  // shots. Each slot may carry an overlay (text + optional narration
-  // that the worker TTSes inline).
-  fcTimeline?: Array<{
-    clipUrl: string;
-    durationS?: number;
-    overlay?: { text: string; narrate: boolean; voiceId?: string };
-  }>;
-  fcLogoOutroDurationS?: number;
-  fcMusicTrackUrl?: string | null;
 }): Promise<string> {
   if (!Array.isArray(args.clipUrls) || args.clipUrls.length === 0) {
     throw new Error("enqueueRender: clipUrls is required");

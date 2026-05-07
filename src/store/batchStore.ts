@@ -6,9 +6,6 @@ import {
   DEFAULT_MESSAGE_THEME,
   DEFAULT_STATIC_CONTENT_TYPE,
   type ContentType,
-  type FcRenderTarget,
-  type FcTimelineItem,
-  type FcTimelineOverlay,
   type Format,
   type ImageSlot,
   type Language,
@@ -19,7 +16,7 @@ import {
 } from "@/lib/types";
 import { PICKED_CLIP_COUNT } from "@/lib/videoPrompts";
 
-export type SubMode = "narration" | "influencer" | "funny_commercial";
+export type SubMode = "narration" | "influencer" | "story_builder";
 
 interface BatchState {
   format: Format;
@@ -54,20 +51,12 @@ interface BatchState {
   selectedOutroClipUrl: string | null;
   selectedMessageTheme: MessageTheme;
 
-  // Funny Commercial v2 per-batch state. The user picks one actor
-  // (whose face is locked across every shot they appear in), composes
-  // shots into the shared `fcShots` library, then orders shot
-  // references on a timeline before rendering. Cleared on sub-mode
-  // swap.
-  fcSelectedActorId: string | null;
-  // When set, the continuity-on flow seeds Veo from this exact shot's
-  // last frame instead of falling back to "latest animated actor
-  // shot." Lets the user explicitly pick which clip to chain from
-  // (or branch from — the pin persists across animations until
-  // manually cleared). null = auto-fall-back-to-latest.
-  fcContinuitySourceShotId: string | null;
-  fcTimelineItems: FcTimelineItem[];
-  fcRenderTarget: FcRenderTarget;
+  // Story Builder per-batch state. The user picks (or creates) a project
+  // — which gates every other Story Builder UI: the project home only
+  // appears once `storyActiveProjectId` is non-null. Cleared on sub-mode
+  // swap so a stale project doesn't carry over when the user comes back
+  // from Influencer/Narration.
+  storyActiveProjectId: string | null;
 
   setFormat: (f: Format) => void;
   setLanguage: (l: Language) => void;
@@ -91,14 +80,7 @@ interface BatchState {
   setSelectedIntroClipUrl: (url: string | null) => void;
   setSelectedOutroClipUrl: (url: string | null) => void;
   setSelectedMessageTheme: (t: MessageTheme) => void;
-  setFcSelectedActorId: (id: string | null) => void;
-  setFcContinuitySourceShotId: (id: string | null) => void;
-  setFcTimelineItems: (items: FcTimelineItem[]) => void;
-  fcAddToTimeline: (shotId: string) => void;
-  fcRemoveFromTimeline: (slotId: string) => void;
-  fcReorderTimeline: (slotId: string, toIndex: number) => void;
-  fcSetTimelineOverlay: (slotId: string, overlay: FcTimelineOverlay | null) => void;
-  setFcRenderTarget: (target: FcRenderTarget) => void;
+  setStoryActiveProjectId: (id: string | null) => void;
 }
 
 export const useBatchStore = create<BatchState>((set) => ({
@@ -119,10 +101,7 @@ export const useBatchStore = create<BatchState>((set) => ({
   selectedIntroClipUrl: null,
   selectedOutroClipUrl: null,
   selectedMessageTheme: DEFAULT_MESSAGE_THEME,
-  fcSelectedActorId: null,
-  fcContinuitySourceShotId: null,
-  fcTimelineItems: [],
-  fcRenderTarget: "mp4",
+  storyActiveProjectId: null,
 
   setFormat: (format) =>
     set((s) => ({
@@ -190,8 +169,9 @@ export const useBatchStore = create<BatchState>((set) => ({
   clearClipSelection: () => set({ selectedClipKeys: [], selectedClipUrls: [] }),
   // Switching sub-mode resets the picked clips and avatar/intro/outro
   // selections, since the three flows pick into overlapping store
-  // slots with different shape requirements. Funny-commercial picks
-  // are also cleared so a stale actor / timeline doesn't carry over.
+  // slots with different shape requirements. Story-builder's active
+  // project is also cleared so a stale project doesn't auto-load when
+  // the user comes back later.
   setSubMode: (subMode) =>
     set({
       subMode,
@@ -200,9 +180,7 @@ export const useBatchStore = create<BatchState>((set) => ({
       selectedAvatarName: null,
       selectedIntroClipUrl: null,
       selectedOutroClipUrl: null,
-      fcSelectedActorId: null,
-      fcContinuitySourceShotId: null,
-      fcTimelineItems: [],
+      storyActiveProjectId: null,
     }),
   // Switching static content type clears any in-progress batch.
   // Photo posts and the four graphic templates all have very
@@ -229,49 +207,6 @@ export const useBatchStore = create<BatchState>((set) => ({
       selectedIntroClipUrl: null,
       selectedOutroClipUrl: null,
     }),
-  setFcSelectedActorId: (fcSelectedActorId) => set({ fcSelectedActorId }),
-  setFcContinuitySourceShotId: (fcContinuitySourceShotId) =>
-    set({ fcContinuitySourceShotId }),
-  setFcTimelineItems: (fcTimelineItems) => set({ fcTimelineItems }),
-  // Append a fresh slot to the timeline pointing at the given shot.
-  // Slot id is generated locally so the React keys stay stable across
-  // re-renders. Multiple slots can reference the same shot — useful
-  // when a single shot bookends an ad.
-  fcAddToTimeline: (shotId) =>
-    set((s) => ({
-      fcTimelineItems: [
-        ...s.fcTimelineItems,
-        {
-          id: `fc-slot-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
-          shotId,
-        },
-      ],
-    })),
-  fcRemoveFromTimeline: (slotId) =>
-    set((s) => ({
-      fcTimelineItems: s.fcTimelineItems.filter((i) => i.id !== slotId),
-    })),
-  // Reorder a single slot to a new index. Indices are clamped to the
-  // current timeline length; out-of-range moves are no-ops.
-  fcReorderTimeline: (slotId, toIndex) =>
-    set((s) => {
-      const fromIndex = s.fcTimelineItems.findIndex((i) => i.id === slotId);
-      if (fromIndex < 0) return {};
-      const target = Math.max(0, Math.min(toIndex, s.fcTimelineItems.length - 1));
-      if (fromIndex === target) return {};
-      const next = s.fcTimelineItems.slice();
-      const [moved] = next.splice(fromIndex, 1);
-      next.splice(target, 0, moved);
-      return { fcTimelineItems: next };
-    }),
-  // Set or clear the overlay on a slot.
-  fcSetTimelineOverlay: (slotId, overlay) =>
-    set((s) => ({
-      fcTimelineItems: s.fcTimelineItems.map((i) =>
-        i.id === slotId
-          ? { ...i, overlay: overlay ?? undefined }
-          : i,
-      ),
-    })),
-  setFcRenderTarget: (fcRenderTarget) => set({ fcRenderTarget }),
+  setStoryActiveProjectId: (storyActiveProjectId) =>
+    set({ storyActiveProjectId }),
 }));
