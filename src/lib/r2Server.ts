@@ -5,6 +5,7 @@ import {
   GetObjectCommand,
   NoSuchKey,
 } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 let _client: S3Client | null = null;
 
@@ -83,4 +84,41 @@ export async function putBytes(args: {
     }),
   );
   return `${publicUrl.replace(/\/$/, "")}/${args.key}`;
+}
+
+// Sign a PUT URL the browser can upload directly to. Used by the
+// Upload Content flow so files larger than Vercel's 4.5MB serverless
+// body limit can still flow through — the signed URL goes browser →
+// R2 with the serverless function never seeing the bytes.
+//
+// `contentType` MUST match the Content-Type the browser sends in its
+// PUT request — R2 validates the signature against the type. The
+// returned `publicUrl` is the eventual readable URL once the upload
+// lands.
+//
+// `expiresInS` defaults to 10 minutes — long enough for a slow
+// connection on a 25MB clip, short enough that a leaked link
+// can't be reused all day.
+export async function presignPut(args: {
+  key: string;
+  contentType: string;
+  expiresInS?: number;
+}): Promise<{ uploadUrl: string; publicUrl: string }> {
+  const bucket = process.env.R2_BUCKET;
+  const publicUrl = process.env.R2_PUBLIC_URL;
+  if (!bucket || !publicUrl) {
+    throw new Error("R2_BUCKET and R2_PUBLIC_URL must be set");
+  }
+  const cmd = new PutObjectCommand({
+    Bucket: bucket,
+    Key: args.key,
+    ContentType: args.contentType,
+  });
+  const uploadUrl = await getSignedUrl(client(), cmd, {
+    expiresIn: args.expiresInS ?? 600,
+  });
+  return {
+    uploadUrl,
+    publicUrl: `${publicUrl.replace(/\/$/, "")}/${args.key}`,
+  };
 }

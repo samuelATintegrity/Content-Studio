@@ -108,26 +108,94 @@ export function UploadContentModal({ onClose }: Props) {
     return null;
   }
 
+  // Compute the SHA-256 hex digest of the file's bytes, browser-side.
+  // We use the first 32 hex chars of the digest as the R2 key prefix,
+  // which mirrors the old server-side upload routes — same file twice
+  // is the same R2 object.
+  async function sha256Hex(f: File): Promise<string> {
+    const buf = await f.arrayBuffer();
+    const digest = await crypto.subtle.digest("SHA-256", buf);
+    const bytes = new Uint8Array(digest);
+    let hex = "";
+    for (let i = 0; i < bytes.length; i++) {
+      hex += bytes[i].toString(16).padStart(2, "0");
+    }
+    return hex.slice(0, 32);
+  }
+
+  // Pick a usable Content-Type + extension for the PUT. Browsers
+  // sometimes hand us empty strings for both, especially when the
+  // file came from drag-drop on Safari, so we fall back to a generic
+  // mp4/png. R2 will validate the signed Content-Type against what
+  // the browser sends in the PUT, so the two MUST match — that's
+  // why we resolve them once here and pass them to both calls.
+  function resolveTypeAndExt(f: File, kind: "video" | "image"): {
+    contentType: string;
+    ext: string;
+  } {
+    const lower = f.name.toLowerCase();
+    const extMatch = lower.match(/\.([a-z0-9]+)$/);
+    let ext = extMatch?.[1] ?? "";
+    let contentType = f.type;
+    if (kind === "video") {
+      if (!ext || !["mp4", "mov", "m4v", "webm", "avi"].includes(ext)) ext = "mp4";
+      if (!contentType) contentType = ext === "webm" ? "video/webm" : "video/mp4";
+    } else {
+      if (!ext || !["png", "jpg", "jpeg", "webp", "gif"].includes(ext)) ext = "png";
+      if (!contentType) {
+        contentType =
+          ext === "jpg" || ext === "jpeg"
+            ? "image/jpeg"
+            : ext === "webp"
+              ? "image/webp"
+              : ext === "gif"
+                ? "image/gif"
+                : "image/png";
+      }
+    }
+    return { contentType, ext };
+  }
+
+  // Direct-to-R2 upload via a signed PUT URL. Bypasses Vercel's
+  // ~4.5MB serverless body limit entirely — the file goes browser →
+  // R2, the serverless function only signs the URL.
   async function uploadFile(f: File, kind: "video" | "image"): Promise<UploadResult> {
-    const url = kind === "video" ? "/api/video/upload-clip" : "/api/story/frame/upload";
-    const res = await fetch(url, {
+    const { contentType, ext } = resolveTypeAndExt(f, kind);
+    const sha = await sha256Hex(f);
+
+    // 1. Ask the server for a signed URL.
+    const presignRes = await fetch("/api/upload/presign", {
       method: "POST",
-      headers: {
-        "content-type": f.type || (kind === "video" ? "video/mp4" : "image/png"),
-        "x-filename": f.name,
-      },
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ kind, contentType, sha, ext }),
+    });
+    const presignText = await presignRes.text();
+    let presign: { uploadUrl?: string; publicUrl?: string; error?: string } = {};
+    try {
+      presign = presignText ? JSON.parse(presignText) : {};
+    } catch {
+      throw new Error(`presign returned non-JSON (${presignRes.status})`);
+    }
+    if (!presignRes.ok) {
+      throw new Error(presign.error ?? `presign failed (${presignRes.status})`);
+    }
+    if (!presign.uploadUrl || !presign.publicUrl) {
+      throw new Error("presign returned malformed body");
+    }
+
+    // 2. PUT the bytes straight at R2. Content-Type MUST match the
+    //    one we asked the server to sign for, or R2 rejects with 403.
+    const putRes = await fetch(presign.uploadUrl, {
+      method: "PUT",
+      headers: { "content-type": contentType },
       body: f,
     });
-    const text = await res.text();
-    let body: { cachedUrl?: string; filename?: string; error?: string } = {};
-    try {
-      body = text ? JSON.parse(text) : {};
-    } catch {
-      throw new Error(`upload returned non-JSON (${res.status})`);
+    if (!putRes.ok) {
+      const detail = await putRes.text().catch(() => "");
+      throw new Error(`R2 upload failed (${putRes.status})${detail ? `: ${detail.slice(0, 200)}` : ""}`);
     }
-    if (!res.ok) throw new Error(body.error ?? `upload failed (${res.status})`);
-    if (!body.cachedUrl || !body.filename) throw new Error("upload returned malformed body");
-    return { url: body.cachedUrl, filename: body.filename, kind };
+
+    return { url: presign.publicUrl, filename: f.name, kind };
   }
 
   async function extractSource(up: UploadResult): Promise<string> {
