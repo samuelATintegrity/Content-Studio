@@ -27,6 +27,7 @@ import {
   subscribeMusicLibrary,
 } from "@/lib/musicLibrary";
 import { BufferQueueModal } from "./BufferQueueModal";
+import { UploadContentModal } from "./UploadContentModal";
 
 const FORMATS: Format[] = ["static", "video"];
 const LANGS: Language[] = ["en", "tl", "es", "zh"];
@@ -424,17 +425,32 @@ function MusicLibrarySection() {
 }
 
 function ScheduledPostsSection() {
-  const [open, setOpen] = useState(false);
+  // The "Posts" section is the operator's hub for everything that
+  // ends up in Buffer — both the queue review modal (Scheduled posts)
+  // and the new Upload Content flow for posts not generated inside
+  // the studio (e.g. a video edited in Premiere Pro).
+  const [queueOpen, setQueueOpen] = useState(false);
+  const [uploadOpen, setUploadOpen] = useState(false);
   return (
-    <Section title="Schedule">
-      <button
-        onClick={() => setOpen(true)}
-        className="w-full px-3 py-2 rounded-2xl text-[12px] border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition flex items-center justify-between"
-      >
-        <span className="font-medium">Scheduled posts</span>
-        <span className="text-[11px] text-neutral-500">Buffer →</span>
-      </button>
-      {open && <BufferQueueModal onClose={() => setOpen(false)} />}
+    <Section title="Posts">
+      <div className="flex flex-col gap-2">
+        <button
+          onClick={() => setUploadOpen(true)}
+          className="w-full px-3 py-2 rounded-2xl text-[12px] border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition flex items-center justify-between"
+        >
+          <span className="font-medium">+ Upload content</span>
+          <span className="text-[11px] text-neutral-500">Premiere · etc</span>
+        </button>
+        <button
+          onClick={() => setQueueOpen(true)}
+          className="w-full px-3 py-2 rounded-2xl text-[12px] border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-950 hover:bg-neutral-50 dark:hover:bg-neutral-900 transition flex items-center justify-between"
+        >
+          <span className="font-medium">Scheduled posts</span>
+          <span className="text-[11px] text-neutral-500">Buffer →</span>
+        </button>
+      </div>
+      {queueOpen && <BufferQueueModal onClose={() => setQueueOpen(false)} />}
+      {uploadOpen && <UploadContentModal onClose={() => setUploadOpen(false)} />}
     </Section>
   );
 }

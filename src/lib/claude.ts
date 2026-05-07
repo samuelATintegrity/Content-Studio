@@ -854,6 +854,128 @@ export async function generateGraphicBatch(
   }
 }
 
+// ── Upload-content helpers ─────────────────────────────────────────
+//
+// The "Upload content" flow (sidebar Posts → + Upload content) takes a
+// pre-made video or photo from the user, derives source text from it
+// (Whisper transcript for video, Vision description for image), then
+// drafts an Instagram caption body in the same voice as the in-studio
+// posts. The route layer wraps the body with `buildCaption()` so the
+// final caption follows the standard URL + form line + body shape.
+
+const UPLOAD_VISION_MODEL = "claude-sonnet-4-6";
+const UPLOAD_CAPTION_HAIKU = "claude-haiku-4-5-20251001";
+
+// Describe a still image in 2-4 plain-English sentences. The output is
+// fed back into `writeUploadCaption()` as the source signal — same
+// shape as a Whisper transcript so the caption-drafter doesn't need
+// to know whether it's looking at audio or stills.
+export async function describeImageForCaption(args: {
+  imageBytes: Uint8Array;
+  contentType: string; // "image/png" | "image/jpeg" | etc.
+}): Promise<string> {
+  // Anthropic Vision accepts only a few media types via base64. Coerce
+  // anything ambiguous to png — works for transparent + opaque alike.
+  const mediaType: "image/png" | "image/jpeg" | "image/gif" | "image/webp" =
+    args.contentType === "image/jpeg" || args.contentType === "image/jpg"
+      ? "image/jpeg"
+      : args.contentType === "image/gif"
+        ? "image/gif"
+        : args.contentType === "image/webp"
+          ? "image/webp"
+          : "image/png";
+  const b64 = Buffer.from(args.imageBytes).toString("base64");
+  try {
+    const resp = await client().messages.create({
+      model: UPLOAD_VISION_MODEL,
+      max_tokens: 400,
+      system:
+        "You describe images for a real-estate Instagram caption writer. Stick to what's literally visible. No marketing language, no metaphors, no calls-to-action. Plain English, 2-4 sentences.",
+      messages: [
+        {
+          role: "user",
+          content: [
+            {
+              type: "image",
+              source: {
+                type: "base64",
+                media_type: mediaType,
+                data: b64,
+              },
+            },
+            {
+              type: "text",
+              text: "Describe what's in this image in 2-4 plain sentences. Cover the subject, the setting, mood/lighting, and any relevant details a caption writer would need. Don't speculate beyond what you can see.",
+            },
+          ],
+        },
+      ],
+    });
+    const textBlock = resp.content.find((b) => b.type === "text");
+    if (!textBlock || textBlock.type !== "text") {
+      throw new Error("vision returned no text block");
+    }
+    return textBlock.text.trim();
+  } catch (e) {
+    throw friendlyError(e);
+  }
+}
+
+// Draft an Instagram caption body from a transcript or description.
+// Mirrors the voice of the in-studio post bodies: 3-5 sentences in the
+// active language, plus a newline and 3-5 hashtags. No URLs, no DM/CTA
+// language, no em dashes.
+//
+// The caller wraps this body with `buildCaption(language, contentType,
+// body)` to prepend the language-matched landing-page URL and the form
+// line.
+export async function writeUploadCaption(args: {
+  source: string;          // Whisper transcript or Vision description
+  sourceKind: "video" | "image";
+  language: Language;
+  contentType: ContentType;
+}): Promise<string> {
+  const langLabel = LANGUAGE_LABELS[args.language];
+  const sourceLabel = args.sourceKind === "video" ? "TRANSCRIPT" : "VISUAL DESCRIPTION";
+  const prompt = `You're writing an Instagram caption body for a real-estate creator's post. The post is a user-uploaded ${args.sourceKind === "video" ? "short-form video" : "still image"}; here is the ${sourceLabel.toLowerCase()} so you know what the post is actually about:
+
+${sourceLabel}:
+${args.source.trim()}
+
+CONTENT-TYPE ANGLE: ${args.contentType}
+LANGUAGE: ${langLabel}
+
+Write the caption BODY ONLY — 3-5 sentences in ${langLabel}. The body should:
+- Open with a hook that fits the ${sourceLabel.toLowerCase()} (don't restate it verbatim)
+- Educate the viewer about the angle (what makes it interesting / useful for first-time buyers)
+- Sound like a real human, not a brochure
+- End with a newline and 3-5 hashtags relevant to the angle, in the post's language
+
+HARD RULES:
+- DO NOT include any URLs (the post-processor adds the language-matched landing page)
+- DO NOT include any "DM me" / "reach out" / "fill out the form" CTA language (the post-processor adds the form line)
+- DO NOT use em dashes (—) or en dashes (–). Use commas instead.
+- DO NOT mention captions, links, or social media affordances directly
+
+Return ONLY the caption body. No preamble, no quotes.`;
+  try {
+    const resp = await client().messages.create({
+      model: UPLOAD_CAPTION_HAIKU,
+      max_tokens: 1024,
+      system:
+        "You write punchy Instagram caption bodies for real-estate educational content. 3-5 sentences plus hashtags. No URLs, no CTA language, no em dashes. Match the requested language exactly.",
+      messages: [{ role: "user", content: prompt }],
+    });
+    const textBlock = resp.content.find((b) => b.type === "text");
+    if (!textBlock || textBlock.type !== "text") {
+      throw new Error("upload caption returned no text block");
+    }
+    return stripDashes(textBlock.text).trim();
+  } catch (e) {
+    throw friendlyError(e);
+  }
+}
+
 // ── Story Builder helpers ──────────────────────────────────────────
 //
 // The Story Builder flow doesn't ask Claude to invent shots — the
