@@ -1,15 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useBatchStore } from "@/store/batchStore";
 import {
+  addFcShot,
   listFcShots,
   removeFcShot,
   subscribeFcShots,
   updateFcShot,
 } from "@/lib/funnyCommercialShots";
-import { fcAnimateShot } from "@/lib/funnyCommercial";
-import type { FcShot } from "@/lib/types";
+import {
+  fcAnimateShot,
+  fcExtractLastFrame,
+  fcUploadShotVideo,
+} from "@/lib/funnyCommercial";
+import type { FcShot, FcShotKind } from "@/lib/types";
 
 // ShotsLibrary — every shot the user has composed, animated or not.
 // Each card lets the user:
@@ -23,11 +28,50 @@ export function ShotsLibrary() {
   const fcAddToTimeline = useBatchStore((s) => s.fcAddToTimeline);
   const fcContinuitySourceShotId = useBatchStore((s) => s.fcContinuitySourceShotId);
   const setFcContinuitySourceShotId = useBatchStore((s) => s.setFcContinuitySourceShotId);
+  const fcSelectedActorId = useBatchStore((s) => s.fcSelectedActorId);
   const [shots, setShots] = useState<FcShot[]>(() => listFcShots());
   const [animatingId, setAnimatingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadKind, setUploadKind] = useState<FcShotKind>("actor");
+  const uploadInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => subscribeFcShots(() => setShots(listFcShots())), []);
+
+  async function onUploadFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setError(null);
+    setUploading(true);
+    try {
+      const { cachedUrl, filename } = await fcUploadShotVideo(file);
+      // Add a shot record. imageUrl falls back to videoUrl since the
+      // browser shows the video element's poster automatically; we
+      // don't have a frame extractor for arbitrary uploads (yet).
+      const shot = addFcShot({
+        kind: uploadKind,
+        actorId: uploadKind === "actor" ? fcSelectedActorId ?? undefined : undefined,
+        imagePrompt: filename,
+        imageUrl: cachedUrl,
+        videoUrl: cachedUrl,
+        animationPrompt: "(uploaded clip)",
+      });
+      // Best-effort: extract the last frame so the upload can serve
+      // as a continuity seed. Failure is non-fatal — the clip still
+      // works as a regular timeline shot, just not pinnable.
+      try {
+        const { frameUrl } = await fcExtractLastFrame(cachedUrl);
+        updateFcShot(shot.id, { lastFrameImageUrl: frameUrl });
+      } catch (frameErr) {
+        console.warn("[fc] last-frame extract on upload failed:", frameErr);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "upload failed");
+    } finally {
+      setUploading(false);
+    }
+  }
 
   function toggleSeed(shot: FcShot) {
     if (fcContinuitySourceShotId === shot.id) {
@@ -37,15 +81,9 @@ export function ShotsLibrary() {
     }
   }
 
-  if (shots.length === 0) {
-    return (
-      <Section title="Shots library">
-        <p className="text-[12px] text-neutral-500 leading-snug py-4">
-          Compose your first shot above. As you generate them they show up here, ready to drop on the timeline.
-        </p>
-      </Section>
-    );
-  }
+  // Empty state: still show the upload card so the user can seed
+  // the library with their own clips before composing anything.
+  const hasShots = shots.length > 0;
 
   async function reanimate(shot: FcShot, newPrompt?: string) {
     if (animatingId) return;
@@ -75,8 +113,13 @@ export function ShotsLibrary() {
   }
 
   return (
-    <Section title={`Shots library (${shots.length})`}>
+    <Section title={`Shots library${hasShots ? ` (${shots.length})` : ""}`}>
       {error && <p className="text-[11px] text-red-500">{error}</p>}
+      {!hasShots && (
+        <p className="text-[12px] text-neutral-500 leading-snug py-2">
+          Compose your first shot above, or upload an existing mp4 below.
+        </p>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
         {shots.map((shot) => {
           const inTimeline = fcTimelineItems.some((i) => i.shotId === shot.id);
@@ -95,6 +138,63 @@ export function ShotsLibrary() {
             />
           );
         })}
+        {/* Upload tile: same dimensions as a shot card, dashed
+            outline so it reads as an action affordance. Tap → opens
+            file picker → uploads to R2 via /api/video/upload-clip
+            → adds an FcShot record + extracts last frame for
+            continuity seeding. */}
+        <div className="flex flex-col rounded-2xl border-2 border-dashed border-neutral-300 dark:border-neutral-700 hover:border-neutral-500 transition overflow-hidden">
+          <button
+            type="button"
+            onClick={() => !uploading && uploadInputRef.current?.click()}
+            disabled={uploading}
+            className="aspect-[9/16] bg-neutral-50 dark:bg-neutral-900 flex flex-col items-center justify-center gap-2 text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100 transition disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            <svg className="w-8 h-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            <span className="text-[11px] font-medium">
+              {uploading ? "Uploading…" : "Upload mp4"}
+            </span>
+            <span className="text-[10px] text-neutral-400 px-3 text-center leading-tight">
+              {uploading
+                ? "Mirroring to R2…"
+                : "Drop a finished clip straight into the library"}
+            </span>
+          </button>
+          <input
+            ref={uploadInputRef}
+            type="file"
+            accept="video/mp4,video/*"
+            onChange={onUploadFile}
+            className="hidden"
+          />
+          <div className="p-2 flex items-center justify-center gap-1 bg-white dark:bg-neutral-950">
+            <span className="text-[10px] uppercase tracking-[0.12em] text-neutral-500">label as:</span>
+            <button
+              type="button"
+              onClick={() => setUploadKind("actor")}
+              className={`text-[10px] px-2 py-0.5 rounded-full border transition ${
+                uploadKind === "actor"
+                  ? "bg-neutral-900 text-white border-neutral-900 dark:bg-white dark:text-neutral-900 dark:border-white"
+                  : "border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-900"
+              }`}
+            >
+              Actor
+            </button>
+            <button
+              type="button"
+              onClick={() => setUploadKind("crazy")}
+              className={`text-[10px] px-2 py-0.5 rounded-full border transition ${
+                uploadKind === "crazy"
+                  ? "bg-neutral-900 text-white border-neutral-900 dark:bg-white dark:text-neutral-900 dark:border-white"
+                  : "border-neutral-200 dark:border-neutral-800 hover:bg-neutral-50 dark:hover:bg-neutral-900"
+              }`}
+            >
+              Crazy
+            </button>
+          </div>
+        </div>
       </div>
     </Section>
   );

@@ -102,3 +102,30 @@ export async function fcExtractLastFrame(videoUrl: string): Promise<{ frameUrl: 
     { label: "Extract last frame" },
   );
 }
+
+// ── Upload an mp4 directly into the shots library ──────────────────
+// Uses the existing /api/video/upload-clip route which hashes the
+// file and mirrors it to R2 under cache/upload/<sha>.mp4. Returned
+// URL is what gets dropped into a new FcShot record. The caller is
+// responsible for kicking off last-frame extraction afterward.
+
+export async function fcUploadShotVideo(file: File): Promise<{ cachedUrl: string; filename: string }> {
+  const res = await fetch("/api/video/upload-clip", {
+    method: "POST",
+    headers: {
+      "content-type": file.type || "video/mp4",
+      "x-filename": file.name,
+    },
+    body: file,
+  });
+  const text = await res.text();
+  let body: { cachedUrl?: string; filename?: string; error?: string } = {};
+  try {
+    body = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(`upload returned non-JSON (${res.status})`);
+  }
+  if (!res.ok) throw new Error(body.error ?? `upload failed (${res.status})`);
+  if (!body.cachedUrl || !body.filename) throw new Error("upload returned malformed body");
+  return { cachedUrl: body.cachedUrl, filename: body.filename };
+}
