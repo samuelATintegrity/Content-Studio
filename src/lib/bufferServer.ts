@@ -307,6 +307,10 @@ async function createSinglePost(args: {
   thumbnailUrl?: string;
   scheduleMode: BufferScheduleMode;
   scheduledAtIso?: string;
+  // User-supplied YouTube title override (from BufferSendModal). Falls
+  // back to deriveYoutubeTitle(text) when absent. Ignored for non-
+  // YouTube platforms.
+  youtubeTitleOverride?: string;
 }): Promise<CreatePostResult> {
   // Inline the enum values (mode, schedulingType, metadata.*.type) —
   // GraphQL enums can't ride over JSON variables as plain strings
@@ -332,11 +336,14 @@ async function createSinglePost(args: {
   // there (idempotently) so the algo classifies the upload as a Short
   // even when the duration sits near the auto-detection edge. Title is
   // derived from the original text's first line BEFORE the hashtag is
-  // appended, so it stays clean.
+  // appended, so it stays clean — unless the caller provided an
+  // explicit youtubeTitleOverride (set by the user in BufferSendModal).
   const platformText =
     args.platform === "youtube" ? ensureShortsHashtag(args.text) : args.text;
   const youtubeTitle =
-    args.platform === "youtube" ? deriveYoutubeTitle(args.text) : undefined;
+    args.platform === "youtube"
+      ? args.youtubeTitleOverride?.trim() || deriveYoutubeTitle(args.text)
+      : undefined;
   const metadataBlock = buildMetadataBlock(args.platform, args.assetType, {
     youtubeTitle,
   });
@@ -427,6 +434,9 @@ export async function createBufferUpdate(args: {
   scheduleMode?: BufferScheduleMode;
   // Required when scheduleMode === "scheduled". ISO 8601 UTC.
   scheduledAtIso?: string;
+  // Optional YouTube title override forwarded from the UI. When
+  // omitted, createSinglePost falls back to deriveYoutubeTitle(text).
+  youtubeTitleOverride?: string;
 }): Promise<{ updateIds: string[]; errors: Array<{ profileId: string; message: string }> }> {
   if (args.targets.length === 0) {
     throw new Error("createBufferUpdate: at least one target required");
@@ -466,6 +476,7 @@ export async function createBufferUpdate(args: {
       thumbnailUrl: args.thumbnailUrl,
       scheduleMode: mode,
       scheduledAtIso: args.scheduledAtIso,
+      youtubeTitleOverride: args.youtubeTitleOverride,
     }).then((r) => ({ ...r, channelId: t.profileId })),
   );
   const results = await Promise.all(tasks);

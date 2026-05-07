@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useBatchStore } from "@/store/batchStore";
 import { BufferSendModal } from "./BufferSendModal";
 import {
@@ -71,6 +72,17 @@ export function UploadContentModal({ onClose }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Portal the modal at document.body. Without this it would render
+  // inside the Sidebar's <aside>, which has a `transform` CSS property
+  // (for the slide-in drawer animation). `transform` creates a new
+  // containing block for `position: fixed` descendants, which means
+  // our `fixed inset-0` overlay would clip to the sidebar's bounds
+  // (320px wide) instead of the viewport. Portaling escapes that.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   // Esc to close (when not mid-upload or mid-send).
   useEffect(() => {
@@ -320,9 +332,13 @@ export function UploadContentModal({ onClose }: Props) {
           ? "Drafting caption…"
           : null;
 
-  return (
+  // Don't render until we have a `document` to portal into. The first
+  // render hits during SSR / initial hydration with mounted=false.
+  if (!mounted) return null;
+
+  const modal = (
     <>
-      <div className="fixed inset-0 z-40 bg-black/55 flex items-start justify-center overflow-y-auto py-10 px-4">
+      <div className="fixed inset-0 z-50 bg-black/65 backdrop-blur-sm flex items-start justify-center overflow-y-auto py-10 px-4">
         <div className="w-full max-w-2xl bg-white dark:bg-neutral-950 rounded-3xl border border-neutral-200 dark:border-neutral-800 shadow-2xl flex flex-col">
           <header className="flex items-start justify-between gap-4 px-6 py-5 border-b border-neutral-100 dark:border-neutral-900">
             <div className="flex flex-col gap-0.5">
@@ -517,4 +533,6 @@ export function UploadContentModal({ onClose }: Props) {
       )}
     </>
   );
+
+  return createPortal(modal, document.body);
 }

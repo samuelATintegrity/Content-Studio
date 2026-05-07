@@ -22,6 +22,28 @@ const PLATFORM_LABELS: Record<SocialPlatform, string> = {
 // server as a safety net.
 const VIDEO_ONLY_PLATFORMS: SocialPlatform[] = ["tiktok", "youtube"];
 
+// YouTube's UI shows ~95 chars before truncating with "...". Match the
+// server-side default in bufferServer.ts:deriveYoutubeTitle so the
+// preview the user sees here matches what would auto-derive without an
+// override.
+const YOUTUBE_TITLE_MAX = 95;
+
+// Client-side mirror of bufferServer.ts:deriveYoutubeTitle. Pure
+// function (no env vars / network), duplicated here so the editor can
+// run it without dragging the server-only Buffer module into the
+// client bundle.
+function deriveYoutubeTitleClient(text: string): string {
+  const firstLine = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .find((l) => l.length > 0);
+  if (!firstLine) return "Agent Match";
+  if (firstLine.length <= YOUTUBE_TITLE_MAX) return firstLine;
+  const cut = firstLine.slice(0, YOUTUBE_TITLE_MAX);
+  const lastSpace = cut.lastIndexOf(" ");
+  return lastSpace > 40 ? cut.slice(0, lastSpace) : cut;
+}
+
 interface AvailableResponse {
   language: Language;
   platforms: SocialPlatform[];
@@ -84,6 +106,21 @@ export function BufferSendModal({
   const [scheduledLocal, setScheduledLocal] = useState<string>(() => defaultScheduledLocal());
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+
+  // YouTube title — derived from the first line of the caption by
+  // default (mirroring deriveYoutubeTitle() in bufferServer.ts), but
+  // user-editable. Once the user has touched the field, we stop
+  // auto-syncing so their edits aren't clobbered when they change the
+  // caption afterwards. The title field only shows when YouTube is
+  // both mapped for this language and selected.
+  const [youtubeTitle, setYoutubeTitle] = useState<string>(() =>
+    deriveYoutubeTitleClient(initialCaption),
+  );
+  const [titleEdited, setTitleEdited] = useState(false);
+  useEffect(() => {
+    if (titleEdited) return;
+    setYoutubeTitle(deriveYoutubeTitleClient(caption));
+  }, [caption, titleEdited]);
 
   // Fetch the platforms mapped for this video's language, then default
   // every available platform to checked. Image posts can't go to TikTok
@@ -165,6 +202,13 @@ export function BufferSendModal({
         body.scheduledAtSec = localStringToUnixSec(scheduledLocal);
       }
       if (conceptKey) body.conceptKey = conceptKey;
+      // Forward an explicit YouTube title only when YouTube is one of
+      // the targets — no point cluttering the payload otherwise. The
+      // server falls back to deriving from the caption when this is
+      // absent, so omitting it is also a valid "no override" signal.
+      if (selectedPlatforms.has("youtube") && youtubeTitle.trim()) {
+        body.youtubeTitle = youtubeTitle.trim();
+      }
       const res = await fetch("/api/social/buffer/queue", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -232,6 +276,47 @@ export function BufferSendModal({
               className="w-full px-3 py-2 rounded-2xl bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-sm leading-relaxed font-mono focus:outline-none focus:border-neutral-400 dark:focus:border-neutral-600 resize-none"
             />
           </label>
+
+          {/* YouTube title — only meaningful when YouTube is in the
+              available + selected platform set, since it has no effect
+              on FB / IG / TikTok. We show a small "auto" hint until
+              the user has touched the field, then switch to "edited"
+              so they know they're overriding the default. */}
+          {available?.includes("youtube") && selectedPlatforms.has("youtube") && !isImage && (
+            <label className="flex flex-col gap-1.5">
+              <div className="flex items-baseline justify-between">
+                <span className="text-[11px] uppercase tracking-[0.16em] text-neutral-500 font-semibold">
+                  YouTube title
+                </span>
+                <span className="text-[10px] tabular-nums text-neutral-500">
+                  {titleEdited ? "edited" : "auto from first line"} · {youtubeTitle.length}/{YOUTUBE_TITLE_MAX}
+                </span>
+              </div>
+              <input
+                type="text"
+                value={youtubeTitle}
+                onChange={(e) => {
+                  setYoutubeTitle(e.target.value);
+                  setTitleEdited(true);
+                }}
+                maxLength={YOUTUBE_TITLE_MAX}
+                placeholder="Title shown on the YouTube Short"
+                className="w-full px-3 py-2 rounded-2xl bg-neutral-50 dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 text-sm focus:outline-none focus:border-neutral-400 dark:focus:border-neutral-600"
+              />
+              {titleEdited && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTitleEdited(false);
+                    setYoutubeTitle(deriveYoutubeTitleClient(caption));
+                  }}
+                  className="text-[10px] text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100 self-start underline-offset-2 hover:underline"
+                >
+                  Reset to auto
+                </button>
+              )}
+            </label>
+          )}
 
           {/* Channels */}
           <div className="flex flex-col gap-2">

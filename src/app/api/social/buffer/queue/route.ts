@@ -32,6 +32,10 @@ interface Body {
   // scheduled, the client passes its conceptKey so the next batch
   // can avoid repeating the same visual metaphor for ~14 days.
   conceptKey?: string;
+  // Optional override for the YouTube post title. When omitted the
+  // server falls back to deriveYoutubeTitle(caption). Only meaningful
+  // when "youtube" is in the targets — silently ignored otherwise.
+  youtubeTitle?: string;
 }
 
 export async function POST(req: Request) {
@@ -97,6 +101,7 @@ export async function POST(req: Request) {
       thumbnailUrl: body.thumbnailUrl,
       scheduleMode: body.scheduleMode ?? "queue",
       scheduledAtIso,
+      youtubeTitleOverride: body.youtubeTitle?.trim() || undefined,
     });
 
     // Map any per-channel failures back to platform names so the UI can
