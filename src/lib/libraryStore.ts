@@ -14,6 +14,7 @@ import type { MusicTrack } from "./musicLibrary";
 import type {
   FcActor,
   FcLocation,
+  FcProject,
   FcShot,
 } from "./types";
 
@@ -45,6 +46,7 @@ export interface Manifest {
   fcActors: FcActor[];
   fcLocations: FcLocation[];
   fcShots: FcShot[];
+  fcProjects: FcProject[];
 }
 
 const EMPTY: Manifest = {
@@ -56,6 +58,7 @@ const EMPTY: Manifest = {
   fcActors: [],
   fcLocations: [],
   fcShots: [],
+  fcProjects: [],
 };
 
 type Slice =
@@ -65,7 +68,8 @@ type Slice =
   | "tracks"
   | "fcActors"
   | "fcLocations"
-  | "fcShots";
+  | "fcShots"
+  | "fcProjects";
 
 const SLICE_EVENT: Record<Slice, string> = {
   clips: "video-clip-library-changed",
@@ -75,6 +79,7 @@ const SLICE_EVENT: Record<Slice, string> = {
   fcActors: "fc-actors-changed",
   fcLocations: "fc-locations-changed",
   fcShots: "fc-shots-changed",
+  fcProjects: "fc-projects-changed",
 };
 
 let _state: Manifest = { ...EMPTY };
@@ -168,6 +173,7 @@ function normalizeManifest(input: unknown): Manifest {
     fcActors: Array.isArray(obj.fcActors) ? obj.fcActors : [],
     fcLocations: Array.isArray(obj.fcLocations) ? obj.fcLocations : [],
     fcShots: Array.isArray(obj.fcShots) ? obj.fcShots : [],
+    fcProjects: Array.isArray(obj.fcProjects) ? obj.fcProjects : [],
   };
 }
 

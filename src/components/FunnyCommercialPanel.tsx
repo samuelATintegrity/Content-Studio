@@ -23,10 +23,12 @@ import { ShotsLibrary } from "./fc/ShotsLibrary";
 import { ComposeShot } from "./fc/ComposeShot";
 import { TimelineStrip } from "./fc/TimelineStrip";
 import { RenderBar } from "./fc/RenderBar";
+import { FcProjectsSection } from "./fc/FcProjectsSection";
 
 export function FunnyCommercialPanel() {
   return (
     <div className="flex flex-col gap-8 pb-12">
+      <FcProjectsSection />
       <ActorsSection />
       <ComposeShot />
       <ShotsLibrary />

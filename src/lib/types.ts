@@ -502,6 +502,23 @@ export interface FcTimelineOverlay {
 // What the FAB's render button produces.
 export type FcRenderTarget = "mp4" | "premiere_zip";
 
+// A saved Funny Commercial project — a snapshot of the per-batch
+// state (actor pick, timeline arrangement, continuity pin, output
+// preference). The shared library data (actors, locations, shots) is
+// NOT part of a project; projects reference shots by id and gracefully
+// surface "Missing shot" if a referenced asset has been deleted in
+// the interim.
+export interface FcProject {
+  id: string;
+  name: string;
+  savedAt: number;
+  selectedActorId: string | null;
+  timelineItems: FcTimelineItem[];
+  continuitySourceShotId: string | null;
+  renderTarget: FcRenderTarget;
+  language: Language;
+}
+
 // Render payload sent from app → worker (via /api/video/render). The
 // worker concatenates clipUrls in order, burns overlays via ASS at the
 // computed slot times, mixes narration audio at the slot start times,
