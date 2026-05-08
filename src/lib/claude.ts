@@ -113,10 +113,14 @@ function buildUserPrompt(language: Language, contentType: ContentType, anglesOve
       ? []
       : Array.from({ length: STATIC_BATCH_POSTS }, (_, i) => baseAngles[i % baseAngles.length]);
 
+  const isEnglish = language === "en";
+  const hintGuidance = isEnglish
+    ? `use this phrasing or a close natural variant. Stay tight to the hint's meaning and topic anchor; only swap synonyms that fit the angle.`
+    : `the hint is in English — TRANSLATE its meaning into ${LANGUAGE_LABELS[language]} for the headline, keeping the topic anchor (e.g. "$0 down", "USDA", "DPA", "agent") in its literal English form. Do NOT echo the English hint verbatim.`;
   const angleList = angles
     .map(
       (a, i) =>
-        `${i + 1}. angle="${a.key}"\n   brief: ${a.brief}\n   headline_hint: "${a.headlineHint}" (use this phrasing or a close natural variant. Stay tight to the hint's meaning and topic anchor; only swap synonyms that fit the angle. Across the batch, vary openers slightly so the 10 headlines don't all start with the same word — but only use synonyms that read naturally for this specific topic. If the SAME angle appears more than once in this list, write a DIFFERENT headline + body for each occurrence — same angle, different wording.)`,
+        `${i + 1}. angle="${a.key}"\n   brief: ${a.brief}\n   headline_hint (English seed): "${a.headlineHint}" (${hintGuidance} Across the batch, vary openers slightly so the 10 headlines don't all start with the same word — but only use synonyms that read naturally for this specific topic. If the SAME angle appears more than once in this list, write a DIFFERENT headline + body for each occurrence — same angle, different wording.)`,
     )
     .join("\n");
 
@@ -131,7 +135,7 @@ Guardrails: ${spec.guardrails}${refDocSection}
 Produce one post for each of these angles, preserving the angle key:
 ${angleList}
 
-Reminder: every headline MUST contain the topic anchor (e.g. "$0 down", "USDA", "DPA", "your language", "agent"). Translate the headline into the requested language while keeping the anchor intact (e.g. "$0 Down" or "agent" stays as the literal anchor even in Tagalog/Spanish/Mandarin posts where the rest of the headline is translated).
+Reminder: every headline MUST contain the topic anchor (e.g. "$0 down", "USDA", "DPA", "your language", "agent"). The headline MUST be written in ${LANGUAGE_LABELS[language]} — anchor stays literal, everything else translates. The English headline_hints above are SEEDS, not final phrasings.
 
 ALSO PICK textZone for each post — 'top' or 'bottom'. This is where the headline + cta will be composited on the photo, and it drives how we generate the AI image (subject placed in the OPPOSITE zone so the typography lands on calm pixels). Pick whichever zone fits the angle's tone — hopeful or aspirational angles tend to read well at top; stakes-heavy or contrarian angles at bottom. CRITICAL: vary across the batch — aim for a roughly even mix of top and bottom across the ${STATIC_BATCH_POSTS} posts so the rendered strip feels visually different at a glance. Do not pick all top or all bottom.
 

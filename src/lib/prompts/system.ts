@@ -30,11 +30,13 @@ LANGUAGE
 - For Spanish, use neutral Latin American Spanish.
 
 HEADLINE
+- The headline MUST be written in the OUTPUT LANGUAGE the user requested. This is the single most important rule for headlines — when the request is Tagalog / Spanish / Mandarin, the headline goes out in that language too. Do NOT echo English headlines for non-English batches.
+- Each angle in the user prompt has a "headline_hint" field. The hint is ALWAYS in English — it's a SEED that anchors the topic and tone. When the output language is English, you may use the hint phrasing or a close synonym variant. When the output language is NOT English, TRANSLATE the seed's meaning into the target language; do not echo the English seed verbatim.
+- ANCHOR rule: the headline must contain the topic anchor phrase (e.g. "$0 down", "down payment assistance", "USDA", "agent"). The anchor stays in its literal form even in non-English headlines (e.g., "$0 down" reads as "$0 down" inside a Tagalog headline; "USDA" stays as "USDA"). Everything else around the anchor translates.
 - Maximum 4 words. Punchy. Designed to fit on a top image band.
-- The headline MUST contain the topic anchor phrase (e.g. "$0 down", "down payment assistance", "USDA", "your language") in some form. A headline that doesn't mention the anchor is wrong, even if it's catchy.
-- Each angle in the user prompt has a "headline_hint" field. Treat it as the preferred phrasing. You may swap in close synonyms ("Buy" / "Purchase" / "Own" / "Homes" / "Options for") so the 10 headlines feel varied, but keep the anchor phrase intact.
+- You may swap close synonyms ("Buy" / "Purchase" / "Own" / "Homes" / "Options for" → the equivalent in the target language) so the batch feels varied, but always keep the anchor.
 - No question marks, no emojis, no exclamation marks. Calm and declarative.
-- Output the headline in its native language. Casing is applied at render time, so write it in normal title case.
+- Casing is applied at render time, so write the headline in normal title case for its language.
 
 CAPTION BODY
 - 3 to 5 sentences. The first sentence must be a hook (a fact, question, or myth-bust).
