@@ -21,8 +21,9 @@ const MODEL = "claude-sonnet-4-6";
 // templates are appended below in buildNarrationUserPrompt.
 const NARRATION_VOICE_RULES = `
 NARRATION-VIDEO RULES (this is for a 9:16 short-form video with voiceover narration; there is NO on-camera person — the script is the entire talk track from hook to closer):
-- PERSPECTIVE — IMPORTANT: the narrator is a third-party endorser, NOT an Agent Match employee. Refer to Agent Match in the THIRD person — say "they", "their team", "Agent Match". NEVER say "we", "us", or "our team". This OVERRIDES the system prompt's "we / our team" guidance.
-- Voice: conversational AND energetic, second person to the viewer ("you", "your"), warm and excited like you're telling a friend about something genuinely good. Read aloud by an AI voice. Use contractions ("it's", "they'll", "you're"). Short, punchy sentences — not long lecture-y ones.
+- LANGUAGE — TOP PRIORITY: the entire script MUST be written in the OUTPUT LANGUAGE the user requested. When the request is Tagalog / Spanish / Mandarin, every word of the script (hook, body, closer) goes out in that language. The brand name "Agent Match" stays in English (it's a proper noun); a few key program names like "$0 down", "USDA", "DPA" also stay in their original English form. EVERYTHING ELSE translates. Do NOT default to English just because the examples below are in English.
+- PERSPECTIVE — IMPORTANT: the narrator is a third-party endorser, NOT an Agent Match employee. Refer to Agent Match in the THIRD person — say "they", "their team", "Agent Match" (or the language-equivalent third-person pronouns). NEVER use first-person plural ("we", "us", "our team"). This OVERRIDES the system prompt's "we / our team" guidance.
+- Voice: conversational AND energetic, second person to the viewer ("you", "your" — or the language-equivalent informal "you"), warm and excited like you're telling a friend about something genuinely good. Read aloud by an AI voice. Use the natural conversational contractions of the target language (English: "it's", "they'll", "you're"; Tagalog: natural Taglish code-switching where it sounds authentic; Spanish: contractions like "del", "al"; Mandarin: 你 / 他们 etc., natural spoken-word particles). Short, punchy sentences — not long lecture-y ones.
 - STRUCTURE: every script MUST be hook + body + closer, in one continuous narration.
 - The HOOK opens the script. Write a fresh one for every script — see the hook examples below for tone + intent, but vary the wording across the 3 scripts in the batch (don't reuse the same opening sentence twice). Every hook must mention "Agent Match" by name in the first sentence or two.
 - The CLOSER ends the script. Write a fresh one for every script — see the closer examples below for tone + intent, but vary across the 3 scripts. Every closer must end on a CTA pointing the viewer to click the link / get connected / get matched. Don't add anything after the closer.
@@ -155,14 +156,22 @@ function captionContentTypeFor(theme: MessageTheme): ContentType {
 // explicitly tell Claude to write a fresh hook + closer per script and
 // vary across the 3 scripts in the batch (so the user doesn't see three
 // videos open and close with identical sentences).
-function buildBookendGuidance(theme: MessageTheme): string {
+function buildBookendGuidance(theme: MessageTheme, language: Language): string {
   const examples = NARRATION_BOOKEND_EXAMPLES[theme];
   const hookExamples = examples.hooks.map((h) => `  • "${h}"`).join("\n");
   const closerExamples = examples.closers.map((c) => `  • "${c}"`).join("\n");
-  return `HOOK GUIDANCE (write a fresh opener for each script — DO NOT copy these verbatim, vary the wording across the 3 scripts in this batch). Every hook MUST mention "Agent Match" by name in the first sentence or two:
+  // The bookend examples are written in English. For non-English
+  // batches we have to call this out explicitly — Claude tends to
+  // mimic the example wording verbatim and produces an English script
+  // even though the user prompt asks for Tagalog/Spanish/Mandarin.
+  const langNote =
+    language === "en"
+      ? `(use these as tone + intent reference; vary the wording across the 3 scripts in this batch).`
+      : `(these examples are in ENGLISH for tone + intent reference only — translate the SPIRIT into ${LANGUAGE_LABELS[language]}, do NOT echo the English wording. The brand name "Agent Match" stays in English.)`;
+  return `HOOK GUIDANCE — write a fresh opener for each script ${langNote} Every hook MUST mention "Agent Match" by name in the first sentence or two:
 ${hookExamples}
 
-CLOSER GUIDANCE (write a fresh closer for each script — DO NOT copy these verbatim, vary across the 3 scripts). Every closer MUST end on a CTA telling the viewer to click the link and get connected / get matched:
+CLOSER GUIDANCE — write a fresh closer for each script ${langNote} Every closer MUST end on a CTA telling the viewer to click the link and get connected / get matched:
 ${closerExamples}`;
 }
 
@@ -184,7 +193,7 @@ function buildAgentMatchNarrationUserPrompt(
 Topic: ${spec.topic}
 Guardrails: ${spec.guardrails}${refDocSection}
 
-${buildBookendGuidance("agent_match")}
+${buildBookendGuidance("agent_match", language)}
 
 ${NARRATION_VOICE_RULES}
 
@@ -206,7 +215,7 @@ Guardrails: Stay generic on program mechanics. Names of program categories ($0-d
 REFERENCE (paraphrase the spirit, never copy verbatim, never invent claims beyond this):
 ${DPA_REFERENCE_TEMPLATE}
 
-${buildBookendGuidance("dpa")}
+${buildBookendGuidance("dpa", language)}
 
 ${NARRATION_VOICE_RULES}
 
@@ -288,8 +297,9 @@ export async function generateVideoScripts(
 
 const INFLUENCER_VOICE_RULES = `
 INFLUENCER-MIDDLE-SCRIPT RULES (this script is the AI-generated middle of a 9:16 video; the intro and outro are pre-recorded videos of an influencer talking on camera):
-- PERSPECTIVE — IMPORTANT: the influencer is a third-party endorser, NOT an Agent Match employee. Refer to Agent Match in the THIRD person — say "they", "their team", "Agent Match". NEVER say "we", "us", or "our team". This OVERRIDES the system prompt's "we / our team" guidance, which assumes a company voice; here the speaker is recommending Agent Match to their audience as an outsider.
-- Voice: conversational AND energetic, second person to the viewer ("you", "your"), warm and excited like you're telling a friend about something genuinely good. Read aloud by an AI voice in the influencer's avatar voice. Use contractions ("it's", "they'll", "you're"). Short, punchy sentences — not long lecture-y ones.
+- LANGUAGE — TOP PRIORITY: the entire middle script MUST be written in the OUTPUT LANGUAGE the user requested. When the request is Tagalog / Spanish / Mandarin, every word goes out in that language. The brand name "Agent Match" stays in English (proper noun); program names like "$0 down", "USDA", "DPA" also stay in their original English form. EVERYTHING ELSE translates. Do NOT default to English just because the example phrasings below are in English.
+- PERSPECTIVE — IMPORTANT: the influencer is a third-party endorser, NOT an Agent Match employee. Refer to Agent Match in the THIRD person — say "they", "their team", "Agent Match" (or the language-equivalent third-person pronouns). NEVER use first-person plural ("we", "us", "our team"). This OVERRIDES the system prompt's "we / our team" guidance, which assumes a company voice; here the speaker is recommending Agent Match to their audience as an outsider.
+- Voice: conversational AND energetic, second person to the viewer ("you", "your" — or the language-equivalent informal "you"), warm and excited like you're telling a friend about something genuinely good. Read aloud by an AI voice in the influencer's avatar voice. Use the natural conversational contractions of the target language (English: "it's", "they'll", "you're"; Tagalog: natural Taglish code-switching where it sounds authentic; Spanish: "del" / "al"; Mandarin: 你 / 他们 etc., natural spoken-word particles). Short, punchy sentences — not long lecture-y ones.
 - DO NOT include a hook opener — the intro clip is the hook. Start mid-conversation as if the avatar just finished saying "you've gotta check out Agent Match".
 - DO NOT include a verbal closer — the outro clip is the closer. NEVER say "click the link", "go to", any URL, hashtags, "DM me", or "fill out the form".
 - Target 45–60 words (≈ 15–20 seconds at a normal speaking pace). Tight is better.
