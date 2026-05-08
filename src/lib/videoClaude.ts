@@ -76,6 +76,24 @@ const NARRATION_BOOKEND_EXAMPLES: Record<MessageTheme, BookendExamples> = {
       "Click the link below and let Agent Match find you the right team for your situation.",
     ],
   },
+  // language_match is the bilingual-match angle. The seeds below are
+  // English; the "translate the spirit" rule in buildBookendGuidance
+  // means a Tagalog batch produces Tagalog hooks/closers about Agent
+  // Match pairing the buyer with a team that speaks Tagalog. Same for
+  // Spanish / Mandarin. We name the literal language inside the
+  // closer so the AI doesn't drift into a generic "agent" pitch.
+  language_match: {
+    hooks: [
+      "If you want a real estate team that actually speaks your language, you've gotta check out Agent Match.",
+      "Buying a home is hard enough. Agent Match makes sure you don't have to do it in a second language.",
+      "Looking for an agent who speaks your language? That's exactly what Agent Match was built for.",
+    ],
+    closers: [
+      "Click the link and Agent Match will pair you with an agent and lender who speak your language.",
+      "Stop translating real estate jargon by yourself. Click the link and let Agent Match find a team that speaks your language.",
+      "Click the link below and let Agent Match match you with a team that actually speaks your language.",
+    ],
+  },
 };
 
 interface RawVideoScript {
@@ -144,11 +162,19 @@ function pickVideoAngles(contentType: ContentType, override?: string[]): string[
   return shuffled.slice(0, 3);
 }
 
-// Map a narration message theme to the content type whose copy assets
-// (URL, form line, hashtags, caption framing) should drive the IG body
-// + caption rendering. Same idea as the influencer DPA path.
+// Map a message theme to the content type whose copy assets (URL, form
+// line, hashtags, caption framing) should drive the IG body + caption
+// rendering AND the angle pool the script generator pulls from. Each
+// theme is a thin wrapper over an existing content type:
+//   agent_match   → good_agents       (matching-mission angles)
+//   dpa           → edu_dpa_local     (down-payment-assistance angles
+//                                       — handled via DPA_ANGLES special-
+//                                       case below; same caption framing)
+//   language_match → language_match    (bilingual-match angles)
 function captionContentTypeFor(theme: MessageTheme): ContentType {
-  return theme === "dpa" ? "edu_dpa_local" : "good_agents";
+  if (theme === "dpa") return "edu_dpa_local";
+  if (theme === "language_match") return "language_match";
+  return "good_agents";
 }
 
 // Render the hook + closer guidance block for narration prompts. Each
@@ -175,11 +201,18 @@ CLOSER GUIDANCE — write a fresh closer for each script ${langNote} Every close
 ${closerExamples}`;
 }
 
-function buildAgentMatchNarrationUserPrompt(
+// Generic content-type-driven narration prompt builder. Used for both
+// the agent_match theme (good_agents content type) and the
+// language_match theme (language_match content type). The dpa theme
+// has its own dedicated builder below because its angles + reference
+// doc are baked locally rather than living in CONTENT_TYPE_SPECS.
+function buildThemedNarrationUserPrompt(
   language: Language,
+  contentType: ContentType,
   angleKeys: string[],
+  theme: MessageTheme,
 ): string {
-  const spec = CONTENT_TYPE_SPECS["good_agents"];
+  const spec = CONTENT_TYPE_SPECS[contentType];
   const angles = spec.angles.filter((a) => angleKeys.includes(a.key));
   const angleList = angles
     .map((a, i) => `${i + 1}. angle="${a.key}"\n   brief: ${a.brief}`)
@@ -193,7 +226,7 @@ function buildAgentMatchNarrationUserPrompt(
 Topic: ${spec.topic}
 Guardrails: ${spec.guardrails}${refDocSection}
 
-${buildBookendGuidance("agent_match", language)}
+${buildBookendGuidance(theme, language)}
 
 ${NARRATION_VOICE_RULES}
 
@@ -254,22 +287,27 @@ export async function generateVideoScripts(
   messageTheme: MessageTheme,
   angleOverride?: string[],
 ): Promise<VideoScript[]> {
-  // Theme-driven narration scripts. agent_match samples 3 angles from the
-  // good_agents pool (so each batch hits a different value-prop point);
-  // dpa uses the fixed 3-angle DPA pool baked into this file.
+  // Theme-driven narration scripts.
+  //   agent_match   → samples 3 angles from the good_agents pool
+  //   dpa           → uses the fixed 3-angle DPA pool baked into this file
+  //                   + custom DPA reference doc
+  //   language_match → samples 3 angles from the language_match pool
+  //                   (bilingual-match value props)
   const isDpa = messageTheme === "dpa";
+  const themedContentType = captionContentTypeFor(messageTheme);
+
   const angleKeys = isDpa
     ? (angleOverride && angleOverride.length > 0
         ? DPA_ANGLES.map((a) => a.key).filter((k) => angleOverride.includes(k))
         : DPA_ANGLES.map((a) => a.key))
-    : pickVideoAngles("good_agents", angleOverride);
+    : pickVideoAngles(themedContentType, angleOverride);
   if (angleKeys.length === 0) throw new Error("No angles selected");
 
   const userPrompt = isDpa
     ? buildDpaNarrationUserPrompt(language)
-    : buildAgentMatchNarrationUserPrompt(language, angleKeys);
+    : buildThemedNarrationUserPrompt(language, themedContentType, angleKeys, messageTheme);
 
-  const captionContentType = captionContentTypeFor(messageTheme);
+  const captionContentType = themedContentType;
 
   try {
     const resp = await client().messages.create({
@@ -472,25 +510,33 @@ export async function generateInfluencerMiddleScripts(
   messageTheme: MessageTheme,
   angleOverride?: string[],
 ): Promise<InfluencerScript[]> {
-  // The agent_match theme reuses the narration-mode angle picker so the
-  // 3 videos lean on different value-prop points from good_agents. The dpa
-  // theme has its own fixed 3-angle pool (program breadth / save-time /
-  // specialist match) baked into this file.
+  // Theme dispatch:
+  //   agent_match   → uses the supplied contentType (caller picks the angle pool)
+  //   dpa           → fixed 3-angle DPA pool + DPA caption framing
+  //   language_match → forces contentType to "language_match" so the
+  //                   bilingual-match angle pool drives the script AND
+  //                   caption — the caller's contentType is overridden
+  //                   because the theme is meaningful only for that pool.
   const isDpa = messageTheme === "dpa";
+  const isLangMatch = messageTheme === "language_match";
+
+  // For language_match, swap to its own content type so the angle pool
+  // and caption framing match. agent_match leaves the caller's choice.
+  const effectiveContentType: ContentType = isLangMatch ? "language_match" : contentType;
+
   const angleKeys = isDpa
     ? DPA_ANGLES.map((a) => a.key)
-    : pickVideoAngles(contentType, angleOverride);
+    : pickVideoAngles(effectiveContentType, angleOverride);
   if (angleKeys.length === 0) throw new Error("No angles selected");
 
   // The IG caption builder looks up content-type config (URL, form line,
-  // hashtags). The dpa theme writes about down-payment programs, so route
-  // the caption through edu_dpa_local for the right framing — the user's
-  // existing dpa caption assets live there.
-  const captionContentType: ContentType = isDpa ? "edu_dpa_local" : contentType;
+  // hashtags). dpa goes to edu_dpa_local; language_match has its own
+  // entry; agent_match uses whatever the caller picked.
+  const captionContentType: ContentType = isDpa ? "edu_dpa_local" : effectiveContentType;
 
   const userPrompt = isDpa
     ? buildDpaInfluencerUserPrompt(language, avatarName)
-    : buildInfluencerUserPrompt(language, contentType, avatarName, angleKeys);
+    : buildInfluencerUserPrompt(language, effectiveContentType, avatarName, angleKeys);
 
   try {
     const resp = await client().messages.create({

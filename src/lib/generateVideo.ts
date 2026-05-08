@@ -37,11 +37,14 @@ import type {
   VideoSourcePromptIndex,
 } from "@/lib/types";
 
-// Narration mode now picks one of two messaging themes (agent_match,
-// dpa) just like the influencer flow. The render route still wants a
-// content-type field for caption framing — derive it from the theme.
+// Narration mode picks one of three messaging themes (agent_match,
+// dpa, language_match) just like the influencer flow. The render
+// route still wants a content-type field for caption framing — derive
+// it from the theme. Mirror of captionContentTypeFor in videoClaude.ts.
 function narrationContentTypeFor(theme: MessageTheme): ContentType {
-  return theme === "dpa" ? "edu_dpa_local" : "good_agents";
+  if (theme === "dpa") return "edu_dpa_local";
+  if (theme === "language_match") return "language_match";
+  return "good_agents";
 }
 
 // All narration renders run through Sarah's avatar voice now. Falls

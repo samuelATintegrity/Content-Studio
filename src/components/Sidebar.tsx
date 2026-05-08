@@ -39,7 +39,20 @@ const CONTENT_TYPES: ContentType[] = [
   "good_agents",
 ];
 
-const MESSAGE_THEMES: MessageTheme[] = ["agent_match", "dpa"];
+const MESSAGE_THEMES: MessageTheme[] = ["agent_match", "dpa", "language_match"];
+
+// Themes that only make sense in non-English batches. English audiences
+// already speak the agents' language by definition, so the pill is
+// hidden when language === "en". The visibleMessageThemes() helper
+// below applies this filter.
+const NON_ENGLISH_ONLY_THEMES: MessageTheme[] = ["language_match"];
+
+function visibleMessageThemes(language: Language): MessageTheme[] {
+  if (language === "en") {
+    return MESSAGE_THEMES.filter((t) => !NON_ENGLISH_ONLY_THEMES.includes(t));
+  }
+  return MESSAGE_THEMES;
+}
 
 // Static-format options: a single picker that combines the old
 // Photo/Graphic toggle with the graphic-template picker. "photo" runs
@@ -123,6 +136,18 @@ export function Sidebar({ drawerOpen = false, onClose }: SidebarProps = {}) {
       setContentType(allowed[0]);
     }
   }, [language, format, contentType, setContentType]);
+
+  // Same fallback for the message-theme picker. The "Speaks your
+  // language" theme is only meaningful for non-English batches; if the
+  // user had it selected and flips back to English, bounce them to the
+  // default. Otherwise the sidebar would render with no selected pill
+  // and the FAB would still dispatch the now-hidden theme.
+  useEffect(() => {
+    const allowed = visibleMessageThemes(language);
+    if (!allowed.includes(selectedMessageTheme)) {
+      setSelectedMessageTheme(allowed[0]);
+    }
+  }, [language, selectedMessageTheme, setSelectedMessageTheme]);
 
   const aspectBadge = format === "video" ? "9:16" : "4:5";
 
@@ -240,7 +265,7 @@ export function Sidebar({ drawerOpen = false, onClose }: SidebarProps = {}) {
       {format === "video" && subMode !== "story_builder" ? (
         <Section title="Message">
           <div className="flex flex-col gap-2">
-            {MESSAGE_THEMES.map((t) => (
+            {visibleMessageThemes(language).map((t) => (
               <Pill
                 key={t}
                 selected={selectedMessageTheme === t}

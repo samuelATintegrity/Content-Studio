@@ -377,12 +377,17 @@ export type VideoMode = "narration" | "influencer";
 // Influencer-mode messaging theme. Each theme has its own pre-recorded
 // intro/outro clips and its own middle-script generation prompt. Existing
 // agent_match clips are the matching-mission script ("connect with the
-// best"); dpa is the down-payment-assistance/$0-down angle.
-export type MessageTheme = "agent_match" | "dpa";
+// best"); dpa is the down-payment-assistance/$0-down angle;
+// language_match is the bilingual-match angle (audience speaks something
+// other than English and Agent Match pairs them with a team that does
+// too) — only meaningful for non-English language batches and the
+// sidebar hides the pill when language is English.
+export type MessageTheme = "agent_match" | "dpa" | "language_match";
 
 export const MESSAGE_THEME_LABELS: Record<MessageTheme, string> = {
   agent_match: "Agent Match mission",
   dpa: "$0 down / DPA",
+  language_match: "Speaks your language",
 };
 
 export const DEFAULT_MESSAGE_THEME: MessageTheme = "agent_match";
