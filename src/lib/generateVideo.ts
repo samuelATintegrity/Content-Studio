@@ -47,11 +47,13 @@ function narrationContentTypeFor(theme: MessageTheme): ContentType {
   return "good_agents";
 }
 
-// All narration renders run through Sarah's avatar voice now. Falls
-// back to the language-default env var if the avatar is somehow missing.
-function narrationVoiceId(): string | undefined {
-  return getAvatar("Sarah")?.voiceId;
-}
+// Narration mode no longer hardcodes a single avatar's voice. The
+// worker falls back to ELEVENLABS_VOICE_ID_<LANG> when the render
+// request doesn't carry a voiceId, so per-language voice selection
+// lives entirely in env vars — one variable per language, easy to
+// swap without a redeploy. The previous Sarah-hardcoded override was
+// dropped after Spanish + Mandarin needed their own voices that
+// Sarah's English-trained model couldn't cover.
 
 // Best-effort: mirror an animated clip (and its source image, when present)
 // to R2 and add it to the flat clip library. Failures are swallowed — the
@@ -352,10 +354,6 @@ interface RenderQueue {
   contentType: ReturnType<typeof useBatchStore.getState>["contentType"];
   clipUrls: string[];
   entries: RenderQueueEntry[];
-  // For narration-mode queues, the avatar voice override that should
-  // ride along with every render in the batch (today: Sarah's voice ID).
-  // Undefined for influencer queues (those carry their voice per-entry).
-  narrationVoiceId?: string;
 }
 const _renderQueues = new Map<string, RenderQueue>();
 
@@ -379,7 +377,7 @@ function dispatchEntry(queue: RenderQueue, entry: RenderQueueEntry): void {
         language: queue.language,
         contentType: queue.contentType,
         clipUrls: queue.clipUrls,
-        voiceId: queue.narrationVoiceId,
+        // No voiceId — worker falls back to ELEVENLABS_VOICE_ID_<LANG>.
       });
   promise
     .then(({ jobId }) => {
@@ -469,7 +467,6 @@ function maybeDispatchRenders(batchId: string): void {
     language: p.language,
     contentType: p.contentType,
     clipUrls,
-    narrationVoiceId: narrationVoiceId(),
     entries: initial.map((post) => ({
       postId: post.id,
       script: post.script,
@@ -1003,7 +1000,7 @@ export async function regenerateOneVideo(postId: string): Promise<void> {
       messageTheme: theme,
       angleKey: post.angle,
       clipUrls,
-      voiceId: narrationVoiceId(),
+      // No voiceId — worker falls back to ELEVENLABS_VOICE_ID_<LANG>.
     });
     useBatchStore.getState().updateVideoPost(postId, {
       script: fresh.script,
