@@ -68,10 +68,17 @@ export function ClipLibraryGrid() {
   const [groupBy, setGroupBy] = useState<GroupBy>("category");
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
   const [aiModalOpen, setAiModalOpen] = useState(false);
-  // When set, opens the metadata modal pre-seeded from this clip. Used
-  // for the pencil-edit flow AND the auto-prompt after upload / AI clip
-  // creation so the user can name + categorize the new clip immediately.
-  const [editingClipKey, setEditingClipKey] = useState<string | null>(null);
+  // Queue of clip IDs awaiting metadata edits. The modal opens on the
+  // queue's head; on close (Save or Cancel) the head is shifted and
+  // the modal re-mounts on the next clip. Single-clip flows (pencil
+  // edit, single AI generate) seed the queue with one item — no batch
+  // UI surfaces. Multi-file uploads seed with N items; the modal then
+  // shows "(X of Y)" + a "Skip remaining" affordance until done.
+  // batchTotal is the original queue size, retained so the X-of-Y
+  // counter keeps counting up as the queue shrinks.
+  const [editingQueue, setEditingQueue] = useState<string[]>([]);
+  const [batchTotal, setBatchTotal] = useState(0);
+  const editingClipKey = editingQueue[0] ?? null;
   const selectedKeys = useBatchStore((s) => s.selectedClipKeys);
   const selectClip = useBatchStore((s) => s.selectClip);
   const deselectClip = useBatchStore((s) => s.deselectClip);
@@ -90,7 +97,46 @@ export function ClipLibraryGrid() {
     if (clip.kind === "saved") return; // managed via the Saved Sets sidebar
     const id = clip.origin.libraryClipId;
     if (!id) return;
-    setEditingClipKey(id);
+    // Single-clip pencil-edit — queue of one, no batch UI.
+    setEditingQueue([id]);
+    setBatchTotal(1);
+  }
+
+  // Open the metadata-walkthrough modal queued with N clips. The modal
+  // advances through them one at a time as the user saves or skips.
+  function startEditingBatch(ids: string[]) {
+    if (ids.length === 0) return;
+    setEditingQueue(ids);
+    setBatchTotal(ids.length);
+  }
+
+  function advanceEditing() {
+    setEditingQueue((q) => {
+      const next = q.slice(1);
+      if (next.length === 0) setBatchTotal(0);
+      return next;
+    });
+  }
+
+  function skipRemainingEdits() {
+    // Confirm because the user might have hit it by accident on the
+    // first card of a 20-clip batch. Default metadata stays on every
+    // skipped clip; user can edit any of them later via the pencil.
+    const remaining = editingQueue.length;
+    if (remaining <= 1) {
+      setEditingQueue([]);
+      setBatchTotal(0);
+      return;
+    }
+    if (
+      !window.confirm(
+        `Skip the remaining ${remaining - 1} clip${remaining - 1 === 1 ? "" : "s"}? They'll keep their auto-tagged defaults. You can edit any of them later by clicking the pencil on the tile.`,
+      )
+    ) {
+      return;
+    }
+    setEditingQueue([]);
+    setBatchTotal(0);
   }
 
   // Look up the LibraryClip-shaped values for the modal from our merged
@@ -376,7 +422,7 @@ export function ClipLibraryGrid() {
 
       {groupBy === "none" ? (
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-          <UploadTile onUploaded={(id) => setEditingClipKey(id)} />
+          <UploadTile onUploaded={(ids) => startEditingBatch(ids)} />
           <AiClipTile onOpen={() => setAiModalOpen(true)} />
           {middleFiltered.map((clip) => renderTile(clip))}
         </div>
@@ -397,7 +443,7 @@ export function ClipLibraryGrid() {
           }
           extraTiles={
             <>
-              <UploadTile onUploaded={(id) => setEditingClipKey(id)} />
+              <UploadTile onUploaded={(ids) => startEditingBatch(ids)} />
               <AiClipTile onOpen={() => setAiModalOpen(true)} />
             </>
           }
@@ -422,13 +468,17 @@ export function ClipLibraryGrid() {
             // Auto-select + auto-open the metadata modal so the user can
             // name + tag the new clip while it's fresh in mind.
             selectClip(libraryClipId, videoUrl);
-            setEditingClipKey(libraryClipId);
+            startEditingBatch([libraryClipId]);
           }}
         />
       )}
 
       {editingMerged && editingClipKey && (
         <ClipMetadataModal
+          // key forces a fresh modal instance for each clip in the queue,
+          // so internal state (name, tags, role pills, etc.) resets cleanly
+          // between clips instead of bleeding from the prior one.
+          key={editingClipKey}
           clip={{
             libraryClipId: editingClipKey,
             videoUrl: editingMerged.videoUrl,
@@ -440,7 +490,19 @@ export function ClipLibraryGrid() {
             avatarName: editingMerged.avatarName,
             captionCutoffPhrase: editingMerged.captionCutoffPhrase,
           }}
-          onClose={() => setEditingClipKey(null)}
+          onClose={advanceEditing}
+          // Show batch UI (X-of-Y header + Skip remaining link) only when
+          // we're actually walking through more than one clip. The
+          // pencil-edit path queues one clip, so no batch chrome shows.
+          batchPosition={
+            batchTotal > 1
+              ? {
+                  current: batchTotal - editingQueue.length + 1,
+                  total: batchTotal,
+                  onSkipAll: skipRemainingEdits,
+                }
+              : undefined
+          }
         />
       )}
     </section>
@@ -992,39 +1054,71 @@ function onSeekToFirstFrame(e: SyntheticEvent<HTMLVideoElement>) {
   }
 }
 
-function UploadTile({ onUploaded }: { onUploaded?: (libraryClipId: string) => void }) {
+function UploadTile({ onUploaded }: { onUploaded?: (libraryClipIds: string[]) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const selectClip = useBatchStore((s) => s.selectClip);
 
   async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+    const files = Array.from(e.target.files ?? []);
     e.target.value = "";
-    if (!file) return;
+    if (files.length === 0) return;
     setError(null);
     setUploading(true);
-    try {
-      const { cachedUrl, filename } = await uploadClip(file);
-      const clip = addLibraryClip({
-        url: cachedUrl,
-        kind: "upload",
-        filename,
-        language: "multi",
-      });
-      // Auto-select the freshly uploaded clip.
-      selectClip(clip.id, cachedUrl);
-      // Fire-and-forget tag scan; tags will appear on the tile a few seconds later.
-      void tagClip(cachedUrl)
-        .then((tags) => updateLibraryClip(clip.id, { tags }))
-        .catch(() => undefined);
-      // Open the metadata modal so the user can polish name/category/tags
-      // while the new clip is fresh in mind.
-      onUploaded?.(clip.id);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "upload failed");
-    } finally {
-      setUploading(false);
+    const total = files.length;
+    setProgress({ current: 0, total });
+    const uploadedIds: string[] = [];
+    const failures: string[] = [];
+    // Sequential — keeps R2 + the auto-tag pipeline from getting hammered
+    // by a 20-clip parallel burst, and lets the progress counter march
+    // forward predictably.
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]!;
+      setProgress({ current: i + 1, total });
+      try {
+        const { cachedUrl, filename } = await uploadClip(file);
+        const clip = addLibraryClip({
+          url: cachedUrl,
+          kind: "upload",
+          filename,
+          language: "multi",
+        });
+        // Auto-select the freshly uploaded clip so the picker count stays
+        // in sync with what the user just brought in. Capped by the
+        // store's max-selection so the 19th upload in a batch silently
+        // stops auto-selecting rather than throwing.
+        selectClip(clip.id, cachedUrl);
+        // Fire-and-forget tag scan; tags appear on the tile a few seconds later.
+        void tagClip(cachedUrl)
+          .then((tags) => updateLibraryClip(clip.id, { tags }))
+          .catch(() => undefined);
+        uploadedIds.push(clip.id);
+      } catch (err) {
+        // A single failure shouldn't abort the batch — the user might
+        // have one corrupt file in 18 and still wants the other 17.
+        // Surface the most recent error and keep going.
+        const msg = err instanceof Error ? err.message : "upload failed";
+        failures.push(`${file.name}: ${msg}`);
+        console.error("[clipLibrary] upload failed for", file.name, err);
+      }
+    }
+    setProgress(null);
+    setUploading(false);
+    if (failures.length > 0) {
+      // Show a compact summary; user can decide whether to retry the
+      // missing ones from their file system.
+      setError(
+        failures.length === total
+          ? `All ${total} uploads failed: ${failures[0]}`
+          : `${failures.length} of ${total} uploads failed (rest succeeded). Last error: ${failures[failures.length - 1]}`,
+      );
+    }
+    if (uploadedIds.length > 0) {
+      // Open the metadata-walkthrough modal queued with every clip that
+      // made it through. Parent handles the queue + per-clip advance.
+      onUploaded?.(uploadedIds);
     }
   }
 
@@ -1039,13 +1133,18 @@ function UploadTile({ onUploaded }: { onUploaded?: (libraryClipId: string) => vo
         ref={inputRef}
         type="file"
         accept="video/mp4,video/quicktime,video/*"
+        multiple
         onChange={onPick}
         className="hidden"
       />
       {uploading ? (
         <>
           <Spinner />
-          <span className="text-[11px] font-medium text-neutral-500">Uploading…</span>
+          <span className="text-[11px] font-medium text-neutral-500">
+            {progress
+              ? `Uploading ${progress.current} of ${progress.total}…`
+              : "Uploading…"}
+          </span>
         </>
       ) : (
         <>
@@ -1061,7 +1160,10 @@ function UploadTile({ onUploaded }: { onUploaded?: (libraryClipId: string) => vo
             <path d="M12 5v14M5 12h14" />
           </svg>
           <span className="text-[11px] font-medium text-neutral-600 dark:text-neutral-400">
-            Upload clip
+            Upload clips
+          </span>
+          <span className="text-[9px] text-neutral-500 leading-tight max-w-[80%] text-center">
+            Pick one or many — we&apos;ll walk you through tagging each.
           </span>
         </>
       )}

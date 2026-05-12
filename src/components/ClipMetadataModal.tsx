@@ -72,10 +72,22 @@ export function ClipMetadataModal({
   clip,
   title = "Edit clip details",
   onClose,
+  batchPosition,
 }: {
   clip: InitialClip;
   title?: string;
+  // Called on Save (after persisting) AND on Cancel/Esc/X. In single-
+  // clip mode this just closes; in batch mode the parent uses it to
+  // advance the queue to the next clip.
   onClose: () => void;
+  // When provided, surfaces the "X of Y" header counter and a "Skip
+  // remaining" link in the footer. Undefined for single-clip pencil
+  // edits where the batch chrome would be noise.
+  batchPosition?: {
+    current: number;
+    total: number;
+    onSkipAll: () => void;
+  };
 }) {
   const [name, setName] = useState(clip.filename ?? "");
   const [language, setLanguage] = useState<ClipLanguage>(clip.language ?? "multi");
@@ -176,9 +188,31 @@ export function ClipMetadataModal({
     >
       <div className="w-full max-w-lg bg-white dark:bg-neutral-950 rounded-3xl border border-neutral-200 dark:border-neutral-900 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
         <header className="px-6 py-4 border-b border-neutral-200 dark:border-neutral-900 flex items-center justify-between">
-          <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+          <div className="flex flex-col gap-0.5">
+            <h2 className="text-base font-semibold tracking-tight">
+              {title}
+              {batchPosition && (
+                <span className="ml-2 text-[12px] font-medium text-neutral-500 tabular-nums">
+                  ({batchPosition.current} of {batchPosition.total})
+                </span>
+              )}
+            </h2>
+            {batchPosition && (
+              <span className="text-[10px] text-neutral-500 leading-snug">
+                Walking through the clips you just uploaded — Save advances
+                to the next. The X (or Skip remaining) closes the whole batch.
+              </span>
+            )}
+          </div>
           <button
-            onClick={onClose}
+            onClick={() => {
+              // When in batch mode, the X is effectively "skip the rest" —
+              // route through the parent's skip-all handler so the user
+              // gets the confirm prompt instead of dismissing one clip at
+              // a time.
+              if (batchPosition) batchPosition.onSkipAll();
+              else onClose();
+            }}
             className="text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100"
             aria-label="Close"
           >
@@ -422,19 +456,35 @@ export function ClipMetadataModal({
           </div>
         </div>
 
-        <footer className="px-6 py-4 border-t border-neutral-200 dark:border-neutral-900 flex justify-end gap-2">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 rounded-full text-[12px] font-semibold bg-neutral-100 dark:bg-neutral-900 hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-900 dark:text-neutral-100 transition"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onSave}
-            className="px-4 py-2 rounded-full text-[12px] font-semibold bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-900 transition"
-          >
-            Save
-          </button>
+        <footer className="px-6 py-4 border-t border-neutral-200 dark:border-neutral-900 flex items-center justify-between gap-2">
+          {batchPosition ? (
+            <button
+              onClick={batchPosition.onSkipAll}
+              className="text-[11px] text-neutral-500 hover:text-neutral-900 dark:hover:text-neutral-100 underline-offset-2 hover:underline"
+              title="Close the whole batch — remaining clips keep their default metadata"
+            >
+              Skip remaining
+            </button>
+          ) : (
+            <span />
+          )}
+          <div className="flex gap-2">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 rounded-full text-[12px] font-semibold bg-neutral-100 dark:bg-neutral-900 hover:bg-neutral-200 dark:hover:bg-neutral-800 text-neutral-900 dark:text-neutral-100 transition"
+              title={batchPosition ? "Skip this clip and move to the next (keeps defaults)" : undefined}
+            >
+              {batchPosition ? "Skip this" : "Cancel"}
+            </button>
+            <button
+              onClick={onSave}
+              className="px-4 py-2 rounded-full text-[12px] font-semibold bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-100 text-white dark:text-neutral-900 transition"
+            >
+              {batchPosition && batchPosition.current < batchPosition.total
+                ? "Save & next →"
+                : "Save"}
+            </button>
+          </div>
         </footer>
       </div>
     </div>
