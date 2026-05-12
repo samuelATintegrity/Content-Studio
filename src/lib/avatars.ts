@@ -28,14 +28,14 @@ export const AVATARS: Avatar[] = [
     name: "Valentina",
     voiceId: "j7e3J6ksqsziQcIGyAWI",
     supportedLanguages: ["es"],
-    // No headshot yet — drop /public/avatars/valentina.jpg and set
-    // imageUrl: "/avatars/valentina.jpg" to surface her face in the picker.
+    imageUrl: "/avatars/valentina.jpg",
   },
   {
     name: "Amy",
     // Mandarin voice — matches ELEVENLABS_VOICE_ID_ZH used by narration mode.
     voiceId: "bhJUNIXWQQ94l8eI2VUf",
     supportedLanguages: ["zh"],
+    imageUrl: "/avatars/amy.jpg",
   },
   {
     name: "Hope",
@@ -45,6 +45,7 @@ export const AVATARS: Avatar[] = [
     // Hope isn't needed.
     voiceId: "tnSpp4vdxKPjI9w0GnoV",
     supportedLanguages: ["tl"],
+    imageUrl: "/avatars/hope.jpg",
   },
 ];
 
