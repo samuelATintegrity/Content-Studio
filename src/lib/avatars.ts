@@ -24,6 +24,30 @@ export const AVATARS: Avatar[] = [
     supportedLanguages: ["en"],
     imageUrl: "/avatars/sarah.jpg",
   },
+  {
+    name: "Valentina",
+    voiceId: "j7e3J6ksqsziQcIGyAWI",
+    supportedLanguages: ["es"],
+    // No headshot yet — drop /public/avatars/valentina.jpg and set
+    // imageUrl: "/avatars/valentina.jpg" to surface her face in the picker.
+  },
+  {
+    name: "Amy",
+    // TODO: replace with Amy's actual ElevenLabs voice ID once provided.
+    // The avatar is selectable in the picker without it, but influencer
+    // renders for Amy will fail at TTS time until this is filled in.
+    voiceId: "REPLACE_ME_AMY_VOICE_ID",
+    supportedLanguages: ["zh"],
+  },
+  {
+    name: "Hope",
+    // TODO: replace with Hope's actual ElevenLabs voice ID once provided.
+    // ELEVENLABS_VOICE_ID_TL is Sarah's voice (for narration mode); Hope
+    // is a different person on camera and should have her own ElevenLabs
+    // voice for the AI middle TTS to match her intro/outro recordings.
+    voiceId: "REPLACE_ME_HOPE_VOICE_ID",
+    supportedLanguages: ["tl"],
+  },
 ];
 
 export function getAvatar(name: string): Avatar | undefined {
