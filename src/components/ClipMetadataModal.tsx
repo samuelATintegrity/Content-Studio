@@ -51,7 +51,22 @@ interface InitialClip {
   captionCutoffPhrase?: string;
 }
 
-const MESSAGE_THEMES: MessageTheme[] = ["agent_match", "dpa"];
+const MESSAGE_THEMES: MessageTheme[] = ["agent_match", "dpa", "language_match"];
+
+// Themes that only make sense for non-English clips. Mirrors the
+// Sidebar's visibleMessageThemes() helper — English-language audiences
+// already speak the agents' language by definition, so the "Speaks
+// your language" pill is hidden when the clip is tagged English.
+// "multi" (multilingual) keeps the pill visible so a generic clip
+// can still be tagged with the bilingual-match theme if appropriate.
+const NON_ENGLISH_ONLY_THEMES: MessageTheme[] = ["language_match"];
+
+function visibleMessageThemesForClipLanguage(language: ClipLanguage): MessageTheme[] {
+  if (language === "en") {
+    return MESSAGE_THEMES.filter((t) => !NON_ENGLISH_ONLY_THEMES.includes(t));
+  }
+  return MESSAGE_THEMES;
+}
 
 export function ClipMetadataModal({
   clip,
@@ -86,6 +101,16 @@ export function ClipMetadataModal({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // If the user flips the clip to English while language_match was
+  // selected, bounce the theme back to the default so we never save a
+  // clip with an English language + a non-English-only theme.
+  useEffect(() => {
+    const allowed = visibleMessageThemesForClipLanguage(language);
+    if (!allowed.includes(messageTheme)) {
+      setMessageTheme(allowed[0]);
+    }
+  }, [language, messageTheme]);
 
   // Split tags into the six "category" chips and everything else.
   const { selectedCategories, otherTags } = useMemo(() => {
@@ -301,7 +326,7 @@ export function ClipMetadataModal({
                 Message theme
               </span>
               <div className="flex flex-wrap gap-1.5">
-                {MESSAGE_THEMES.map((t) => (
+                {visibleMessageThemesForClipLanguage(language).map((t) => (
                   <button
                     key={t}
                     onClick={() => setMessageTheme(t)}
