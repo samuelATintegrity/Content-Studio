@@ -33,19 +33,17 @@ export const AVATARS: Avatar[] = [
   },
   {
     name: "Amy",
-    // TODO: replace with Amy's actual ElevenLabs voice ID once provided.
-    // The avatar is selectable in the picker without it, but influencer
-    // renders for Amy will fail at TTS time until this is filled in.
-    voiceId: "REPLACE_ME_AMY_VOICE_ID",
+    // Mandarin voice — matches ELEVENLABS_VOICE_ID_ZH used by narration mode.
+    voiceId: "bhJUNIXWQQ94l8eI2VUf",
     supportedLanguages: ["zh"],
   },
   {
     name: "Hope",
-    // TODO: replace with Hope's actual ElevenLabs voice ID once provided.
-    // ELEVENLABS_VOICE_ID_TL is Sarah's voice (for narration mode); Hope
-    // is a different person on camera and should have her own ElevenLabs
-    // voice for the AI middle TTS to match her intro/outro recordings.
-    voiceId: "REPLACE_ME_HOPE_VOICE_ID",
+    // Hope shares Sarah's voice (ELEVENLABS_VOICE_ID_TL, same as
+    // ELEVENLABS_VOICE_ID_EN) for the AI middle TTS — Sarah's voice
+    // model covers Tagalog cleanly enough that a separate voice for
+    // Hope isn't needed.
+    voiceId: "tnSpp4vdxKPjI9w0GnoV",
     supportedLanguages: ["tl"],
   },
 ];
