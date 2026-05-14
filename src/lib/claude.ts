@@ -180,6 +180,63 @@ function finalizePosts(raw: RawPost[], language: Language, contentType: ContentT
   }));
 }
 
+// The inner call. Issues the streaming request, extracts the posts,
+// returns them — or throws (including the "missing 'posts' array"
+// truncation error from extractToolPosts). The outer generateBatch
+// wraps this with a retry-on-truncation safety net.
+async function generateBatchOnce(
+  language: Language,
+  contentType: ContentType,
+  count: number,
+): Promise<GenerateBatchResponse> {
+  // Streaming is required for requests that may exceed 10 minutes.
+  // ZH characters tokenize ~2x heavier than Latin scripts so a full
+  // batch in Mandarin runs the wall clock longer than the Anthropic
+  // SDK's non-streaming 10-min cap. Using .stream().finalMessage()
+  // returns the same assembled Message as a plain .create().
+  const resp = await client().messages
+    .stream({
+      model: MODEL,
+      // 64000 — Sonnet 4.6's hard output ceiling. We're not trying to
+      // produce 64K-token batches; this just gives the model the most
+      // room possible to fit the tool-call serialization (which can
+      // balloon unpredictably in CJK languages) and minimizes the
+      // chance of a max_tokens stop_reason mid-input-json-delta.
+      max_tokens: 64000,
+      system: [
+        {
+          type: "text",
+          text: SYSTEM_PROMPT,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
+      tools: [POST_TOOL],
+      tool_choice: { type: "tool", name: POST_TOOL.name },
+      messages: [
+        { role: "user", content: buildUserPrompt(language, contentType, undefined, count) },
+      ],
+    })
+    .finalMessage();
+
+  const raw = extractToolPosts(resp);
+  return { posts: finalizePosts(raw, language, contentType) };
+}
+
+// Truncation detector. extractToolPosts throws with these two error
+// shapes when the model's tool-call output got serialized partially
+// (max_tokens hit mid-JSON) or never produced a `posts` field at all.
+// Mostly useful for the photo-blend retry path — non-truncation errors
+// (invalid key, rate limit, etc.) bypass the retry and surface to the
+// caller as-is.
+function isTruncationError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    msg.includes("missing 'posts' array") ||
+    msg.includes("did not call the post_results tool") ||
+    msg.includes("stop_reason=max_tokens")
+  );
+}
+
 export async function generateBatch(
   language: Language,
   contentType: ContentType,
@@ -191,47 +248,33 @@ export async function generateBatch(
   // tool-call serialization limit.
   count: number = STATIC_BATCH_POSTS,
 ): Promise<GenerateBatchResponse> {
-  try {
-    // Streaming is required for requests that may exceed 10 minutes.
-    // A full 32K-token Mandarin batch tips past that ceiling under
-    // load (ZH characters tokenize ~2x heavier than Latin scripts), so
-    // a plain .create() returns "Streaming is required for operations
-    // that may take longer than 10 minutes." Using .stream().finalMessage()
-    // gets the same assembled Message back — no behavior change beyond
-    // the transport.
-    const resp = await client().messages
-      .stream({
-        model: MODEL,
-        // 32768 — STATIC_BATCH_POSTS=10 with 3-5 sentence captions +
-        // textZone + headline crowds 8K once tool-call boilerplate is
-        // added. Mandarin (and to a lesser extent Tagalog) tokenizes ~2x
-        // heavier than Latin scripts in Claude's BPE, so the 16384 prior
-        // ceiling overran on full ZH batches and surfaced as stop_reason
-        // = tool_use with a missing `posts` field (the model picked the
-        // tool, ran out mid-JSON, the SDK serialized the partial). 32K
-        // is well under Sonnet 4.6's 64K output cap and gives every
-        // language headroom.
-        max_tokens: 32768,
-        system: [
-          {
-            type: "text",
-            text: SYSTEM_PROMPT,
-            cache_control: { type: "ephemeral" },
-          },
-        ],
-        tools: [POST_TOOL],
-        tool_choice: { type: "tool", name: POST_TOOL.name },
-        messages: [
-          { role: "user", content: buildUserPrompt(language, contentType, undefined, count) },
-        ],
-      })
-      .finalMessage();
-
-    const raw = extractToolPosts(resp);
-    return { posts: finalizePosts(raw, language, contentType) };
-  } catch (e) {
-    throw friendlyError(e);
+  // Retry-on-truncation: if Claude's tool-call comes back missing the
+  // posts array (the long-tail Mandarin failure mode that the count +
+  // max_tokens bumps didn't fully solve), halve the count and try
+  // once more. Capped at one retry so we never spin — if even 1 card
+  // fails, that's a real error worth surfacing.
+  const MAX_RETRIES = 1;
+  let currentCount = count;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await generateBatchOnce(language, contentType, currentCount);
+    } catch (e) {
+      if (
+        attempt >= MAX_RETRIES ||
+        currentCount <= 1 ||
+        !isTruncationError(e)
+      ) {
+        throw friendlyError(e);
+      }
+      const halved = Math.max(1, Math.ceil(currentCount / 2));
+      console.warn(
+        `[claude] generateBatch truncated at count=${currentCount} for ${language}/${contentType}; retrying at count=${halved}`,
+      );
+      currentCount = halved;
+    }
   }
+  // Unreachable — the loop either returns or throws.
+  throw new Error("generateBatch: exhausted retries without returning");
 }
 
 // Photo-blend batch: when the static UI's "Photo" pill is picked, we
@@ -604,21 +647,21 @@ function extractToolPostsTyped<T>(resp: Anthropic.Messages.Message, toolName: st
 type GraphicTool = { name: string; description: string; input_schema: Record<string, unknown> };
 
 async function callTool<T>(prompt: string, tool: GraphicTool): Promise<T[]> {
-  // Streaming required at 32K max_tokens — a full Mandarin DYK / AI-
-  // poster batch can run past the 10-minute non-streaming timeout.
-  // .stream().finalMessage() returns the same assembled Message as a
-  // plain .create() so the rest of this code path is unchanged.
+  // Streaming required because some graphic batches (especially AI
+  // poster with 60-180-word imagePrompts) can run past the 10-min
+  // non-streaming cap, especially in Mandarin where character→token
+  // ratios are roughly 2x Latin scripts. .stream().finalMessage()
+  // returns the same assembled Message as a plain .create().
   const resp = await client()
     .messages.stream({
       model: MODEL,
-      // 32768 — graphic-batch tool calls (DYK + AI poster especially) carry
-      // 60-180-word imagePrompts per card and 3-5 sentence caption bodies.
-      // Mandarin batches push past the prior 16384 ceiling because ZH
-      // characters tokenize ~2x heavier than Latin scripts in Claude's
-      // BPE, surfacing as stop_reason=tool_use with a missing `posts`
-      // payload. 32K is well under Sonnet 4.6's 64K output cap and gives
-      // every language headroom.
-      max_tokens: 32768,
+      // 64000 — Sonnet 4.6's hard output ceiling. The graphic-batch
+      // tool calls (DYK + AI poster especially) carry 60-180-word
+      // imagePrompts plus 3-5 sentence caption bodies; at the prior
+      // 32K cap Mandarin batches still occasionally clipped mid-
+      // tool-call. Maxing the budget removes that whole class of
+      // failure mode for the graphic-template path.
+      max_tokens: 64000,
       system: [
         { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
       ],
