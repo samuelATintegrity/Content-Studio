@@ -178,13 +178,16 @@ export async function generateBatch(
   try {
     const resp = await client().messages.create({
       model: MODEL,
-      // 16384 — STATIC_BATCH_POSTS=10 with 3-5 sentence captions + textZone
-      // + headline can crowd 8K once the tool-call boilerplate is added,
-      // and a partial truncation surfaces as stop_reason=tool_use with a
-      // missing `posts` field (the model picked the tool, ran out mid-
-      // JSON, the SDK serialized the partial). Bumped to absorb that
-      // edge without changing the per-post field shape.
-      max_tokens: 16384,
+      // 32768 — STATIC_BATCH_POSTS=10 with 3-5 sentence captions +
+      // textZone + headline crowds 8K once tool-call boilerplate is
+      // added. Mandarin (and to a lesser extent Tagalog) tokenizes ~2x
+      // heavier than Latin scripts in Claude's BPE, so the 16384 prior
+      // ceiling overran on full ZH batches and surfaced as stop_reason
+      // = tool_use with a missing `posts` field (the model picked the
+      // tool, ran out mid-JSON, the SDK serialized the partial). 32K
+      // is well under Sonnet 4.6's 64K output cap and gives every
+      // language headroom.
+      max_tokens: 32768,
       system: [
         {
           type: "text",
@@ -566,12 +569,14 @@ type GraphicTool = { name: string; description: string; input_schema: Record<str
 async function callTool<T>(prompt: string, tool: GraphicTool): Promise<T[]> {
   const resp = await client().messages.create({
     model: MODEL,
-    // 16384 — graphic-batch tool calls (DYK + AI poster especially) carry
+    // 32768 — graphic-batch tool calls (DYK + AI poster especially) carry
     // 60-180-word imagePrompts per card and 3-5 sentence caption bodies.
-    // 8K was tight; partial truncations surfaced as stop_reason=tool_use
-    // with malformed/missing `posts` payloads. Bumped to absorb the
-    // edge without restructuring the per-post field shape.
-    max_tokens: 16384,
+    // Mandarin batches push past the prior 16384 ceiling because ZH
+    // characters tokenize ~2x heavier than Latin scripts in Claude's
+    // BPE, surfacing as stop_reason=tool_use with a missing `posts`
+    // payload. 32K is well under Sonnet 4.6's 64K output cap and gives
+    // every language headroom.
+    max_tokens: 32768,
     system: [
       { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
     ],
