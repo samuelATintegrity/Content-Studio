@@ -349,13 +349,18 @@ async function createSinglePost(args: {
   });
   const metadataField = metadataBlock ? `, ${metadataBlock}` : "";
 
-  // Buffer's GraphQL accepts assets.videos[] for video posts and
-  // assets.images[] for image posts. We pick the right one and inline
-  // the URL via the same variable.
+  // Buffer's GraphQL `assets` is an ordered array of AssetInput, where
+  // each entry has exactly one of `image`, `video`, `document`, or
+  // `link`. The earlier `{ images: [...] }` / `{ videos: [...] }`
+  // shape returned `Field "images" is not defined by type "AssetInput"`
+  // after Buffer's recent schema migration — they flattened the type
+  // so a post-with-image is `[{ image: { url } }]` instead of
+  // `{ images: [{ url }] }`.
+  // VideoAssetInput still supports thumbnailUrl as an optional field.
   const assetsField =
     args.assetType === "image"
-      ? `assets: { images: [{ url: $url }] }`
-      : `assets: { videos: [{ url: $url${thumbField} }] }`;
+      ? `assets: [{ image: { url: $url } }]`
+      : `assets: [{ video: { url: $url${thumbField} } }]`;
 
   const query = `
     mutation CreatePost($text: String!, $channelId: ChannelId!, $url: String!${thumbDecl}${dueAtDecl}) {
