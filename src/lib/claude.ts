@@ -801,6 +801,52 @@ const AI_POSTER_TARGET_ANGLES = [
 ] as const;
 
 async function generateAiPosterBatch(language: Language): Promise<GenerateBatchResponse> {
+  // Retry-on-truncation: AI poster batches carry 60-180-word
+  // imagePrompts per card, and in Mandarin (or under unlucky
+  // tokenization) a full 6-card batch can still clip past the 64K
+  // ceiling. Mirror the photo-blend pattern: try at the full count,
+  // halve once if Claude truncates, give up if even that fails.
+  const MAX_RETRIES = 1;
+  let currentCount = GRAPHIC_BATCH_POSTS;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await generateAiPosterBatchOnce(language, currentCount);
+    } catch (e) {
+      if (
+        attempt >= MAX_RETRIES ||
+        currentCount <= 1 ||
+        !isAiPosterTruncationError(e)
+      ) {
+        throw e;
+      }
+      const halved = Math.max(1, Math.ceil(currentCount / 2));
+      console.warn(
+        `[claude] AI poster batch truncated at count=${currentCount} for ${language}; retrying at count=${halved}`,
+      );
+      currentCount = halved;
+    }
+  }
+  throw new Error("generateAiPosterBatch: exhausted retries without returning");
+}
+
+// Truncation detector for AI poster — extractToolPostsTyped throws
+// with a `<tool_name>_results tool call missing 'posts' array (...)`
+// shape when the tool-call serialization clipped mid-input. The token
+// "missing 'posts' array" is the stable substring across both the
+// post_results and ai_poster_results tool names.
+function isAiPosterTruncationError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return (
+    msg.includes("missing 'posts' array") ||
+    msg.includes("did not call the") ||
+    msg.includes("stop_reason=max_tokens")
+  );
+}
+
+async function generateAiPosterBatchOnce(
+  language: Language,
+  count: number,
+): Promise<GenerateBatchResponse> {
   const captionContentType = captionContentTypeFor("ai_poster");
 
   // Theme library: each theme conveys a message and offers many
@@ -864,19 +910,21 @@ For each theme, prefer a visual option you have NOT used recently. ${
         }`
       : "";
 
+  const topCount = Math.ceil(count / 2);
+  const bottomCount = count - topCount;
   const prompt = `${buildBaseHeader(language, "ai_poster")}
 
-This batch generates ${GRAPHIC_BATCH_POSTS} AI-poster cards. Each card pairs a striking, scroll-stopping AI-generated image with a sharp branded tagline. The IMAGE and the TEXT are produced separately — the image model gets ONLY a visual prompt (no words to render), and we composite the headline + subline ourselves with our own typography.
+This batch generates ${count} AI-poster card${count === 1 ? "" : "s"}. Each card pairs a striking, scroll-stopping AI-generated image with a sharp branded tagline. The IMAGE and the TEXT are produced separately — the image model gets ONLY a visual prompt (no words to render), and we composite the headline + subline ourselves with our own typography.
 
 Hard rules:
 - imagePrompt MUST describe pure visuals. NEVER quote text the model should "render", NEVER mention signs/banners/billboards/UI/captions/labels/typography/storefronts/license-plates. The composited image will have NO readable text besides what we add later.
 - The headline + subline are set in Geist Black at large display weight, so they can be properly typeset — write copy you'd be proud to set in a serious font. Aim for sharp, declarative, scroll-stopping ad copy that pairs with the metaphor.
-- Each card in the batch should feel like a different ad in the same campaign — vary subject category (animals / landscape / surreal scene / object), framing, lighting, and tone across the 6 cards.
+- Each card in the batch should feel like a different ad in the same campaign — vary subject category (animals / landscape / surreal scene / object), framing, lighting, and tone across the ${count} card${count === 1 ? "" : "s"}.
 - Every metaphor must clearly argue for ONE of the brand value props (an angle from the list below).
 
-HOW TO PICK YOUR ${GRAPHIC_BATCH_POSTS} CARDS (most important):
+HOW TO PICK YOUR ${count} CARD${count === 1 ? "" : "S"} (most important):
 - The theme library below is grouped by MESSAGE. Each theme has many visual realizations.
-- Step 1: pick ${GRAPHIC_BATCH_POSTS} DIFFERENT THEMES from the library. Never use the same theme twice in a single batch — the whole point of themes is to give the batch range.
+- Step 1: pick ${count} DIFFERENT THEME${count === 1 ? "" : "S"} from the library. Never use the same theme twice in a single batch — the whole point of themes is to give the batch range.
 - Step 2: within each chosen theme, pick ONE visual option. Pick the one that fits the moment — variety across batches is the goal, so don't always pick the first option in the list. If a visual feels worn out, pick a different one within the same theme.
 - Step 3 (optional, only if you want to push the batch further): you may invent ONE fresh visual within an existing theme if none of the listed options feel right — but it must clearly fit that theme's message. Use a conceptKey of \`<themeKey>:<your_new_visual_key>\` so it's tracked correctly. Do NOT invent new themes.
 
@@ -884,10 +932,10 @@ COMPOSE WITH INTENT (also important):
 - For each card, FIRST decide where the headline + subline will land — top of the frame OR bottom of the frame. This is the textZone field.
 - Then write the imagePrompt to honor that decision: place the FOCAL SUBJECT in the OPPOSITE zone (the bottom two-thirds if textZone=top; the upper two-thirds if textZone=bottom), and explicitly leave the textZone as CALM ATMOSPHERIC NEGATIVE SPACE — out-of-focus blur, soft gradient, atmospheric haze, dark void, cloud cover, or solid color. The text must have somewhere clean to land.
 - Examples of explicit composition language to include in imagePrompt: "subject anchored in lower two-thirds, upper third opens to soft hazy sky for typography"; "tight macro of the subject filling the upper portion, lower third fades to deep black void"; "subject left-of-center in bottom half, top half is empty atmospheric backdrop". Be this specific.
-- Vary textZone across the 6 cards — aim for roughly 3 top + 3 bottom so layouts feel different at a glance.
+- Vary textZone across the ${count} card${count === 1 ? "" : "s"} — aim for roughly ${topCount} top + ${bottomCount} bottom so layouts feel different at a glance.
 - Some metaphors naturally suit one zone: extreme close-ups of eyes/faces tend to work top (subject in upper half, calm bottom). Standing/centered subjects work bottom (subject anchored in upper, calm bottom). Pick what suits the metaphor.
 
-THEME LIBRARY (pick ${GRAPHIC_BATCH_POSTS} different themes; one visual per theme):
+THEME LIBRARY (pick ${count} different theme${count === 1 ? "" : "s"}; one visual per theme):
 ${themeLibrary}
 
 Available value-prop angles (each card's angle MUST come from the chosen theme's mapsTo, OR a closely related angle from this list):
@@ -902,7 +950,7 @@ For each card, write:
 - subline: ≤10 words supporting the headline + linking to the matching mission (top 10%, vetted, pre-interviewed, 4.8 stars, situation/price-fit).
 - body: 3-5 sentence IG caption tying the metaphor back to the angle.
 
-Return your results by calling the ${AI_POSTER_TOOL.name} tool — exactly ${GRAPHIC_BATCH_POSTS} entries, ${GRAPHIC_BATCH_POSTS} distinct themes.`;
+Return your results by calling the ${AI_POSTER_TOOL.name} tool — exactly ${count} entr${count === 1 ? "y" : "ies"}, ${count} distinct theme${count === 1 ? "" : "s"}.`;
 
   try {
     const raw = await callTool<RawAiPosterPost>(prompt, AI_POSTER_TOOL);
