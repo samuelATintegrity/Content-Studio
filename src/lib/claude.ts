@@ -176,29 +176,38 @@ export async function generateBatch(
   contentType: ContentType,
 ): Promise<GenerateBatchResponse> {
   try {
-    const resp = await client().messages.create({
-      model: MODEL,
-      // 32768 — STATIC_BATCH_POSTS=10 with 3-5 sentence captions +
-      // textZone + headline crowds 8K once tool-call boilerplate is
-      // added. Mandarin (and to a lesser extent Tagalog) tokenizes ~2x
-      // heavier than Latin scripts in Claude's BPE, so the 16384 prior
-      // ceiling overran on full ZH batches and surfaced as stop_reason
-      // = tool_use with a missing `posts` field (the model picked the
-      // tool, ran out mid-JSON, the SDK serialized the partial). 32K
-      // is well under Sonnet 4.6's 64K output cap and gives every
-      // language headroom.
-      max_tokens: 32768,
-      system: [
-        {
-          type: "text",
-          text: SYSTEM_PROMPT,
-          cache_control: { type: "ephemeral" },
-        },
-      ],
-      tools: [POST_TOOL],
-      tool_choice: { type: "tool", name: POST_TOOL.name },
-      messages: [{ role: "user", content: buildUserPrompt(language, contentType) }],
-    });
+    // Streaming is required for requests that may exceed 10 minutes.
+    // A full 32K-token Mandarin batch tips past that ceiling under
+    // load (ZH characters tokenize ~2x heavier than Latin scripts), so
+    // a plain .create() returns "Streaming is required for operations
+    // that may take longer than 10 minutes." Using .stream().finalMessage()
+    // gets the same assembled Message back — no behavior change beyond
+    // the transport.
+    const resp = await client().messages
+      .stream({
+        model: MODEL,
+        // 32768 — STATIC_BATCH_POSTS=10 with 3-5 sentence captions +
+        // textZone + headline crowds 8K once tool-call boilerplate is
+        // added. Mandarin (and to a lesser extent Tagalog) tokenizes ~2x
+        // heavier than Latin scripts in Claude's BPE, so the 16384 prior
+        // ceiling overran on full ZH batches and surfaced as stop_reason
+        // = tool_use with a missing `posts` field (the model picked the
+        // tool, ran out mid-JSON, the SDK serialized the partial). 32K
+        // is well under Sonnet 4.6's 64K output cap and gives every
+        // language headroom.
+        max_tokens: 32768,
+        system: [
+          {
+            type: "text",
+            text: SYSTEM_PROMPT,
+            cache_control: { type: "ephemeral" },
+          },
+        ],
+        tools: [POST_TOOL],
+        tool_choice: { type: "tool", name: POST_TOOL.name },
+        messages: [{ role: "user", content: buildUserPrompt(language, contentType) }],
+      })
+      .finalMessage();
 
     const raw = extractToolPosts(resp);
     return { posts: finalizePosts(raw, language, contentType) };
@@ -567,23 +576,29 @@ function extractToolPostsTyped<T>(resp: Anthropic.Messages.Message, toolName: st
 type GraphicTool = { name: string; description: string; input_schema: Record<string, unknown> };
 
 async function callTool<T>(prompt: string, tool: GraphicTool): Promise<T[]> {
-  const resp = await client().messages.create({
-    model: MODEL,
-    // 32768 — graphic-batch tool calls (DYK + AI poster especially) carry
-    // 60-180-word imagePrompts per card and 3-5 sentence caption bodies.
-    // Mandarin batches push past the prior 16384 ceiling because ZH
-    // characters tokenize ~2x heavier than Latin scripts in Claude's
-    // BPE, surfacing as stop_reason=tool_use with a missing `posts`
-    // payload. 32K is well under Sonnet 4.6's 64K output cap and gives
-    // every language headroom.
-    max_tokens: 32768,
-    system: [
-      { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
-    ],
-    tools: [tool as unknown as Anthropic.Messages.ToolUnion],
-    tool_choice: { type: "tool", name: tool.name },
-    messages: [{ role: "user", content: prompt }],
-  });
+  // Streaming required at 32K max_tokens — a full Mandarin DYK / AI-
+  // poster batch can run past the 10-minute non-streaming timeout.
+  // .stream().finalMessage() returns the same assembled Message as a
+  // plain .create() so the rest of this code path is unchanged.
+  const resp = await client()
+    .messages.stream({
+      model: MODEL,
+      // 32768 — graphic-batch tool calls (DYK + AI poster especially) carry
+      // 60-180-word imagePrompts per card and 3-5 sentence caption bodies.
+      // Mandarin batches push past the prior 16384 ceiling because ZH
+      // characters tokenize ~2x heavier than Latin scripts in Claude's
+      // BPE, surfacing as stop_reason=tool_use with a missing `posts`
+      // payload. 32K is well under Sonnet 4.6's 64K output cap and gives
+      // every language headroom.
+      max_tokens: 32768,
+      system: [
+        { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
+      ],
+      tools: [tool as unknown as Anthropic.Messages.ToolUnion],
+      tool_choice: { type: "tool", name: tool.name },
+      messages: [{ role: "user", content: prompt }],
+    })
+    .finalMessage();
   return extractToolPostsTyped<T>(resp, tool.name);
 }
 
