@@ -7,10 +7,12 @@ import {
 import type { BatchRequest, GraphicTemplate } from "@/lib/types";
 
 export const runtime = "nodejs";
-// Bumped from 60s — the DYK + Promo prompts grew (industry-stat
-// reference doc, multi-pool angle list) and a cold-started function
-// hitting Sonnet for ~30s has occasionally clipped the 60s budget.
-export const maxDuration = 120;
+// Bumped from 120s — Mandarin batches at max_tokens=32768 stream
+// for longer than 2 minutes (ZH characters tokenize ~2x heavier than
+// Latin scripts so the per-card cost is roughly doubled). 300s
+// matches Vercel Hobby's max-allowed function duration; on Pro the
+// hard cap is higher but 300s is plenty for any single static batch.
+export const maxDuration = 300;
 
 // Heartbeat-streaming response. iOS Safari (and proxies / load
 // balancers) kill connections that go idle for more than ~30s; on
