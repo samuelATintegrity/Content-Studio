@@ -98,20 +98,29 @@ const POST_TOOL = {
 // can keep the slot math in sync.
 export const STATIC_BATCH_POSTS = 10;
 
-function buildUserPrompt(language: Language, contentType: ContentType, anglesOverride?: string[]): string {
+function buildUserPrompt(
+  language: Language,
+  contentType: ContentType,
+  anglesOverride?: string[],
+  // How many posts to produce. Defaults to STATIC_BATCH_POSTS for the
+  // single-content-type path; the photo-blend path passes a smaller
+  // number because it only displays the first N from each sub-batch
+  // anyway, so we shouldn't pay for the extra output tokens.
+  count: number = STATIC_BATCH_POSTS,
+): string {
   const spec = CONTENT_TYPE_SPECS[contentType];
   const baseAngles = anglesOverride
     ? spec.angles.filter((a) => anglesOverride.includes(a.key))
     : spec.angles;
 
-  // Cycle the angle list out to STATIC_BATCH_POSTS so Claude returns exactly
-  // that many posts. If the content type already has 10+ angles, take the
-  // first 10. If fewer, repeat angles (Claude will produce different
+  // Cycle the angle list out to `count` so Claude returns exactly that
+  // many posts. If the content type already has count+ angles, take the
+  // first count. If fewer, repeat angles (Claude will produce different
   // headlines for each repeat — the prompt below tells it to vary openers).
   const angles =
     baseAngles.length === 0
       ? []
-      : Array.from({ length: STATIC_BATCH_POSTS }, (_, i) => baseAngles[i % baseAngles.length]);
+      : Array.from({ length: count }, (_, i) => baseAngles[i % baseAngles.length]);
 
   const isEnglish = language === "en";
   const hintGuidance = isEnglish
@@ -120,7 +129,7 @@ function buildUserPrompt(language: Language, contentType: ContentType, anglesOve
   const angleList = angles
     .map(
       (a, i) =>
-        `${i + 1}. angle="${a.key}"\n   brief: ${a.brief}\n   headline_hint (English seed): "${a.headlineHint}" (${hintGuidance} Across the batch, vary openers slightly so the 10 headlines don't all start with the same word — but only use synonyms that read naturally for this specific topic. If the SAME angle appears more than once in this list, write a DIFFERENT headline + body for each occurrence — same angle, different wording.)`,
+        `${i + 1}. angle="${a.key}"\n   brief: ${a.brief}\n   headline_hint (English seed): "${a.headlineHint}" (${hintGuidance} Across the batch, vary openers slightly so the ${count} headlines don't all start with the same word — but only use synonyms that read naturally for this specific topic. If the SAME angle appears more than once in this list, write a DIFFERENT headline + body for each occurrence — same angle, different wording.)`,
     )
     .join("\n");
 
@@ -137,7 +146,7 @@ ${angleList}
 
 Reminder: every headline MUST contain the topic anchor (e.g. "$0 down", "USDA", "DPA", "your language", "agent"). The headline MUST be written in ${LANGUAGE_LABELS[language]} — anchor stays literal, everything else translates. The English headline_hints above are SEEDS, not final phrasings.
 
-ALSO PICK textZone for each post — 'top' or 'bottom'. This is where the headline + cta will be composited on the photo, and it drives how we generate the AI image (subject placed in the OPPOSITE zone so the typography lands on calm pixels). Pick whichever zone fits the angle's tone — hopeful or aspirational angles tend to read well at top; stakes-heavy or contrarian angles at bottom. CRITICAL: vary across the batch — aim for a roughly even mix of top and bottom across the ${STATIC_BATCH_POSTS} posts so the rendered strip feels visually different at a glance. Do not pick all top or all bottom.
+ALSO PICK textZone for each post — 'top' or 'bottom'. This is where the headline + cta will be composited on the photo, and it drives how we generate the AI image (subject placed in the OPPOSITE zone so the typography lands on calm pixels). Pick whichever zone fits the angle's tone — hopeful or aspirational angles tend to read well at top; stakes-heavy or contrarian angles at bottom. CRITICAL: vary across the batch — aim for a roughly even mix of top and bottom across the ${count} posts so the rendered strip feels visually different at a glance. Do not pick all top or all bottom.
 
 Return your results by calling the post_results tool.`;
 }
@@ -174,6 +183,13 @@ function finalizePosts(raw: RawPost[], language: Language, contentType: ContentT
 export async function generateBatch(
   language: Language,
   contentType: ContentType,
+  // Number of cards to generate. Defaults to STATIC_BATCH_POSTS (10) for
+  // the single-content-type path. The photo-blend path passes a smaller
+  // number (typically PHOTO_BLEND_PER_POOL) since it only renders that
+  // many per sub-batch and any extras get thrown away — wasted output
+  // tokens that, in Mandarin, tipped some sub-batches over Claude's
+  // tool-call serialization limit.
+  count: number = STATIC_BATCH_POSTS,
 ): Promise<GenerateBatchResponse> {
   try {
     // Streaming is required for requests that may exceed 10 minutes.
@@ -205,7 +221,9 @@ export async function generateBatch(
         ],
         tools: [POST_TOOL],
         tool_choice: { type: "tool", name: POST_TOOL.name },
-        messages: [{ role: "user", content: buildUserPrompt(language, contentType) }],
+        messages: [
+          { role: "user", content: buildUserPrompt(language, contentType, undefined, count) },
+        ],
       })
       .finalMessage();
 
@@ -241,8 +259,18 @@ const PHOTO_BLEND_PER_POOL = 3;
 export async function generatePhotoBlendBatch(
   language: Language,
 ): Promise<GenerateBatchResponse> {
+  // Ask each sub-batch for exactly PHOTO_BLEND_PER_POOL cards instead
+  // of the full STATIC_BATCH_POSTS (10). The interleave below only
+  // uses the first PHOTO_BLEND_PER_POOL anyway, so the extra cards
+  // were pure waste — and in Mandarin those wasted cards inflated the
+  // tool-call output enough to trip the truncation that surfaces as
+  // "post_results tool call missing 'posts' array". Dropping to the
+  // exact count needed cuts each sub-batch's output by ~70% and keeps
+  // every language comfortably under the serialization ceiling.
   const subBatches = await Promise.all(
-    PHOTO_BLEND_CONTENT_TYPES.map((ct) => generateBatch(language, ct)),
+    PHOTO_BLEND_CONTENT_TYPES.map((ct) =>
+      generateBatch(language, ct, PHOTO_BLEND_PER_POOL),
+    ),
   );
 
   // Take first PHOTO_BLEND_PER_POOL from each sub-batch and interleave
