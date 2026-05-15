@@ -21,13 +21,17 @@ import {
 import { pickMusicTrack, pickSoundEffect } from "./music.js";
 import { probeBookendDurationS, probeDurationS } from "./probe.js";
 import { applyCaptionCutoff, transcribeMediaFile } from "./transcribe.js";
-import type { RenderRequest } from "./types.js";
+import type { Language, RenderRequest } from "./types.js";
 import type { WordTiming } from "./elevenlabs.js";
 
 // Subtitle styling. White all-caps with a strong yellow highlight on the
 // currently-spoken word, sitting mid-lower in the 1080x1920 frame and
 // entering with a blur fade + small upward slide.
-const SUBTITLE_STYLE: SubtitleStyle = {
+// Base caption style. fontFamily is overridden per-language via
+// subtitleStyleForLanguage() below — Inter has no CJK glyphs, so a
+// Mandarin render with Inter as the primary font draws every Chinese
+// character as a missing-glyph tofu box.
+const SUBTITLE_STYLE_BASE: SubtitleStyle = {
   primaryColor: "#FFFFFF",
   highlightColor: "#FFD400",
   fontFamily: "Inter",
@@ -40,6 +44,19 @@ const SUBTITLE_STYLE: SubtitleStyle = {
   entranceMs: 280,
   entranceLiftPx: 35,
 };
+
+// libass picks fonts by their internal family name (not the filename).
+// Inter-Bold.ttf reports its family as "Inter"; NotoSansSC-Bold.otf
+// reports it as "Noto Sans SC". For Mandarin we swap to the Noto
+// family so Chinese characters render with proper glyphs.
+function subtitleStyleForLanguage(language: Language): SubtitleStyle {
+  if (language === "zh") {
+    return { ...SUBTITLE_STYLE_BASE, fontFamily: "Noto Sans SC" };
+  }
+  // en / es / tl all read fine in Inter (Latin + the accented letters
+  // Spanish + Tagalog need are covered by Inter's extended Latin set).
+  return SUBTITLE_STYLE_BASE;
+}
 
 // Bundled fonts and assets live under /app in the Docker runtime image.
 const FONTS_DIR = process.env.FONTS_DIR ?? "/app/fonts";
@@ -81,7 +98,7 @@ export async function runPipeline(jobId: string, req: RenderRequest): Promise<vo
       throw new Error("ElevenLabs returned zero-duration audio");
     }
 
-    const ass = buildAssSubtitles(tts.words, SUBTITLE_STYLE);
+    const ass = buildAssSubtitles(tts.words, subtitleStyleForLanguage(req.language));
     const assPath = join(workDir, "subs.ass");
     await writeFile(assPath, ass, "utf8");
 
@@ -228,7 +245,7 @@ async function runInfluencerPipeline(
         offsetS: introDurationS + middleAudioDurationS,
       },
     ],
-    SUBTITLE_STYLE,
+    subtitleStyleForLanguage(req.language),
   );
   const assPath = join(workDir, "subs.ass");
   await writeFile(assPath, ass, "utf8");
