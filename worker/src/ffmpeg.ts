@@ -430,10 +430,6 @@ export async function composeMiddleSegment(args: ComposeMiddleSegmentArgs): Prom
   const audioShare = args.audioDurationS / args.middleClipPaths.length;
   const middlePerClipS = Math.max(0.5, Math.min(maxAvailablePerClip, audioShare));
   const middleClipsLengthS = middlePerClipS * args.middleClipPaths.length;
-  // Safety net: if audio runs longer than what the clips can cover,
-  // freeze the last frame so the segment's audio and video lengths stay
-  // matched. With 8 × 4.85s capacity this almost never fires.
-  const middleVisualPadS = Math.max(0, args.audioDurationS - middleClipsLengthS);
 
   const inputs: string[] = [];
   for (const clip of args.middleClipPaths) inputs.push("-i", clip);
@@ -450,13 +446,7 @@ export async function composeMiddleSegment(args: ComposeMiddleSegmentArgs): Prom
   }
   const midInputs = Array.from({ length: args.middleClipPaths.length }, (_, i) => `[v_mid${i}]`).join("");
   chains.push(`${midInputs}concat=n=${args.middleClipPaths.length}:v=1:a=0[v_mid_cat]`);
-  if (middleVisualPadS > 0) {
-    chains.push(
-      `[v_mid_cat]tpad=stop_mode=clone:stop_duration=${middleVisualPadS.toFixed(6)}[v]`,
-    );
-  } else {
-    chains.push(`[v_mid_cat]null[v]`);
-  }
+  chains.push(`[v_mid_cat]null[v]`);
   // Audio: aresample, trim, volume-attenuate for headroom, pad to target.
   chains.push(
     `[${audioInputIndex}:a]aresample=async=1:first_pts=0,atrim=duration=${args.audioDurationS.toFixed(6)},asetpts=PTS-STARTPTS,volume=${NARRATION_VOLUME.toFixed(3)},apad=whole_dur=${args.audioDurationS.toFixed(6)},aformat=sample_rates=44100:channel_layouts=stereo[a]`,

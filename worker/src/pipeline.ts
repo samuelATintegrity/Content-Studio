@@ -235,7 +235,7 @@ async function runInfluencerPipeline(
   //   middle: introDurationS
   //   outro:  introDurationS + middleAudioDurationS
   // (audio drives the middle length; visual is split into 8 equal clips
-  // adding up to the same number — see composeInfluencer)
+  // adding up to the same number — see composeMiddleSegment)
   const ass = buildMultiSegmentAssSubtitles(
     [
       { words: introWords, offsetS: 0 },
