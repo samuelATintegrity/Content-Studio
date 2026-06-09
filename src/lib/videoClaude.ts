@@ -312,7 +312,13 @@ export async function generateVideoScripts(
   try {
     const resp = await client().messages.create({
       model: MODEL,
-      max_tokens: 4096,
+      // 16384 — 3 narration scripts (70-95 words each) + 3-5 sentence
+      // captions. Same Mandarin-truncation risk as the influencer
+      // middle path (ZH tokenizes ~2x heavier than Latin scripts), and
+      // narration scripts run longer than influencer middles, so the
+      // prior 4096 ceiling was even tighter here. Bumped to 16384 for
+      // headroom across every language.
+      max_tokens: 16384,
       system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
       tools: [VIDEO_TOOL],
       tool_choice: { type: "tool", name: VIDEO_TOOL.name },
@@ -541,7 +547,16 @@ export async function generateInfluencerMiddleScripts(
   try {
     const resp = await client().messages.create({
       model: MODEL,
-      max_tokens: 4096,
+      // 16384 — these are 3 short middle scripts (~45-60 words each)
+      // plus 3-5 sentence captions, so the output is small. But the
+      // prior 4096 ceiling was tight even in English and Mandarin
+      // tokenizes ~2x heavier than Latin scripts in Claude's BPE, so a
+      // ZH influencer batch ran out mid-tool-call and surfaced as
+      // "influencer_middle_results tool call missing 'scripts' array".
+      // 16384 gives 4x headroom — comfortable for any language without
+      // needing the streaming transport (a 16K response completes well
+      // under the 10-min non-streaming cap).
+      max_tokens: 16384,
       system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
       tools: [INFLUENCER_TOOL_V2],
       tool_choice: { type: "tool", name: INFLUENCER_TOOL_V2.name },
